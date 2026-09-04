@@ -1,38 +1,55 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
 
-export default defineConfig({
-  plugins: [vue(), tailwindcss()],
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
-  },
-  server: {
-    port: 5174,
-    proxy: {
-      // 1. 通用业务与用户鉴权服务 (common-server: 8090)
-      '/api/v1/auth': {
-        target: 'http://localhost:8090',
-        changeOrigin: true,
-      },
-      // 2. 量化业务中枢与回测服务 (quant-server: 8080)
-      '/api/v1': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-      // 3. 底层行情与财务服务 (stock-data-service: 8000)
-      '/stock': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-      },
-      // 3. 通用 API 代理兜底
-      '/api': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const isOnline = mode === 'online' || env.VITE_TARGET_ENV === 'online'
+  const onlineHost = env.VITE_ONLINE_HOST || '43.155.186.45'
+
+  const stockTarget = isOnline ? `http://${onlineHost}:8000` : 'http://localhost:8000'
+  const quantTarget = isOnline && env.VITE_ONLINE_QUANT === 'true' ? `http://${onlineHost}:8080` : 'http://localhost:8080'
+  const authTarget = isOnline && env.VITE_ONLINE_AUTH === 'true' ? `http://${onlineHost}:8090` : 'http://localhost:8090'
+
+  console.log(`\n==================================================`)
+  console.log(isOnline
+    ? `  🌐 Web-Admin 环境模式: 【线上部署环境】 -> 行情中台: http://${onlineHost}:8000`
+    : `  💻 Web-Admin 环境模式: 【本地全闭环环境】 -> 基础服务: http://localhost:8000/8080/8090`
+  )
+  console.log(`==================================================\n`)
+
+  return {
+    plugins: [vue(), tailwindcss()],
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, './src'),
       },
     },
-  },
+    server: {
+      port: 5174,
+      proxy: {
+        // 1. 通用业务与用户鉴权服务
+        '/api/v1/auth': {
+          target: authTarget,
+          changeOrigin: true,
+        },
+        // 2. 量化业务中枢与回测服务
+        '/api/v1': {
+          target: quantTarget,
+          changeOrigin: true,
+        },
+        // 3. 行情数据中台 (支持本地 8000 或线上 43.155.186.45:8000)
+        '/stock': {
+          target: stockTarget,
+          changeOrigin: true,
+        },
+        // 4. 通用 API 代理兜底
+        '/api': {
+          target: quantTarget,
+          changeOrigin: true,
+        },
+      },
+    },
+  }
 })

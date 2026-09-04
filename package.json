@@ -4,12 +4,16 @@
   "private": true,
   "description": "Quant System Full-Stack Polyglot Monorepo",
   "scripts": {
+    "dev:web": "pnpm --filter web-admin dev",
+    "dev:web:online": "pnpm --filter web-admin dev:online",
     "dev:common": "uv run uvicorn common_server.main:app --host 0.0.0.0 --port 8090 --reload",
     "dev:server": "uv run uvicorn quant_server.main:app --host 0.0.0.0 --port 8080 --reload",
+    "dev:server:online": "QUANT_FORCE_REMOTE=true QUANT_DATA_SERVICE_HTTP=http://43.155.186.45:8000 uv run uvicorn quant_server.main:app --host 0.0.0.0 --port 8080 --reload",
     "dev:data": "cd packages/stock-data && uv run python service/app.py",
-    "dev:web": "pnpm --filter web-admin dev",
-    "backtest": "uv run python run_backtest.py",
+    "backtest": "uv run python run_backtest.py --env local",
+    "backtest:online": "uv run python run_backtest.py --env online",
     "test:core": "uv run pytest packages/quant-core/tests -v",
+    "test:common": "uv run pytest services/common-server/tests -v",
     "test:data": "uv run pytest packages/stock-data/tests -m 'not live' -v"
   },
   "devDependencies": {}

@@ -9,6 +9,9 @@ class QuantConfig(BaseSettings):
     # 基础数据服务 WebSocket 实时行情地址
     DATA_SERVICE_WS: str = "ws://43.155.186.45:8000/ws/market"
     
+    # 强制跳过本地 Parquet 直连线上中台 (默认为 False 优先读取本地 0.001s 缓存)
+    FORCE_REMOTE: bool = False
+    
     # 默认初始资金 (CNY)
     INITIAL_CASH: float = 100_000.0
     

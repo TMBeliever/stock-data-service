@@ -91,11 +91,12 @@ class DataClient:
         indicators: Optional[list[str]] = None,
         limit: Optional[int] = None
     ) -> Optional[pl.DataFrame]:
-        """优先本地读取，回落 HTTP 服务"""
-        # 1. 尝试本地 Parquet 直读 (0.001s 极速直通，支持 QFQ)
-        local_df = self._try_get_local_parquet(symbol, period=period, start=start, end=end, adjust=adjust)
-        if local_df is not None and not local_df.is_empty():
-            return local_df
+        """优先本地读取，回落 HTTP 服务 (若设置 FORCE_REMOTE 则直连线上中台)"""
+        # 1. 尝试本地 Parquet 直读 (在未开启 FORCE_REMOTE 时，0.001s 极速直通，支持 QFQ)
+        if not quant_config.FORCE_REMOTE:
+            local_df = self._try_get_local_parquet(symbol, period=period, start=start, end=end, adjust=adjust)
+            if local_df is not None and not local_df.is_empty():
+                return local_df
 
         # 2. 回落 HTTP 远程请求
         url = f"{self.base_url}/api/v1/kline"

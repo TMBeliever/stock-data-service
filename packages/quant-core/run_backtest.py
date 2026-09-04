@@ -35,7 +35,23 @@ def main():
     parser.add_argument("--cash", type=float, default=100_000.0, help="Initial cash (账户初始本金池)")
     parser.add_argument("--base-amount", type=float, default=1000.0, help="DCA base investment amount per period (每期定投基准金额，默认1000元)")
     parser.add_argument("--take-profit", action="store_true", default=False, help="开启泡沫区主动阶梯止盈 (默认关闭以避免慢牛行情中卖飞筹码)")
+    parser.add_argument(
+        "--env",
+        type=str,
+        default="local",
+        choices=["local", "online"],
+        help="环境切换: local (本地Parquet列式存储/0.001s秒级) 或 online (直连43.155.186.45线上中台)"
+    )
     args = parser.parse_args()
+
+    from quant_core.config import quant_config
+    if args.env == "online":
+        quant_config.FORCE_REMOTE = True
+        quant_config.DATA_SERVICE_HTTP = "http://43.155.186.45:8000"
+        data_client.base_url = "http://43.155.186.45:8000"
+        print(f"[*] 环境模式: 🌐 线上环境 (直连腾讯云数据中台: http://43.155.186.45:8000)")
+    else:
+        print(f"[*] 环境模式: 💻 本地环境 (零拷贝 Parquet 本地极速直通)")
 
     print(f"[*] Fetching historical K-lines for {args.symbol} from {args.start} to {args.end or 'latest'} (QFQ 前复权)...")
     bars = data_client.get_bars(symbol=args.symbol, period="1d", start=args.start, end=args.end, adjust="qfq")

@@ -17,7 +17,7 @@ function toggleDashboard() {
 </script>
 
 <template>
-  <div class="h-[calc(100vh-6.5rem)] flex flex-col space-y-3 pb-2">
+  <div class="h-[calc(100vh-7.25rem)] flex flex-col space-y-3 pb-1">
     <!-- 1. 工作台顶部状态与视图控制条 -->
     <div class="glass-panel px-4 py-2.5 flex items-center justify-between shrink-0">
       <div class="flex items-center space-x-3">

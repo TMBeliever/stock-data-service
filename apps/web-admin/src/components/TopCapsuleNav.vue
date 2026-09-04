@@ -14,8 +14,11 @@ const serverStatus = ref('Quant Core v0.1.0')
 </script>
 
 <template>
-  <header class="sticky top-4 z-40 w-full px-4 mb-4">
-    <div class="max-w-7xl mx-auto flex items-center justify-between h-14 px-4 rounded-2xl capsule-nav">
+  <header class="sticky top-0 z-40 w-full pt-3.5 pb-2.5 px-4 bg-[#0a0a0c]/40 backdrop-blur-xs">
+    <div
+      :class="route.path.startsWith('/strategy') ? 'max-w-[1780px]' : 'max-w-7xl'"
+      class="mx-auto flex items-center justify-between h-14 px-4 rounded-2xl capsule-nav transition-all duration-300"
+    >
       <!-- 左侧：品牌 Logo 与市场呼吸灯 -->
       <div class="flex items-center space-x-3 cursor-pointer" @click="router.push('/')">
         <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-[#ff5f3d] to-[#ff2d55] flex items-center justify-center shadow-lg shadow-red-500/20">

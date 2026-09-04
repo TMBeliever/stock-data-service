@@ -40,7 +40,7 @@ onUnmounted(() => {
     <!-- 3. 主工作区视口 (工作台自适应超宽屏与首页优雅容器) -->
     <router-view v-slot="{ Component, route }">
       <main
-        :class="route.path.startsWith('/strategy') ? 'max-w-[1780px] mx-auto px-3 pb-4 relative z-10' : 'max-w-6xl mx-auto px-4 pb-20 relative z-10'"
+        :class="route.path.startsWith('/strategy') ? 'max-w-[1780px] mx-auto px-4 pt-3 pb-3 relative z-10' : 'max-w-6xl mx-auto px-4 pt-4 pb-20 relative z-10'"
       >
         <transition name="fade" mode="out-in">
           <component :is="Component" :key="route.fullPath" />

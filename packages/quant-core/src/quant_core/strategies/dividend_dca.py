@@ -23,7 +23,7 @@ class SmartDividendDCAStrategy(BaseStrategy):
         self,
         base_amount: float = 1000.0,
         window: int = 250,
-        enable_take_profit: bool = True
+        enable_take_profit: bool = False
     ):
         super().__init__(
             name="SmartDividendDCA",

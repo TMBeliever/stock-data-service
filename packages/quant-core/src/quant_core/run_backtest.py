@@ -28,10 +28,11 @@ def main():
         choices=["ma", "dividend", "dca", "all_in", "compare"],
         help="Strategy type (compare: 一次性全仓 vs 智能定投 对比回测)"
     )
-    parser.add_argument("--start", type=str, default="2021-01-01", help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--start", type=str, default="2019-01-01", help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", type=str, default=None, help="End date (YYYY-MM-DD, 留空则自动回测到最新交易日)")
     parser.add_argument("--cash", type=float, default=100_000.0, help="Initial cash (账户初始本金池)")
     parser.add_argument("--base-amount", type=float, default=1000.0, help="DCA base investment amount per period (每期定投基准金额，默认1000元)")
+    parser.add_argument("--take-profit", action="store_true", default=False, help="开启泡沫区主动阶梯止盈 (默认关闭以避免慢牛行情中卖飞筹码)")
     args = parser.parse_args()
 
     print(f"[*] Fetching historical K-lines for {args.symbol} from {args.start} to {args.end or 'latest'} (QFQ 前复权)...")
@@ -60,7 +61,7 @@ def main():
         print("\n" + "=" * 62)
         print("         >>> 2. 执行 智能红利低波定投 (Smart Dividend DCA) <<<")
         print("=" * 62)
-        strat_dca = SmartDividendDCAStrategy(base_amount=args.base_amount, window=250, enable_take_profit=True)
+        strat_dca = SmartDividendDCAStrategy(base_amount=args.base_amount, window=250, enable_take_profit=args.take_profit)
         broker_dca = create_broker()
         engine_dca = BacktestEngine(strategy=strat_dca, broker=broker_dca, initial_cash=args.cash)
         res_dca = engine_dca.run({args.symbol: bars})
@@ -108,7 +109,7 @@ def main():
     elif args.strategy == "dividend":
         strat = DividendETFRebalanceStrategy(window=120)
     elif args.strategy == "dca":
-        strat = SmartDividendDCAStrategy(base_amount=args.base_amount, window=250, enable_take_profit=True)
+        strat = SmartDividendDCAStrategy(base_amount=args.base_amount, window=250, enable_take_profit=args.take_profit)
     elif args.strategy == "all_in":
         strat = BuyAndHoldStrategy(target_pct=0.99)
     else:

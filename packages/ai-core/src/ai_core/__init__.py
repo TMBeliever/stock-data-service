@@ -7,6 +7,7 @@ from ai_core.providers.key_provider import APIKeyProvider
 from ai_core.providers.cli_provider import CLIProcessProvider
 from ai_core.orchestrator import AIOrchestrator, ai_orchestrator
 from ai_core.agent_base import BaseAgent, AgentMemory, AgentStep
+from ai_core.service import app
 
 __all__ = [
     "RoleType",
@@ -26,4 +27,5 @@ __all__ = [
     "BaseAgent",
     "AgentMemory",
     "AgentStep",
+    "app",
 ]

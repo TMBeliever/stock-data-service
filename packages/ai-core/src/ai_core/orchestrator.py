@@ -22,9 +22,11 @@ class AIOrchestrator:
         ptype = (provider_type or self.default_provider_type).lower()
 
         if ptype == "key":
-            return APIKeyProvider(**kwargs)
+            key_kwargs = {k: v for k, v in kwargs.items() if k in ["base_url", "api_key", "model", "timeout"]}
+            return APIKeyProvider(**key_kwargs)
         elif ptype == "cli":
-            return CLIProcessProvider(**kwargs)
+            cli_kwargs = {k: v for k, v in kwargs.items() if k in ["executable", "args_template", "timeout", "cwd", "env"]}
+            return CLIProcessProvider(**cli_kwargs)
         else:
             raise ValueError(f"未知的 AI 提供方类型: '{ptype}', 可选为 'key' 或 'cli'")
 

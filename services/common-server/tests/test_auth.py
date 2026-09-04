@@ -1,18 +1,41 @@
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy.pool import StaticPool
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from common_server.main import app
-from common_server.database import init_db, engine, Base
+from common_server.database import Base, get_db
+import common_server.models  # noqa: F401
+
+# 创建完全隔离的测试内存数据库，绝不触碰本地开发/生产的 common.db
+test_engine = create_async_engine(
+    "sqlite+aiosqlite:///:memory:",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+TestingSessionLocal = async_sessionmaker(
+    bind=test_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autocommit=False,
+    autoflush=False
+)
+
+async def override_get_db():
+    async with TestingSessionLocal() as session:
+        yield session
+
+app.dependency_overrides[get_db] = override_get_db
 
 @pytest_asyncio.fixture(autouse=True)
 async def prepare_database():
-    """每个测试运行前清理并重置数据库"""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+    """每个测试运行前使用内存数据库初始化与清理，严禁影响生产或开发库"""
+    async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
-    async with engine.begin() as conn:
+    async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+
 
 @pytest.mark.asyncio
 async def test_auth_full_lifecycle():

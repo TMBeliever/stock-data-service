@@ -33,5 +33,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 # 数据库自动初始化 (建表)
 async def init_db():
+    import common_server.models  # noqa: F401 - 确保所有 ORM 模型类注册到 Base.metadata
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+

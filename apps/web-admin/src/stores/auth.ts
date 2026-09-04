@@ -80,9 +80,15 @@ export const useAuthStore = defineStore('auth', () => {
         }),
       })
 
-      const data = await res.json()
+      let data: any = null
+      try {
+        data = await res.json()
+      } catch {
+        // 非 JSON 响应（例如 500/502 纯文本报错）
+      }
+
       if (!res.ok) {
-        authError.value = data.detail || '登录失败，请检查账号密码'
+        authError.value = data?.detail || `登录失败 (${res.status}: ${res.statusText || '服务异常'})`
         return false
       }
 
@@ -113,9 +119,15 @@ export const useAuthStore = defineStore('auth', () => {
         }),
       })
 
-      const data = await res.json()
+      let data: any = null
+      try {
+        data = await res.json()
+      } catch {
+        // 非 JSON 响应（例如 500/502 纯文本报错）
+      }
+
       if (!res.ok) {
-        authError.value = data.detail || '注册失败，请检查填写格式'
+        authError.value = data?.detail || `注册失败 (${res.status}: ${res.statusText || '服务异常'})`
         return false
       }
 

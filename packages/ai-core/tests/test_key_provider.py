@@ -8,8 +8,8 @@ async def test_live_key_provider_generation():
     provider = APIKeyProvider(
         base_url="http://43.155.186.45:3000/v1",
         api_key="sk-W91gp63k2tmArgtL8wxIMoQaYj8CmFtumeF9T34xSpuIZj34",
-        model="gemini-2.5-flash",
-        timeout=30.0
+        model="gemini-flash-lite-latest",
+        timeout=90.0
     )
 
     messages = [
@@ -29,8 +29,8 @@ async def test_live_key_provider_stream():
     provider = APIKeyProvider(
         base_url="http://43.155.186.45:3000/v1",
         api_key="sk-W91gp63k2tmArgtL8wxIMoQaYj8CmFtumeF9T34xSpuIZj34",
-        model="gemini-2.5-flash",
-        timeout=30.0
+        model="gemini-flash-lite-latest",
+        timeout=90.0
     )
 
     messages = [
@@ -53,8 +53,8 @@ async def test_generate_text_helper():
     provider = APIKeyProvider(
         base_url="http://43.155.186.45:3000/v1",
         api_key="sk-W91gp63k2tmArgtL8wxIMoQaYj8CmFtumeF9T34xSpuIZj34",
-        model="gemini-2.5-flash",
-        timeout=30.0
+        model="gemini-flash-lite-latest",
+        timeout=90.0
     )
 
     text = await provider.generate_text("Say 'Hello' only.")

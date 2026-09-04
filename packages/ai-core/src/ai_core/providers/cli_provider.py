@@ -81,7 +81,7 @@ class CLIProcessProvider(BaseAIProvider):
         cmd_args, needs_stdin = self._build_command(prompt)
         timeout = kwargs.get("timeout", self.timeout)
 
-        stdin_dest = asyncio.subprocess.PIPE if needs_stdin else None
+        stdin_dest = asyncio.subprocess.PIPE if needs_stdin else asyncio.subprocess.DEVNULL
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
             stdin=stdin_dest,
@@ -131,7 +131,7 @@ class CLIProcessProvider(BaseAIProvider):
         cmd_args, needs_stdin = self._build_command(prompt)
         timeout = kwargs.get("timeout", self.timeout)
 
-        stdin_dest = asyncio.subprocess.PIPE if needs_stdin else None
+        stdin_dest = asyncio.subprocess.PIPE if needs_stdin else asyncio.subprocess.DEVNULL
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
             stdin=stdin_dest,

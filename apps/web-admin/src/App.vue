@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import TopCapsuleNav from '@/components/TopCapsuleNav.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
 import AuthModal from '@/components/AuthModal.vue'
+import GlobalFloatingAiAssistant from '@/components/GlobalFloatingAiAssistant.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
@@ -53,6 +54,9 @@ onUnmounted(() => {
 
     <!-- 5. 全局登录/注册身份认证模态窗 -->
     <AuthModal />
+
+    <!-- 6. 全局悬浮可拖拽与缩放 AI 助手 (⌘+J) -->
+    <GlobalFloatingAiAssistant />
   </div>
 </template>
 

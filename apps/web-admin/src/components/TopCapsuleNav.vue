@@ -2,9 +2,11 @@
 import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import UserMenu from '@/components/UserMenu.vue'
+import { useAiStore } from '@/stores/ai'
 
 const router = useRouter()
 const route = useRoute()
+const aiStore = useAiStore()
 
 const emit = defineEmits<{
   (e: 'open-palette'): void
@@ -65,6 +67,18 @@ const serverStatus = ref('Quant Core v0.1.0')
           <span class="w-1.5 h-1.5 rounded-full bg-purple-400"></span>
           <span class="font-mono">{{ serverStatus }}</span>
         </div>
+
+        <!-- 🤖 AI 助手呼出按钮 -->
+        <button
+          @click="aiStore.toggleOpen()"
+          :class="aiStore.isOpen ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm' : 'bg-white/[0.06] hover:bg-white/[0.1] text-zinc-300'"
+          class="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl border border-white/[0.08] hover:border-white/[0.18] transition-all text-xs cursor-pointer shadow-sm"
+          title="切换全站 AI 助手 (⌘+J)"
+        >
+          <span>🤖</span>
+          <span class="hidden lg:inline">AI 助手</span>
+          <span class="kbd-badge">⌘J</span>
+        </button>
 
         <!-- ⌘+K 搜索按钮 -->
         <button

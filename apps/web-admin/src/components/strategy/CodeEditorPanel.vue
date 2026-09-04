@@ -7,9 +7,11 @@ import { autocompletion, type CompletionContext, type CompletionResult } from '@
 import type { EditorView } from '@codemirror/view'
 import { useStrategyStore, type UserStrategyItem } from '@/stores/strategy'
 import { useAuthStore } from '@/stores/auth'
+import { useAiStore } from '@/stores/ai'
 
 const strategyStore = useStrategyStore()
 const authStore = useAuthStore()
+const aiStore = useAiStore()
 
 const editorView = shallowRef<EditorView | null>(null)
 const showCheatSheet = ref(false)
@@ -448,8 +450,20 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <!-- 右侧：API 速查、代码操作与运行回测 -->
+      <!-- 右侧：AI 助手、API 速查、代码操作与运行回测 -->
       <div class="flex items-center space-x-2">
+        <!-- ✨ AI 助手唤醒按钮 -->
+        <button
+          @click="aiStore.toggleOpen()"
+          :class="aiStore.isOpen ? 'bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border-amber-500/40 shadow-sm' : 'bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border-white/[0.08]'"
+          class="px-2.5 py-1 rounded-lg border text-xs transition-all flex items-center space-x-1.5 cursor-pointer group"
+          title="唤出全站 AI 策略助手 (⌘+J)"
+        >
+          <span>✨</span>
+          <span>AI 助手</span>
+          <span class="text-[10px] text-zinc-500 font-mono hidden md:inline">⌘J</span>
+        </button>
+
         <!-- 常用 API 片段速查表按钮 -->
         <button
           @click="showCheatSheet = true"

@@ -30,5 +30,21 @@ class StrategyContext:
 
     def get_closes(self, symbol: str, n: int = 50) -> List[float]:
         """获取最近 N 根收盘价列表"""
-        bars = self.get_history(symbol, n)
-        return [b.close for b in bars]
+        return [b.close for b in self.get_history(symbol, n)]
+
+    def get_opens(self, symbol: str, n: int = 50) -> List[float]:
+        """获取最近 N 根开盘价列表"""
+        return [b.open for b in self.get_history(symbol, n)]
+
+    def get_highs(self, symbol: str, n: int = 50) -> List[float]:
+        """获取最近 N 根最高价列表"""
+        return [b.high for b in self.get_history(symbol, n)]
+
+    def get_lows(self, symbol: str, n: int = 50) -> List[float]:
+        """获取最近 N 根最低价列表"""
+        return [b.low for b in self.get_history(symbol, n)]
+
+    def get_volumes(self, symbol: str, n: int = 50) -> List[float]:
+        """获取最近 N 根成交量列表"""
+        return [b.volume for b in self.get_history(symbol, n)]
+

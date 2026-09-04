@@ -107,6 +107,8 @@ class StrategyCodeSandbox:
             "map": map, "filter": filter, "None": None, "True": True, "False": False,
         }
 
+        from quant_core.factors.technical import sma, ema, rsi, macd, bollinger_bands, atr
+
         safe_globals: Dict[str, Any] = {
             "__builtins__": safe_builtins,
             "__name__": "__custom_strategy__",
@@ -121,6 +123,13 @@ class StrategyCodeSandbox:
             "math": math,
             "np": np,
             "numpy": np,
+            # 内置常用指标函数
+            "sma": sma,
+            "ema": ema,
+            "rsi": rsi,
+            "macd": macd,
+            "bollinger_bands": bollinger_bands,
+            "atr": atr,
         }
 
         local_scope: Dict[str, Any] = {}

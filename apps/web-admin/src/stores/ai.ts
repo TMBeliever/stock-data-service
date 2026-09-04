@@ -21,7 +21,6 @@ export interface QuickPrompt {
 export const useAiStore = defineStore('ai', () => {
   // 1. 悬浮窗显示与几何尺寸状态
   const isOpen = ref(false)
-  const isMaximized = ref(false)
   
   // 默认位置：右侧浮动（会在挂载时根据当前 window.innerWidth 自适应初始化）
   const position = ref({
@@ -31,14 +30,6 @@ export const useAiStore = defineStore('ai', () => {
 
   // 默认尺寸：420px 宽 x 580px 高
   const size = ref({
-    width: 420,
-    height: 580,
-  })
-
-  // 保存全屏化前的尺寸位置，用于还原
-  const savedGeometry = ref({
-    x: 900,
-    y: 85,
     width: 420,
     height: 580,
   })
@@ -76,32 +67,7 @@ export const useAiStore = defineStore('ai', () => {
     isOpen.value = false
   }
 
-  function toggleMaximize() {
-    if (isMaximized.value) {
-      // 还原
-      position.value = { ...savedGeometry.value }
-      size.value = { width: savedGeometry.value.width, height: savedGeometry.value.height }
-      isMaximized.value = false
-    } else {
-      // 最大化
-      savedGeometry.value = {
-        x: position.value.x,
-        y: position.value.y,
-        width: size.value.width,
-        height: size.value.height,
-      }
-      const margin = 20
-      position.value = { x: margin, y: 75 }
-      size.value = {
-        width: Math.min(window.innerWidth - margin * 2, 1000),
-        height: Math.max(500, window.innerHeight - 110),
-      }
-      isMaximized.value = true
-    }
-  }
-
   function updatePosition(x: number, y: number) {
-    if (isMaximized.value) return
     const maxX = Math.max(0, window.innerWidth - size.value.width)
     const maxY = Math.max(0, window.innerHeight - 60)
     position.value = {
@@ -111,11 +77,19 @@ export const useAiStore = defineStore('ai', () => {
   }
 
   function updateSize(width: number, height: number) {
-    if (isMaximized.value) return
     size.value = {
       width: Math.max(340, Math.min(width, window.innerWidth - position.value.x)),
-      height: Math.max(420, Math.min(height, window.innerHeight - position.value.y)),
+      height: Math.max(400, Math.min(height, window.innerHeight - position.value.y)),
     }
+  }
+
+  function updateGeometry(newX: number, newY: number, newWidth: number, newHeight: number) {
+    const clampedW = Math.max(340, Math.min(newWidth, window.innerWidth - 20))
+    const clampedH = Math.max(400, Math.min(newHeight, window.innerHeight - 40))
+    const clampedX = Math.max(0, Math.min(newX, window.innerWidth - clampedW))
+    const clampedY = Math.max(0, Math.min(newY, window.innerHeight - clampedH))
+    position.value = { x: clampedX, y: clampedY }
+    size.value = { width: clampedW, height: clampedH }
   }
 
   // 4. 根据当前页面路径获取快捷提示词
@@ -278,7 +252,6 @@ ${contextSnippet}`
 
   return {
     isOpen,
-    isMaximized,
     position,
     size,
     aiModel,
@@ -287,9 +260,9 @@ ${contextSnippet}`
     toggleOpen,
     open,
     close,
-    toggleMaximize,
     updatePosition,
     updateSize,
+    updateGeometry,
     getQuickPromptsForRoute,
     sendAiMessage,
     clearMessages,

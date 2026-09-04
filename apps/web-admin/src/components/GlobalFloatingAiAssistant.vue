@@ -122,12 +122,11 @@ let initialPosX = 0
 let initialPosY = 0
 
 function onHeaderMouseDown(e: MouseEvent) {
-  // 如果点击的是按钮，不触发拖拽
+  // 如果点击的是按钮、输入框、下拉框，不触发拖拽
   const target = e.target as HTMLElement
-  if (target.closest('button') || target.closest('select') || target.closest('input')) {
+  if (target.closest('button') || target.closest('select') || target.closest('input') || target.closest('textarea')) {
     return
   }
-  if (aiStore.isMaximized) return
 
   isDragging = true
   dragStartX = e.clientX
@@ -153,40 +152,102 @@ function onHeaderMouseUp() {
 }
 
 // -------------------------------------------------------------
-// 窗口缩放 (Resizable) 逻辑
+// 四个角手动拉伸缩放 (4-Corner Resizable) 逻辑
 // -------------------------------------------------------------
-let isResizing = false
-let resizeStartX = 0
-let resizeStartY = 0
-let initialWidth = 0
-let initialHeight = 0
+let isCornerResizing = false
+let activeCorner: 'nw' | 'ne' | 'sw' | 'se' | null = null
+let resizeMouseStartX = 0
+let resizeMouseStartY = 0
+let resizeInitialX = 0
+let resizeInitialY = 0
+let resizeInitialW = 0
+let resizeInitialH = 0
 
-function onResizeHandleMouseDown(e: MouseEvent) {
+function onCornerMouseDown(corner: 'nw' | 'ne' | 'sw' | 'se', e: MouseEvent) {
   e.preventDefault()
   e.stopPropagation()
-  if (aiStore.isMaximized) return
 
-  isResizing = true
-  resizeStartX = e.clientX
-  resizeStartY = e.clientY
-  initialWidth = aiStore.size.width
-  initialHeight = aiStore.size.height
+  isCornerResizing = true
+  activeCorner = corner
+  resizeMouseStartX = e.clientX
+  resizeMouseStartY = e.clientY
+  resizeInitialX = aiStore.position.x
+  resizeInitialY = aiStore.position.y
+  resizeInitialW = aiStore.size.width
+  resizeInitialH = aiStore.size.height
 
-  window.addEventListener('mousemove', onResizeMouseMove)
-  window.addEventListener('mouseup', onResizeMouseUp)
+  window.addEventListener('mousemove', onCornerMouseMove)
+  window.addEventListener('mouseup', onCornerMouseUp)
 }
 
-function onResizeMouseMove(e: MouseEvent) {
-  if (!isResizing) return
-  const deltaX = e.clientX - resizeStartX
-  const deltaY = e.clientY - resizeStartY
-  aiStore.updateSize(initialWidth + deltaX, initialHeight + deltaY)
+function onCornerMouseMove(e: MouseEvent) {
+  if (!isCornerResizing || !activeCorner) return
+  const deltaX = e.clientX - resizeMouseStartX
+  const deltaY = e.clientY - resizeMouseStartY
+
+  const minW = 340
+  const minH = 400
+
+  let newX = resizeInitialX
+  let newY = resizeInitialY
+  let newW = resizeInitialW
+  let newH = resizeInitialH
+
+  if (activeCorner === 'se') {
+    // 右下角 (SE): X, Y 保持不变，向右/下扩大
+    newW = Math.max(minW, resizeInitialW + deltaX)
+    newH = Math.max(minH, resizeInitialH + deltaY)
+  } else if (activeCorner === 'sw') {
+    // 左下角 (SW): Y 保持不变，向左修改 X 与 W，向下修改 H
+    const tentativeW = resizeInitialW - deltaX
+    if (tentativeW < minW) {
+      newW = minW
+      newX = resizeInitialX + (resizeInitialW - minW)
+    } else {
+      newW = tentativeW
+      newX = resizeInitialX + deltaX
+    }
+    newH = Math.max(minH, resizeInitialH + deltaY)
+  } else if (activeCorner === 'ne') {
+    // 右上角 (NE): X 保持不变，向右修改 W，向上修改 Y 与 H
+    newW = Math.max(minW, resizeInitialW + deltaX)
+    const tentativeH = resizeInitialH - deltaY
+    if (tentativeH < minH) {
+      newH = minH
+      newY = resizeInitialY + (resizeInitialH - minH)
+    } else {
+      newH = tentativeH
+      newY = resizeInitialY + deltaY
+    }
+  } else if (activeCorner === 'nw') {
+    // 左上角 (NW): 向左修改 X 与 W，向上修改 Y 与 H
+    const tentativeW = resizeInitialW - deltaX
+    if (tentativeW < minW) {
+      newW = minW
+      newX = resizeInitialX + (resizeInitialW - minW)
+    } else {
+      newW = tentativeW
+      newX = resizeInitialX + deltaX
+    }
+
+    const tentativeH = resizeInitialH - deltaY
+    if (tentativeH < minH) {
+      newH = minH
+      newY = resizeInitialY + (resizeInitialH - minH)
+    } else {
+      newH = tentativeH
+      newY = resizeInitialY + deltaY
+    }
+  }
+
+  aiStore.updateGeometry(newX, newY, newW, newH)
 }
 
-function onResizeMouseUp() {
-  isResizing = false
-  window.removeEventListener('mousemove', onResizeMouseMove)
-  window.removeEventListener('mouseup', onResizeMouseUp)
+function onCornerMouseUp() {
+  isCornerResizing = false
+  activeCorner = null
+  window.removeEventListener('mousemove', onCornerMouseMove)
+  window.removeEventListener('mouseup', onCornerMouseUp)
 }
 
 // 全局 ⌘+J 唤起快捷键
@@ -203,30 +264,52 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
+  window.removeEventListener('mousemove', onHeaderMouseMove)
+  window.removeEventListener('mouseup', onHeaderMouseUp)
+  window.removeEventListener('mousemove', onCornerMouseMove)
+  window.removeEventListener('mouseup', onCornerMouseUp)
 })
 </script>
 
 <template>
   <div>
-    <!-- 1. 收起状态：右下角悬浮胶囊召唤器 (Floating Trigger Bubble) -->
+    <!-- 1. 收起状态：右下角极简暗色毛玻璃悬浮胶囊 (Refined Obsidian Glass Floating Trigger) -->
     <transition name="fade">
       <button
         v-if="!aiStore.isOpen"
         @click="aiStore.open()"
-        class="fixed bottom-6 right-6 z-40 px-3.5 py-2.5 rounded-full bg-gradient-to-r from-amber-500/90 via-orange-500/90 to-rose-500/90 hover:from-amber-600 hover:to-rose-600 text-white font-bold text-xs shadow-2xl shadow-orange-500/30 flex items-center space-x-2 border border-white/20 backdrop-blur-md transition-all transform hover:scale-105 cursor-pointer group"
-        title="唤醒全站 AI 智能助手 (⌘+J)"
+        class="fixed bottom-6 right-6 z-40 group flex items-center space-x-2.5 pl-3 pr-3.5 py-2 rounded-full bg-[#13151b]/92 hover:bg-[#181a23]/96 border border-white/[0.12] hover:border-amber-500/50 shadow-2xl shadow-black/80 hover:shadow-amber-500/15 backdrop-blur-2xl transition-all duration-200 transform hover:-translate-y-0.5 cursor-pointer select-none"
+        title="唤醒全站 AI 智能投研助手 (快捷键: ⌘+J)"
       >
-        <span class="text-sm">🤖</span>
-        <span class="tracking-wide">Quant AI</span>
-        <span
-          class="w-2 h-2 rounded-full"
-          :class="aiStore.isStreaming ? 'bg-amber-300 animate-ping' : 'bg-emerald-300 animate-pulse'"
-        ></span>
-        <span class="hidden group-hover:inline text-[10px] text-white/75 font-mono">⌘J</span>
+        <!-- 左侧机器人状态微章 -->
+        <div class="relative flex items-center justify-center w-7 h-7 rounded-xl bg-gradient-to-br from-amber-500/20 via-orange-500/15 to-transparent border border-amber-500/30 text-sm shadow-sm group-hover:border-amber-400/60 transition-colors">
+          <span>🤖</span>
+          <!-- 呼吸状态灯 -->
+          <span
+            class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ring-2 ring-[#13151b]"
+            :class="aiStore.isStreaming ? 'bg-amber-400 animate-ping' : 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'"
+          ></span>
+        </div>
+
+        <!-- 中部文字说明 -->
+        <div class="flex flex-col text-left">
+          <div class="flex items-center space-x-1.5">
+            <span class="text-xs font-semibold text-zinc-100 group-hover:text-amber-300 transition-colors tracking-wide">Quant Copilot</span>
+          </div>
+          <span class="text-[9px] text-zinc-400 font-mono flex items-center space-x-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse"></span>
+            <span>{{ aiStore.isStreaming ? '正在深度推演...' : '全站投研助理' }}</span>
+          </span>
+        </div>
+
+        <!-- 右侧快捷键 Badge -->
+        <div class="ml-1 pl-2 border-l border-white/[0.1] flex items-center">
+          <kbd class="text-[10px] px-1.5 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.12] text-zinc-300 font-mono shadow-inner group-hover:border-amber-500/40 group-hover:text-amber-300 transition-colors">⌘J</kbd>
+        </div>
       </button>
     </transition>
 
-    <!-- 2. 展开状态：自由拖拽与鼠标缩放的毛玻璃独立悬浮窗 -->
+    <!-- 2. 展开状态：自由拖拽与四角鼠标缩放的毛玻璃独立悬浮窗 -->
     <div
       v-if="aiStore.isOpen"
       :style="{
@@ -235,7 +318,7 @@ onUnmounted(() => {
         width: `${aiStore.size.width}px`,
         height: `${aiStore.size.height}px`,
       }"
-      class="fixed z-50 bg-[#121316]/95 border border-white/[0.14] rounded-2xl shadow-2xl flex flex-col backdrop-blur-2xl overflow-hidden select-none"
+      class="fixed z-50 bg-[#121316]/95 border border-white/[0.14] rounded-2xl shadow-2xl flex flex-col backdrop-blur-2xl select-none relative group"
     >
       <!-- 提示气泡 Toast -->
       <div
@@ -248,8 +331,7 @@ onUnmounted(() => {
       <!-- 2.1 顶部可拖拽标题栏 (Drag Handle Header) -->
       <div
         @mousedown="onHeaderMouseDown"
-        @dblclick="aiStore.toggleMaximize()"
-        class="px-3.5 py-2.5 border-b border-white/[0.08] bg-white/[0.02] flex items-center justify-between shrink-0 cursor-grab active:cursor-grabbing"
+        class="px-3.5 py-2.5 border-b border-white/[0.08] bg-white/[0.02] flex items-center justify-between shrink-0 cursor-grab active:cursor-grabbing rounded-t-2xl"
       >
         <!-- 左侧：图标与情境感知模式标签 -->
         <div class="flex items-center space-x-2">
@@ -295,7 +377,7 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <!-- 右侧：窗口控制胶囊按钮 -->
+        <!-- 右侧：窗口控制胶囊按钮 (清空与收起，无需一键缩放) -->
         <div class="flex items-center space-x-1 text-zinc-400">
           <button
             @click="aiStore.clearMessages()"
@@ -303,13 +385,6 @@ onUnmounted(() => {
             class="p-1 rounded-lg hover:bg-white/[0.08] hover:text-zinc-200 text-xs transition-colors cursor-pointer"
           >
             🧹
-          </button>
-          <button
-            @click="aiStore.toggleMaximize()"
-            :title="aiStore.isMaximized ? '还原窗口' : '最大化窗口'"
-            class="p-1 rounded-lg hover:bg-white/[0.08] hover:text-zinc-200 text-xs transition-colors cursor-pointer"
-          >
-            {{ aiStore.isMaximized ? '❐' : '⛶' }}
           </button>
           <button
             @click="aiStore.close()"
@@ -335,8 +410,40 @@ onUnmounted(() => {
             <span>{{ new Date(msg.timestamp).toLocaleTimeString() }}</span>
           </div>
 
-          <!-- 消息卡片 -->
+          <!-- 当 AI 刚响应、内容尚未吐出时：展示 Loading 小机器人卡片 -->
           <div
+            v-if="msg.role === 'assistant' && (!msg.content || !msg.content.trim())"
+            class="p-3.5 bg-[#171922]/90 border border-amber-500/25 rounded-2xl rounded-tl-sm shadow-xl flex items-center space-x-3.5 backdrop-blur-md self-start max-w-full"
+          >
+            <!-- 小机器人动画主体 -->
+            <div class="relative shrink-0 flex items-center justify-center">
+              <div class="absolute -inset-1 rounded-full bg-gradient-to-r from-amber-500/30 to-orange-500/30 blur-sm animate-pulse"></div>
+              <div class="relative w-10 h-10 rounded-xl bg-gradient-to-b from-zinc-800 to-zinc-900 border border-amber-500/40 flex items-center justify-center text-xl shadow-lg robot-float">
+                <span class="absolute -top-1 w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
+                <span>🤖</span>
+              </div>
+            </div>
+
+            <!-- 思考状态文字与跳动粒子 -->
+            <div class="flex-1 min-w-0 space-y-1">
+              <div class="flex items-center space-x-2">
+                <span class="text-xs font-semibold text-amber-300 tracking-wide">Quant Copilot 正在思考</span>
+                <span class="flex space-x-1 items-center">
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 0ms"></span>
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 150ms"></span>
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 300ms"></span>
+                </span>
+              </div>
+              <div class="text-[11px] text-zinc-400 truncate flex items-center space-x-1.5">
+                <span class="text-amber-500/80">⚡</span>
+                <span>正在检索量化语义树与因子逻辑，即将生成回复...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 正常有内容时的消息卡片 -->
+          <div
+            v-else
             :class="msg.role === 'user'
               ? 'bg-red-500/10 border border-red-500/20 text-zinc-100 self-end rounded-2xl rounded-tr-sm max-w-[90%]'
               : 'bg-white/[0.03] border border-white/[0.06] text-zinc-300 self-start rounded-2xl rounded-tl-sm w-full'"
@@ -401,7 +508,7 @@ onUnmounted(() => {
       </div>
 
       <!-- 2.4 底部输入区域 -->
-      <div class="p-3 border-t border-white/[0.08] bg-white/[0.02] shrink-0">
+      <div class="p-3 border-t border-white/[0.08] bg-white/[0.02] shrink-0 rounded-b-2xl">
         <div class="relative">
           <textarea
             v-model="inputPrompt"
@@ -421,23 +528,46 @@ onUnmounted(() => {
           </button>
         </div>
         <div class="flex items-center justify-between text-[10px] text-zinc-500 mt-1 px-1">
-          <span>Enter 发送，Shift+Enter 换行 · 支持拖拽/边缘缩放</span>
+          <span>Enter 发送 · Shift+Enter 换行 · 四个角均可拖拽拉伸</span>
           <span class="text-amber-400 font-mono">{{ aiStore.aiModel === 'claude' ? 'Claude 3.7' : 'Gemini 3.7' }}</span>
         </div>
       </div>
 
-      <!-- 2.5 鼠标右下角自由缩放把手 (Resize Handle) -->
+      <!-- 2.5 四个角手动拉伸缩放把手 (4 Corner Manual Resizers) -->
+      <!-- 左上角 (NW) -->
       <div
-        v-if="!aiStore.isMaximized"
-        @mousedown="onResizeHandleMouseDown"
-        class="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize flex items-center justify-center opacity-40 hover:opacity-100 transition-opacity"
-        title="按住鼠标拖拽拉伸窗口大小"
+        @mousedown="onCornerMouseDown('nw', $event)"
+        class="absolute -top-1.5 -left-1.5 w-5 h-5 cursor-nwse-resize z-50 group/corner flex items-start justify-start p-1"
+        title="按住鼠标拖拽拉伸窗口 (左上)"
       >
-        <svg class="w-2.5 h-2.5 text-zinc-400" viewBox="0 0 10 10" fill="currentColor">
-          <circle cx="8" cy="8" r="1.2" />
-          <circle cx="5" cy="8" r="1.2" />
-          <circle cx="8" cy="5" r="1.2" />
-        </svg>
+        <div class="w-2 h-2 border-t-2 border-l-2 border-white/20 group-hover/corner:border-amber-400 rounded-tl-sm transition-colors"></div>
+      </div>
+
+      <!-- 右上角 (NE) -->
+      <div
+        @mousedown="onCornerMouseDown('ne', $event)"
+        class="absolute -top-1.5 -right-1.5 w-5 h-5 cursor-nesw-resize z-50 group/corner flex items-start justify-end p-1"
+        title="按住鼠标拖拽拉伸窗口 (右上)"
+      >
+        <div class="w-2 h-2 border-t-2 border-r-2 border-white/20 group-hover/corner:border-amber-400 rounded-tr-sm transition-colors"></div>
+      </div>
+
+      <!-- 左下角 (SW) -->
+      <div
+        @mousedown="onCornerMouseDown('sw', $event)"
+        class="absolute -bottom-1.5 -left-1.5 w-5 h-5 cursor-nesw-resize z-50 group/corner flex items-end justify-start p-1"
+        title="按住鼠标拖拽拉伸窗口 (左下)"
+      >
+        <div class="w-2 h-2 border-b-2 border-l-2 border-white/20 group-hover/corner:border-amber-400 rounded-bl-sm transition-colors"></div>
+      </div>
+
+      <!-- 右下角 (SE) -->
+      <div
+        @mousedown="onCornerMouseDown('se', $event)"
+        class="absolute -bottom-1.5 -right-1.5 w-5 h-5 cursor-nwse-resize z-50 group/corner flex items-end justify-end p-1"
+        title="按住鼠标拖拽拉伸窗口 (右下)"
+      >
+        <div class="w-2 h-2 border-b-2 border-r-2 border-white/20 group-hover/corner:border-amber-400 rounded-br-sm transition-colors"></div>
       </div>
     </div>
 
@@ -506,3 +636,18 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+@keyframes robot-float {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(-2deg);
+  }
+}
+
+.robot-float {
+  animation: robot-float 2.2s ease-in-out infinite;
+}
+</style>

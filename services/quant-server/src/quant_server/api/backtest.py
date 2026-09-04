@@ -1,6 +1,7 @@
+import datetime
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
 
 from quant_core.client.data_client import data_client
 from quant_core.backtest.broker import SimulatedBroker
@@ -72,6 +73,16 @@ def run_backtest_endpoint(req: BacktestRequest):
     # 4. 执行回测
     result = engine.run({req.symbol: bars})
 
+    benchmark_records = [
+        {
+            "date": b.date_str,
+            "timestamp": b.timestamp,
+            "close": b.close,
+            "return_pct": round((b.close - bars[0].close) / bars[0].close, 6) if bars[0].close > 0 else 0.0
+        }
+        for b in bars
+    ]
+
     return {
         "summary": {
             "initial_cash": result.initial_cash,
@@ -86,5 +97,106 @@ def run_backtest_endpoint(req: BacktestRequest):
             "profit_factor": result.profit_factor,
             "total_trades": result.total_trades,
         },
-        "daily_records": result.daily_records
+        "daily_records": result.daily_records,
+        "benchmark_records": benchmark_records,
+        "trades": [
+            {
+                "trade_id": t.trade_id,
+                "symbol": t.symbol,
+                "side": t.side.value if hasattr(t.side, "value") else str(t.side),
+                "price": t.price,
+                "quantity": t.quantity,
+                "commission": round(t.commission, 4),
+                "timestamp": t.timestamp,
+                "datetime_str": datetime.datetime.fromtimestamp(t.timestamp / 1000).strftime("%Y-%m-%d %H:%M:%S") if t.timestamp else "",
+            }
+            for t in engine.portfolio.trades
+        ]
     }
+
+
+class CustomBacktestRequest(BaseModel):
+    symbol: str = Field(default="510300.SH.ETF", description="回测标的代码")
+    code: str = Field(..., description="用户自定义 Python 策略源码")
+    start: str = Field(default="2021-01-01", description="开始日期 YYYY-MM-DD")
+    end: Optional[str] = Field(default=None, description="结束日期 YYYY-MM-DD (留空为最新日)")
+    initial_cash: float = Field(default=100_000.0, description="初始资金 (CNY)")
+
+
+@router.post("/backtest/run-custom")
+def run_custom_backtest_endpoint(req: CustomBacktestRequest):
+    """通过安全 AST 沙箱执行用户自定义 Python 策略源码并返回回测绩效与净值数据"""
+    from quant_server.api.sandbox import StrategyCodeSandbox, SecurityCheckError
+
+    # 1. 语法树审计与策略类动态加载
+    try:
+        strategy_cls = StrategyCodeSandbox.load_strategy_class(req.code)
+        strat = strategy_cls()
+    except SecurityCheckError as e:
+        raise HTTPException(status_code=400, detail=f"安全策略拦截: {str(e)}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"代码结构错误: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"策略编译/初始化失败: {str(e)}")
+
+    # 2. 获取行情数据
+    bars = data_client.get_bars(symbol=req.symbol, period="1d", start=req.start, end=req.end, adjust="qfq")
+    if not bars:
+        raise HTTPException(status_code=404, detail=f"未找到标的 {req.symbol} 在指定时间区间的行情数据")
+
+    # 3. 构造撮合器并运行
+    broker = SimulatedBroker(
+        slippage_pct=0.0005,
+        commission_rate=0.00008,
+        min_commission=0.0,
+        stamp_tax_rate=0.0,
+        t_plus_one=True
+    )
+    engine = BacktestEngine(strategy=strat, broker=broker, initial_cash=req.initial_cash)
+
+    try:
+        result = engine.run({req.symbol: bars})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"回测运行时异常: {str(e)}")
+
+    benchmark_records = [
+        {
+            "date": b.date_str,
+            "timestamp": b.timestamp,
+            "close": b.close,
+            "return_pct": round((b.close - bars[0].close) / bars[0].close, 6) if bars[0].close > 0 else 0.0
+        }
+        for b in bars
+    ]
+
+    return {
+        "summary": {
+            "initial_cash": result.initial_cash,
+            "final_equity": result.final_equity,
+            "total_return": result.total_return,
+            "annualized_return": result.annualized_return,
+            "max_drawdown": result.max_drawdown,
+            "sharpe_ratio": result.sharpe_ratio,
+            "sortino_ratio": result.sortino_ratio,
+            "calmar_ratio": result.calmar_ratio,
+            "win_rate": result.win_rate,
+            "profit_factor": result.profit_factor,
+            "total_trades": result.total_trades,
+        },
+        "daily_records": result.daily_records,
+        "benchmark_records": benchmark_records,
+        "trades": [
+            {
+                "trade_id": t.trade_id,
+                "symbol": t.symbol,
+                "side": t.side.value if hasattr(t.side, "value") else str(t.side),
+                "price": t.price,
+                "quantity": t.quantity,
+                "commission": round(t.commission, 4),
+                "timestamp": t.timestamp,
+                "datetime_str": datetime.datetime.fromtimestamp(t.timestamp / 1000).strftime("%Y-%m-%d %H:%M:%S") if t.timestamp else "",
+            }
+            for t in engine.portfolio.trades
+        ]
+    }
+

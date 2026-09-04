@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import UserMenu from '@/components/UserMenu.vue'
 
 const router = useRouter()
+const route = useRoute()
 
 const emit = defineEmits<{
   (e: 'open-palette'): void
@@ -13,8 +14,8 @@ const serverStatus = ref('Quant Core v0.1.0')
 </script>
 
 <template>
-  <header class="sticky top-4 z-40 w-full px-4 mb-6">
-    <div class="max-w-6xl mx-auto flex items-center justify-between h-14 px-4 rounded-2xl capsule-nav">
+  <header class="sticky top-4 z-40 w-full px-4 mb-4">
+    <div class="max-w-7xl mx-auto flex items-center justify-between h-14 px-4 rounded-2xl capsule-nav">
       <!-- 左侧：品牌 Logo 与市场呼吸灯 -->
       <div class="flex items-center space-x-3 cursor-pointer" @click="router.push('/')">
         <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-[#ff5f3d] to-[#ff2d55] flex items-center justify-center shadow-lg shadow-red-500/20">
@@ -31,6 +32,28 @@ const serverStatus = ref('Quant Core v0.1.0')
           </div>
         </div>
       </div>
+
+      <!-- 中间：核心页面路由导航胶囊 -->
+      <nav class="flex items-center space-x-1 p-1 rounded-xl bg-white/[0.04] border border-white/[0.08]">
+        <button
+          @click="router.push('/')"
+          :class="route.path === '/' ? 'bg-white/10 text-white font-semibold shadow-sm' : 'text-zinc-400 hover:text-zinc-200'"
+          class="px-3 py-1 rounded-lg text-xs transition-all flex items-center space-x-1.5 cursor-pointer"
+        >
+          <span>📊</span>
+          <span>市场看板</span>
+        </button>
+
+        <button
+          @click="router.push('/strategy')"
+          :class="route.path.startsWith('/strategy') ? 'bg-gradient-to-r from-red-500/20 to-amber-500/20 text-white border border-red-500/30 font-semibold shadow-sm' : 'text-zinc-400 hover:text-zinc-200'"
+          class="px-3 py-1 rounded-lg text-xs transition-all flex items-center space-x-1.5 cursor-pointer group"
+        >
+          <span>⚡</span>
+          <span>策略工作台</span>
+          <span class="px-1 py-0.2 rounded text-[9px] bg-red-500/20 text-red-400 font-mono font-bold">AI+Py</span>
+        </button>
+      </nav>
 
       <!-- 右侧：快捷键搜索、引擎徽标与用户系统菜单 -->
       <div class="flex items-center space-x-2.5">

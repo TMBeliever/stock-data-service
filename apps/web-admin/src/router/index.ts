@@ -8,6 +8,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '首页' },
   },
   {
+    path: '/strategy',
+    name: 'StrategyStudio',
+    component: () => import('@/views/StrategyStudioView.vue'),
+    meta: { title: '策略投研工作台' },
+  },
+  {
     path: '/:pathMatch(.*)*',
     redirect: '/',
   },

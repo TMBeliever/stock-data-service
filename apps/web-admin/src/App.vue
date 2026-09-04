@@ -37,14 +37,16 @@ onUnmounted(() => {
     <!-- 2. 顶部悬浮磨砂玻璃胶囊导航栏 -->
     <TopCapsuleNav @open-palette="showPalette = true" />
 
-    <!-- 3. 主工作区视口 (PC 宽屏高质感容器) -->
-    <main class="max-w-6xl mx-auto px-4 pb-20 relative z-10">
-      <router-view v-slot="{ Component, route }">
+    <!-- 3. 主工作区视口 (工作台自适应超宽屏与首页优雅容器) -->
+    <router-view v-slot="{ Component, route }">
+      <main
+        :class="route.path.startsWith('/strategy') ? 'max-w-[1780px] mx-auto px-3 pb-4 relative z-10' : 'max-w-6xl mx-auto px-4 pb-20 relative z-10'"
+      >
         <transition name="fade" mode="out-in">
           <component :is="Component" :key="route.fullPath" />
         </transition>
-      </router-view>
-    </main>
+      </main>
+    </router-view>
 
     <!-- 4. 全局 Raycast 极客命令面板 (⌘+K) -->
     <CommandPalette :show="showPalette" @close="showPalette = false" />

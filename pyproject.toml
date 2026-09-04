@@ -1,28 +1,24 @@
+[tool.uv.workspace]
+members = [
+    "packages/stock-data",
+    "packages/quant-core",
+    "apps/quant-server",
+]
+
 [project]
-name = "quant-system"
+name = "quant-workspace"
 version = "0.1.0"
-description = "High-performance event-driven and vectorized quantitative trading and backtesting system"
+description = "Quant System Full-Stack Polyglot Monorepo Workspace"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "polars>=1.12.0",
-    "numpy>=1.26.0",
-    "pandas>=2.2.0",
-    "pydantic>=2.9.0",
-    "pydantic-settings>=2.5.0",
-    "httpx>=0.27.0",
-    "websockets>=13.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
 ]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[tool.uv]
+package = false
 
-[tool.hatch.build.targets.wheel]
-packages = ["quant_system"]
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true

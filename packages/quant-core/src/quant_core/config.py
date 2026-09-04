@@ -1,0 +1,20 @@
+import os
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class QuantConfig(BaseSettings):
+    """量化系统全局配置 - 严格从基础数据服务获取"""
+    # 基础数据服务 HTTP 接口地址
+    DATA_SERVICE_HTTP: str = "http://43.155.186.45:8000"
+    
+    # 基础数据服务 WebSocket 实时行情地址
+    DATA_SERVICE_WS: str = "ws://43.155.186.45:8000/ws/market"
+    
+    # 默认初始资金 (CNY)
+    INITIAL_CASH: float = 100_000.0
+    
+    # 环境: development / production / backtest
+    ENVIRONMENT: str = "production"
+    
+    model_config = SettingsConfigDict(env_prefix="QUANT_", case_sensitive=False)
+
+quant_config = QuantConfig()

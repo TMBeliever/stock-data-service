@@ -1,0 +1,3987 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "GlobalStockDataService",
+    "description": "面向股票分析、量化交易与策略回测的全球股票数据服务 (50GB空间极致优化架构)",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/kline": {
+      "get": {
+        "tags": [
+          "Kline"
+        ],
+        "summary": "Get Kline",
+        "operationId": "get_kline_api_v1_kline_get",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "标的代码，如 600519.SH.STK, AAPL.US.STK, 000300.SH.IDX, 510300.SH.ETF",
+              "title": "Symbol"
+            },
+            "description": "标的代码，如 600519.SH.STK, AAPL.US.STK, 000300.SH.IDX, 510300.SH.ETF"
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/KlinePeriod",
+              "description": "K线周期: 1m, 5m, 15m, 30m, 60m, 1d",
+              "default": "1d"
+            },
+            "description": "K线周期: 1m, 5m, 15m, 30m, 60m, 1d"
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "开始日期: YYYY-MM-DD (默认最近1年)",
+              "title": "Start"
+            },
+            "description": "开始日期: YYYY-MM-DD (默认最近1年)"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "结束日期: YYYY-MM-DD (默认当天)",
+              "title": "End"
+            },
+            "description": "结束日期: YYYY-MM-DD (默认当天)"
+          },
+          {
+            "name": "adjust",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AdjustType",
+              "description": "复权类型: raw(不复权), qfq(前复权), hfq(后复权)",
+              "default": "raw"
+            },
+            "description": "复权类型: raw(不复权), qfq(前复权), hfq(后复权)"
+          },
+          {
+            "name": "indicators",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "可选计算量化技术指标，多个用逗号分隔，如: MA,MACD,RSI,BOLL,ATR,ALL",
+              "title": "Indicators"
+            },
+            "description": "可选计算量化技术指标，多个用逗号分隔，如: MA,MACD,RSI,BOLL,ATR,ALL"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 50000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "返回的最大K线柱数限制 (如 100)",
+              "title": "Limit"
+            },
+            "description": "返回的最大K线柱数限制 (如 100)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KlineResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/snapshot": {
+      "get": {
+        "tags": [
+          "Real-time Batch Market Snapshot"
+        ],
+        "summary": "Get Snapshots Get",
+        "description": "【批量实时股票行情快照】GET 方式：\n支持跨市场 (A股/港股/美股/ETF/指数) 一次性获取多只股票的最新快照 (最新价、涨跌幅、成交量额、最高最低等)。\n单次最多支持 200 只股票。\n严格遵循真实性原则: 若标的无实时行情或代码无效，记录于 missing 列表，严禁伪造假数据。",
+        "operationId": "get_snapshots_get_api_v1_snapshot_get",
+        "parameters": [
+          {
+            "name": "symbols",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "逗号分隔的标的代码列表，如 600519.SH.STK,AAPL.US.STK,0700.HK.STK,510300.SH.ETF",
+              "title": "Symbols"
+            },
+            "description": "逗号分隔的标的代码列表，如 600519.SH.STK,AAPL.US.STK,0700.HK.STK,510300.SH.ETF"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotBatchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/snapshot/batch": {
+      "post": {
+        "tags": [
+          "Real-time Batch Market Snapshot"
+        ],
+        "summary": "Get Snapshots Batch",
+        "description": "【批量实时股票行情快照】POST 方式：\n接收 JSON 请求体 {\"symbols\": [\"600519.SH.STK\", \"AAPL.US.STK\", ...]}，\n适合自选股列表、持仓看板、组合跟踪等大批量标的一次性拉取。\n单次最多支持 200 只股票。\n严格遵循真实性原则: 若标的无实时行情或代码无效，记录于 missing 列表，严禁伪造假数据。",
+        "operationId": "get_snapshots_batch_api_v1_snapshot_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotBatchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/meta/symbols": {
+      "get": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "List Symbols",
+        "operationId": "list_symbols_api_v1_meta_symbols_get",
+        "parameters": [
+          {
+            "name": "market",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Market"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "市场: SH, SZ, US, HK",
+              "title": "Market"
+            },
+            "description": "市场: SH, SZ, US, HK"
+          },
+          {
+            "name": "asset_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AssetType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "资产类别: STK, IDX, ETF",
+              "title": "Asset Type"
+            },
+            "description": "资产类别: STK, IDX, ETF"
+          },
+          {
+            "name": "is_benchmark",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "是否基准资产",
+              "title": "Is Benchmark"
+            },
+            "description": "是否基准资产"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Symbols Api V1 Meta Symbols Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/meta/calendar": {
+      "get": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Check Trading Day",
+        "operationId": "check_trading_day_api_v1_meta_calendar_get",
+        "parameters": [
+          {
+            "name": "market",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Market",
+              "description": "市场"
+            },
+            "description": "市场"
+          },
+          {
+            "name": "trade_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "日期: YYYY-MM-DD",
+              "title": "Trade Date"
+            },
+            "description": "日期: YYYY-MM-DD"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Check Trading Day Api V1 Meta Calendar Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/storage": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get Storage Status",
+        "description": "获取 50GB 磁盘空间与缓存水位状态",
+        "operationId": "get_storage_status_api_v1_system_storage_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Storage Status Api V1 System Storage Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/evict": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Trigger Eviction",
+        "description": "手动触发 LRU 淘汰清理",
+        "operationId": "trigger_eviction_api_v1_system_evict_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Trigger Eviction Api V1 System Evict Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stock/valuation": {
+      "get": {
+        "tags": [
+          "Stock Fundamentals & Valuation"
+        ],
+        "summary": "Get Stock Valuation",
+        "description": "获取个股基础面估值数据：PE(TTM)、PB、市值、股息率等。\n- A股：对接百度股市通/新浪官方数据源，返回真实 PE(TTM)、PB、总市值。\n- 美股/港股：对接 Yahoo Finance 官方估值与基本面指标。",
+        "operationId": "get_stock_valuation_api_v1_stock_valuation_get",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "股票代码，如 002594 (比亚迪), 600519 (茅台), AAPL (苹果)",
+              "title": "Symbol"
+            },
+            "description": "股票代码，如 002594 (比亚迪), 600519 (茅台), AAPL (苹果)"
+          },
+          {
+            "name": "include_history",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "是否返回近 1 年历史估值走势序列",
+              "default": false,
+              "title": "Include History"
+            },
+            "description": "是否返回近 1 年历史估值走势序列"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stock/financials": {
+      "get": {
+        "tags": [
+          "Financial Statements & Reports"
+        ],
+        "summary": "Get Financials",
+        "description": "获取上市公司深度财务报表与核心财务比率：\n- 营业总收入与净利润、资产总计、负债合计与资产负债率、经营性现金流净额、综合毛利率与销售净利率\n- A 股支持官方公告披露日 (announcement_date) 的严格 PIT (Strict Point-in-Time) 过滤\n- 海外标的 (US/HK) 披露日缺失，响应中 pit_status 明确标注为 ESTIMATED 或 UNAVAILABLE，不冒充严格 PIT",
+        "operationId": "get_financials_api_v1_stock_financials_get",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "股票代码，如 002594 (比亚迪), 600519 (茅台), AAPL (苹果)",
+              "title": "Symbol"
+            },
+            "description": "股票代码，如 002594 (比亚迪), 600519 (茅台), AAPL (苹果)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 40,
+              "minimum": 1,
+              "description": "返回近 N 个季报期 (默认8个季度，即近2年)",
+              "default": 8,
+              "title": "Limit"
+            },
+            "description": "返回近 N 个季报期 (默认8个季度，即近2年)"
+          },
+          {
+            "name": "as_of",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Point-in-Time 回测基准日期: YYYY-MM-DD。若指定，A股按官方公告披露日严格过滤 (Strict PIT)；海外标的因源端缺少权威历史公告时间戳，以报告期估算 (pit_status=ESTIMATED)。",
+              "title": "As Of"
+            },
+            "description": "Point-in-Time 回测基准日期: YYYY-MM-DD。若指定，A股按官方公告披露日严格过滤 (Strict PIT)；海外标的因源端缺少权威历史公告时间戳，以报告期估算 (pit_status=ESTIMATED)。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FinancialResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/market/moneyflow": {
+      "get": {
+        "tags": [
+          "Market Intelligence, Screener & Flow"
+        ],
+        "summary": "Get Market Moneyflow",
+        "description": "获取今日核心资金流向指标：\n- 北向资金 (沪深股通外资净流入)\n- 南向资金 (内资南下买入港股)\n- 板块涨跌分布与关联指数表现",
+        "operationId": "get_market_moneyflow_api_v1_market_moneyflow_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoneyFlowResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/index/constituents": {
+      "get": {
+        "tags": [
+          "Market Intelligence, Screener & Flow"
+        ],
+        "summary": "Get Index Constituents",
+        "description": "获取宽基指数的最新真实成分股列表与股票池（用于策略选股范围限定或指数增强模型）。",
+        "operationId": "get_index_constituents_api_v1_index_constituents_get",
+        "parameters": [
+          {
+            "name": "index_symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "指数代码，如 000300 (沪深300), 000905 (中证500), SPX (标普500)",
+              "title": "Index Symbol"
+            },
+            "description": "指数代码，如 000300 (沪深300), 000905 (中证500), SPX (标普500)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConstituentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/screener": {
+      "get": {
+        "tags": [
+          "Market Intelligence, Screener & Flow"
+        ],
+        "summary": "Run Screener",
+        "description": "A 股全市场每日截面选股器 (A-Share Market Screener):\n基于 A 股全市场实时行情截面多因子筛选标的，支持涨跌幅、成交额、价格区间过滤。",
+        "operationId": "run_screener_api_v1_screener_get",
+        "parameters": [
+          {
+            "name": "min_pct_change",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "最小涨跌幅(%)，如 3.0 (代表今日涨幅>=3%)",
+              "title": "Min Pct Change"
+            },
+            "description": "最小涨跌幅(%)，如 3.0 (代表今日涨幅>=3%)"
+          },
+          {
+            "name": "max_pct_change",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "最大涨跌幅(%)，如 9.9",
+              "title": "Max Pct Change"
+            },
+            "description": "最大涨跌幅(%)，如 9.9"
+          },
+          {
+            "name": "min_price",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "最低价格 (元)",
+              "title": "Min Price"
+            },
+            "description": "最低价格 (元)"
+          },
+          {
+            "name": "max_price",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "最高价格 (元)",
+              "title": "Max Price"
+            },
+            "description": "最高价格 (元)"
+          },
+          {
+            "name": "min_amount",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "最低成交额 (元)，如 100000000 (代表1亿以上)",
+              "title": "Min Amount"
+            },
+            "description": "最低成交额 (元)，如 100000000 (代表1亿以上)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "返回结果上限",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "返回结果上限"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScreenerResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stock/profile": {
+      "get": {
+        "tags": [
+          "Advanced Analytics: Sector, Holders, LHB & Macro"
+        ],
+        "summary": "Get Company Profile",
+        "description": "获取公司画像与所属行业分类、主营业务及上市信息：\n- A 股：对接巨潮资讯官方上市公司画像与行业归类。\n- 美股/港股：对接 Yahoo Finance 官方行业分类 (Sector / Industry)。",
+        "operationId": "get_company_profile_api_v1_stock_profile_get",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "股票代码，如 002594 (比亚迪), 600519 (茅台), AAPL (苹果)",
+              "title": "Symbol"
+            },
+            "description": "股票代码，如 002594 (比亚迪), 600519 (茅台), AAPL (苹果)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stock/shareholders": {
+      "get": {
+        "tags": [
+          "Advanced Analytics: Sector, Holders, LHB & Macro"
+        ],
+        "summary": "Get Shareholders",
+        "description": "获取股东户数（筹码集中度）与十大流通股东名单：\n- 股东总数与户均持股量（用于判断散户交出筹码、庄家机构建仓）\n- 十大股东/流通股东名单、持股数与持股占比",
+        "operationId": "get_shareholders_api_v1_stock_shareholders_get",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "股票代码，如 002594 (比亚迪), 600519 (茅台)",
+              "title": "Symbol"
+            },
+            "description": "股票代码，如 002594 (比亚迪), 600519 (茅台)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareholdersResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/market/sectors": {
+      "get": {
+        "tags": [
+          "Advanced Analytics: Sector, Holders, LHB & Macro"
+        ],
+        "summary": "Get Market Sectors",
+        "description": "获取今日全市场板块行情热点排行：\n- 行业板块排行（申万行业分类热度）\n- 概念板块排行（华为汽车、光伏、低空经济、AI芯片等题材热点）\n- 各板块对应涨跌幅与领涨龙头股表现",
+        "operationId": "get_market_sectors_api_v1_market_sectors_get",
+        "parameters": [
+          {
+            "name": "indicator",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(行业|概念)$",
+              "description": "板块类型: '行业' 或 '概念'",
+              "default": "行业",
+              "title": "Indicator"
+            },
+            "description": "板块类型: '行业' 或 '概念'"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "返回数量",
+              "default": 30,
+              "title": "Limit"
+            },
+            "description": "返回数量"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SectorRankResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/market/dragon-tiger": {
+      "get": {
+        "tags": [
+          "Advanced Analytics: Sector, Holders, LHB & Macro"
+        ],
+        "summary": "Get Dragon Tiger List",
+        "description": "获取每日龙虎榜数据：\n机构专用席位买卖、游资营业部大举建仓或抛售的个股及上榜原因（涨跌偏离值达7%、换手率达20%等）。\n数据源: 东方财富 (stock_lhb_detail_em)，稳定且含\"上榜原因\"字段。",
+        "operationId": "get_dragon_tiger_list_api_v1_market_dragon_tiger_get",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "交易日期 (YYYYMMDD 或 YYYY-MM-DD)，不传默认最近一个交易日",
+              "title": "Date"
+            },
+            "description": "交易日期 (YYYYMMDD 或 YYYY-MM-DD)，不传默认最近一个交易日"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DragonTigerResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/macro/treasury-yield": {
+      "get": {
+        "tags": [
+          "Advanced Analytics: Sector, Holders, LHB & Macro"
+        ],
+        "summary": "Get Treasury Yields",
+        "description": "获取中美 10 年期国债收益率（大类资产配置与 DCF 估值模型的无风险利率基准锚）。\n真实数据源：\n- 美国：Yahoo Finance (^TNX)\n- 中国：中债国债收益率曲线 (AkShare bond_china_yield)",
+        "operationId": "get_treasury_yields_api_v1_macro_treasury_yield_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TreasuryYieldResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/macro/china/pmi": {
+      "get": {
+        "tags": [
+          "Advanced Analytics: Sector, Holders, LHB & Macro"
+        ],
+        "summary": "Get China Pmi",
+        "description": "获取中国官方制造业/非制造业 PMI 采购经理人指数月度序列 (宏观景气度核心先行指标)。\n数据源: 国家统计局 (AkShare macro_china_pmi)。",
+        "operationId": "get_china_pmi_api_v1_macro_china_pmi_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 300,
+              "minimum": 1,
+              "description": "返回最近 N 个月数据 (默认24个月)",
+              "default": 24,
+              "title": "Limit"
+            },
+            "description": "返回最近 N 个月数据 (默认24个月)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PMIResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/macro/china/cpi": {
+      "get": {
+        "tags": [
+          "Advanced Analytics: Sector, Holders, LHB & Macro"
+        ],
+        "summary": "Get China Cpi",
+        "description": "获取中国居民消费价格指数 (CPI) 月度序列，含全国/城市/农村同比与环比增速。\n数据源: 国家统计局 (AkShare macro_china_cpi)。",
+        "operationId": "get_china_cpi_api_v1_macro_china_cpi_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 300,
+              "minimum": 1,
+              "description": "返回最近 N 个月数据 (默认24个月)",
+              "default": 24,
+              "title": "Limit"
+            },
+            "description": "返回最近 N 个月数据 (默认24个月)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CPIResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/macro/china/ppi": {
+      "get": {
+        "tags": [
+          "Advanced Analytics: Sector, Holders, LHB & Macro"
+        ],
+        "summary": "Get China Ppi",
+        "description": "获取中国工业生产者出厂价格指数 (PPI) 月度序列 (企业端通胀/通缩核心先行指标)。\n数据源: 国家统计局 (AkShare macro_china_ppi)。",
+        "operationId": "get_china_ppi_api_v1_macro_china_ppi_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 300,
+              "minimum": 1,
+              "description": "返回最近 N 个月数据 (默认24个月)",
+              "default": 24,
+              "title": "Limit"
+            },
+            "description": "返回最近 N 个月数据 (默认24个月)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PPIResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/macro/china/m2": {
+      "get": {
+        "tags": [
+          "Advanced Analytics: Sector, Holders, LHB & Macro"
+        ],
+        "summary": "Get China M2",
+        "description": "获取中国 M2 货币供应量同比增速序列 (流动性宽紧核心宏观指标)。\n数据源: 国家统计局 (AkShare macro_china_m2_yearly)。",
+        "operationId": "get_china_m2_api_v1_macro_china_m2_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 300,
+              "minimum": 1,
+              "description": "返回最近 N 期数据 (默认24期)",
+              "default": 24,
+              "title": "Limit"
+            },
+            "description": "返回最近 N 期数据 (默认24期)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/M2Response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stock/dividends": {
+      "get": {
+        "tags": [
+          "Dividends & Corporate Actions"
+        ],
+        "summary": "Get Dividends",
+        "description": "获取标的历史分红送配记录 (回测收益序列还原、除权除息日核对的必要基础数据):\n- A 股：对接东方财富分红送配详情，含每股现金分红、送转比例、股权登记日、除权除息日与方案进度\n- 美股/港股：对接 Yahoo Finance 官方历史分红序列 (每股现金分红金额)，源端无送转比例/股权登记日等字段",
+        "operationId": "get_dividends_api_v1_stock_dividends_get",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "股票代码，如 600519 (茅台), AAPL (苹果), 00700 (腾讯控股)",
+              "title": "Symbol"
+            },
+            "description": "股票代码，如 600519 (茅台), AAPL (苹果), 00700 (腾讯控股)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "返回最近 N 条历史分红记录 (默认20条)",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "返回最近 N 条历史分红记录 (默认20条)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DividendResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/market/margin": {
+      "get": {
+        "tags": [
+          "Margin Trading (融资融券)"
+        ],
+        "summary": "Get Market Margin",
+        "description": "获取全市场融资融券每日走势 (做多/做空压力标准指标):\n融资余额、融资买入额、融券余量/余额、融资融券余额合计。",
+        "operationId": "get_market_margin_api_v1_market_margin_get",
+        "parameters": [
+          {
+            "name": "market",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^(SH|SZ)$",
+              "description": "市场: SH (上交所) 或 SZ (深交所)。北交所暂无两融业务，不支持",
+              "title": "Market"
+            },
+            "description": "市场: SH (上交所) 或 SZ (深交所)。北交所暂无两融业务，不支持"
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "开始日期 YYYY-MM-DD (默认近30日)",
+              "title": "Start"
+            },
+            "description": "开始日期 YYYY-MM-DD (默认近30日)"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "结束日期 YYYY-MM-DD (默认当天)",
+              "title": "End"
+            },
+            "description": "结束日期 YYYY-MM-DD (默认当天)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarginMarketResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stock/margin": {
+      "get": {
+        "tags": [
+          "Margin Trading (融资融券)"
+        ],
+        "summary": "Get Stock Margin",
+        "description": "获取个股融资融券明细 (仅两融标的池内股票支持):\n融资买入额/余额、融券卖出量/余量。北交所无两融业务，一律返回未找到。",
+        "operationId": "get_stock_margin_api_v1_stock_margin_get",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "股票代码，如 600519 (茅台，需为两融标的), 000001 (平安银行)",
+              "title": "Symbol"
+            },
+            "description": "股票代码，如 600519 (茅台，需为两融标的), 000001 (平安银行)"
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "查询日期 YYYY-MM-DD (默认最近一个交易日，交易所两融明细通常 T+1 披露)",
+              "title": "Date"
+            },
+            "description": "查询日期 YYYY-MM-DD (默认最近一个交易日，交易所两融明细通常 T+1 披露)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarginStockResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stock/analyst-consensus": {
+      "get": {
+        "tags": [
+          "Analyst Consensus"
+        ],
+        "summary": "Get Analyst Consensus",
+        "description": "获取个股分析师一致预期数据: 研报数量、评级分布、未来 EPS 预测。\n仅支持 A 股 (SH/SZ 市场)。",
+        "operationId": "get_analyst_consensus_api_v1_stock_analyst_consensus_get",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "股票代码 (如 600519, 000001)",
+              "title": "Symbol"
+            },
+            "description": "股票代码 (如 600519, 000001)"
+          },
+          {
+            "name": "market",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "市场标识 (仅支持 SH/SZ)",
+              "title": "Market"
+            },
+            "description": "市场标识 (仅支持 SH/SZ)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalystConsensusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Root",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AdjustType": {
+        "type": "string",
+        "enum": [
+          "raw",
+          "qfq",
+          "hfq"
+        ],
+        "title": "AdjustType"
+      },
+      "AnalystConsensusResponse": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "data_source": {
+            "type": "string",
+            "title": "Data Source"
+          },
+          "report_count": {
+            "type": "integer",
+            "title": "Report Count"
+          },
+          "rating_buy": {
+            "type": "integer",
+            "title": "Rating Buy"
+          },
+          "rating_accumulate": {
+            "type": "integer",
+            "title": "Rating Accumulate"
+          },
+          "rating_neutral": {
+            "type": "integer",
+            "title": "Rating Neutral"
+          },
+          "rating_reduce": {
+            "type": "integer",
+            "title": "Rating Reduce"
+          },
+          "rating_sell": {
+            "type": "integer",
+            "title": "Rating Sell"
+          },
+          "eps_forecasts": {
+            "items": {
+              "$ref": "#/components/schemas/EPSForecast"
+            },
+            "type": "array",
+            "title": "Eps Forecasts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "data_source",
+          "report_count",
+          "rating_buy",
+          "rating_accumulate",
+          "rating_neutral",
+          "rating_reduce",
+          "rating_sell",
+          "eps_forecasts"
+        ],
+        "title": "AnalystConsensusResponse"
+      },
+      "AssetType": {
+        "type": "string",
+        "enum": [
+          "STK",
+          "IDX",
+          "ETF",
+          "FX",
+          "CRYPTO"
+        ],
+        "title": "AssetType"
+      },
+      "CPIItem": {
+        "properties": {
+          "month": {
+            "type": "string",
+            "title": "Month",
+            "description": "统计月份: YYYY-MM"
+          },
+          "national_yoy_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "National Yoy Pct",
+            "description": "全国CPI同比增长(%)"
+          },
+          "national_mom_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "National Mom Pct",
+            "description": "全国CPI环比增长(%)"
+          },
+          "city_yoy_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City Yoy Pct",
+            "description": "城市CPI同比增长(%)"
+          },
+          "rural_yoy_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rural Yoy Pct",
+            "description": "农村CPI同比增长(%)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "month"
+        ],
+        "title": "CPIItem"
+      },
+      "CPIResponse": {
+        "properties": {
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/CPIItem"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "updated_at",
+          "count",
+          "data"
+        ],
+        "title": "CPIResponse"
+      },
+      "CompanyProfileResponse": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "ticker": {
+            "type": "string",
+            "title": "Ticker"
+          },
+          "company_name": {
+            "type": "string",
+            "title": "Company Name"
+          },
+          "industry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Industry",
+            "description": "所属行业 (如：汽车制造业、半导体等)"
+          },
+          "main_business": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Main Business",
+            "description": "主营业务范围"
+          },
+          "listing_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Date",
+            "description": "上市日期"
+          },
+          "registered_capital": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered Capital",
+            "description": "注册资本"
+          },
+          "intro": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intro",
+            "description": "公司机构简介"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "ticker",
+          "company_name"
+        ],
+        "title": "CompanyProfileResponse"
+      },
+      "ConstituentItem": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol",
+            "description": "规范化标的代码: 如 600519.SH.STK"
+          },
+          "ticker": {
+            "type": "string",
+            "title": "Ticker"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "in_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Date",
+            "description": "纳入指数日期"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "ticker",
+          "name"
+        ],
+        "title": "ConstituentItem"
+      },
+      "ConstituentResponse": {
+        "properties": {
+          "index_symbol": {
+            "type": "string",
+            "title": "Index Symbol"
+          },
+          "index_name": {
+            "type": "string",
+            "title": "Index Name"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "constituents": {
+            "items": {
+              "$ref": "#/components/schemas/ConstituentItem"
+            },
+            "type": "array",
+            "title": "Constituents"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index_symbol",
+          "index_name",
+          "count",
+          "constituents"
+        ],
+        "title": "ConstituentResponse"
+      },
+      "DividendItem": {
+        "properties": {
+          "report_date": {
+            "type": "string",
+            "title": "Report Date",
+            "description": "分红方案对应报告期截止日: YYYY-MM-DD"
+          },
+          "announcement_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Announcement Date",
+            "description": "最新公告日期: YYYY-MM-DD"
+          },
+          "record_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Date",
+            "description": "股权登记日: YYYY-MM-DD (仅 A 股提供)"
+          },
+          "ex_dividend_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ex Dividend Date",
+            "description": "除权除息日: YYYY-MM-DD"
+          },
+          "cash_per_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash Per Share",
+            "description": "每股现金分红金额 (税前，本币计价)"
+          },
+          "bonus_share_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bonus Share Ratio",
+            "description": "每股送转股比例 (如 0.3 表示每股送转0.3股，仅 A 股提供)"
+          },
+          "dividend_yield_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dividend Yield Pct",
+            "description": "股息率(%) (仅 A 股提供)"
+          },
+          "plan_progress": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Progress",
+            "description": "分红方案进度 (如：实施分配/董事会预案，仅 A 股提供)"
+          },
+          "plan_description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Description",
+            "description": "分红方案人类可读描述 (如：10派6.00元，仅 A 股提供)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "report_date"
+        ],
+        "title": "DividendItem"
+      },
+      "DividendResponse": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "ticker": {
+            "type": "string",
+            "title": "Ticker"
+          },
+          "market": {
+            "type": "string",
+            "title": "Market"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "dividends": {
+            "items": {
+              "$ref": "#/components/schemas/DividendItem"
+            },
+            "type": "array",
+            "title": "Dividends"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "ticker",
+          "market",
+          "currency",
+          "count",
+          "dividends"
+        ],
+        "title": "DividendResponse"
+      },
+      "DragonTigerItem": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "ticker": {
+            "type": "string",
+            "title": "Ticker"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "close_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Price",
+            "description": "收盘价"
+          },
+          "change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Pct",
+            "description": "涨跌幅(%)"
+          },
+          "turnover_volume": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnover Volume",
+            "description": "成交量 (源缺失时可能为 None)"
+          },
+          "turnover_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnover Amount",
+            "description": "龙虎榜成交额 (元)"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "ticker",
+          "name",
+          "reason"
+        ],
+        "title": "DragonTigerItem"
+      },
+      "DragonTigerResponse": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/DragonTigerItem"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "count",
+          "data"
+        ],
+        "title": "DragonTigerResponse"
+      },
+      "EPSForecast": {
+        "properties": {
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "eps": {
+            "type": "number",
+            "title": "Eps"
+          }
+        },
+        "type": "object",
+        "required": [
+          "year",
+          "eps"
+        ],
+        "title": "EPSForecast"
+      },
+      "FinancialReportItem": {
+        "properties": {
+          "report_date": {
+            "type": "string",
+            "title": "Report Date",
+            "description": "报告期截止日: YYYY-MM-DD"
+          },
+          "announcement_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Announcement Date",
+            "description": "公告披露日期: YYYY-MM-DD (Point-in-Time 权威依据)"
+          },
+          "revenue": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revenue",
+            "description": "营业总收入 (元)"
+          },
+          "net_profit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Profit",
+            "description": "净利润 (元)"
+          },
+          "total_assets": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Assets",
+            "description": "资产总计 (元)"
+          },
+          "total_liabilities": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Liabilities",
+            "description": "负债合计 (元)"
+          },
+          "operating_cash_flow": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operating Cash Flow",
+            "description": "经营活动产生的现金流量净额 (元)"
+          },
+          "gross_margin_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gross Margin Pct",
+            "description": "销售毛利率 (%)"
+          },
+          "net_margin_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Margin Pct",
+            "description": "销售净利率 (%)"
+          },
+          "debt_to_asset_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt To Asset Pct",
+            "description": "资产负债率 (%)"
+          },
+          "roa": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Roa",
+            "description": "总资产收益率-ROA (%)"
+          },
+          "roe": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Roe",
+            "description": "净资产收益率-ROE (%)"
+          },
+          "raw_details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Details",
+            "description": "该报告期完整原始会计科目"
+          }
+        },
+        "type": "object",
+        "required": [
+          "report_date"
+        ],
+        "title": "FinancialReportItem"
+      },
+      "FinancialResponse": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "ticker": {
+            "type": "string",
+            "title": "Ticker"
+          },
+          "market": {
+            "type": "string",
+            "title": "Market"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "pit_status": {
+            "type": "string",
+            "title": "Pit Status",
+            "description": "Point-in-Time 状态: STRICT (严格披露日过滤), ESTIMATED (以报告期近似估算), UNAVAILABLE",
+            "default": "STRICT"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/FinancialReportItem"
+            },
+            "type": "array",
+            "title": "Reports"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "ticker",
+          "market",
+          "currency",
+          "count",
+          "reports"
+        ],
+        "title": "FinancialResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "KlinePeriod": {
+        "type": "string",
+        "enum": [
+          "1m",
+          "5m",
+          "15m",
+          "30m",
+          "60m",
+          "1d",
+          "1w",
+          "1M",
+          "1Y"
+        ],
+        "title": "KlinePeriod"
+      },
+      "KlinePoint": {
+        "properties": {
+          "timestamp": {
+            "type": "integer",
+            "title": "Timestamp",
+            "description": "UTC 毫秒时间戳"
+          },
+          "open": {
+            "type": "number",
+            "title": "Open"
+          },
+          "high": {
+            "type": "number",
+            "title": "High"
+          },
+          "low": {
+            "type": "number",
+            "title": "Low"
+          },
+          "close": {
+            "type": "number",
+            "title": "Close"
+          },
+          "volume": {
+            "type": "number",
+            "title": "Volume"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount",
+            "default": 0.0
+          },
+          "factor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Factor"
+          },
+          "nav": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nav"
+          },
+          "ma5": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ma5"
+          },
+          "ma10": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ma10"
+          },
+          "ma20": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ma20"
+          },
+          "ma60": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ma60"
+          },
+          "macd_dif": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Macd Dif"
+          },
+          "macd_dea": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Macd Dea"
+          },
+          "macd_hist": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Macd Hist"
+          },
+          "rsi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rsi"
+          },
+          "boll_upper": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boll Upper"
+          },
+          "boll_mid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boll Mid"
+          },
+          "boll_lower": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boll Lower"
+          },
+          "atr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Atr"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timestamp",
+          "open",
+          "high",
+          "low",
+          "close",
+          "volume"
+        ],
+        "title": "KlinePoint"
+      },
+      "KlineResponse": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "period": {
+            "type": "string",
+            "title": "Period"
+          },
+          "adjust": {
+            "type": "string",
+            "title": "Adjust"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/KlinePoint"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "period",
+          "adjust",
+          "count",
+          "data"
+        ],
+        "title": "KlineResponse"
+      },
+      "M2Item": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date",
+            "description": "统计日期: YYYY-MM-DD"
+          },
+          "m2_yoy_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "M2 Yoy Pct",
+            "description": "M2货币供应同比增速(%)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date"
+        ],
+        "title": "M2Item"
+      },
+      "M2Response": {
+        "properties": {
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/M2Item"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "updated_at",
+          "count",
+          "data"
+        ],
+        "title": "M2Response"
+      },
+      "MarginMarketItem": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date",
+            "description": "信用交易日期: YYYY-MM-DD"
+          },
+          "financing_buy": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Financing Buy",
+            "description": "融资买入额 (元)"
+          },
+          "financing_balance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Financing Balance",
+            "description": "融资余额 (元)"
+          },
+          "securities_lending_volume": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Securities Lending Volume",
+            "description": "融券卖出量/余量 (股)"
+          },
+          "securities_lending_balance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Securities Lending Balance",
+            "description": "融券余额 (元)"
+          },
+          "total_balance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Balance",
+            "description": "融资融券余额合计 (元)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date"
+        ],
+        "title": "MarginMarketItem"
+      },
+      "MarginMarketResponse": {
+        "properties": {
+          "market": {
+            "type": "string",
+            "title": "Market"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/MarginMarketItem"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "market",
+          "count",
+          "data"
+        ],
+        "title": "MarginMarketResponse"
+      },
+      "MarginStockItem": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date",
+            "description": "信用交易日期: YYYY-MM-DD"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "financing_buy": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Financing Buy",
+            "description": "融资买入额 (元)"
+          },
+          "financing_balance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Financing Balance",
+            "description": "融资余额 (元)"
+          },
+          "lending_sell_volume": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lending Sell Volume",
+            "description": "融券卖出量 (股)"
+          },
+          "lending_balance_volume": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lending Balance Volume",
+            "description": "融券余量 (股)"
+          },
+          "total_balance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Balance",
+            "description": "融资融券余额合计 (元)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "symbol"
+        ],
+        "title": "MarginStockItem"
+      },
+      "MarginStockResponse": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "date": {
+            "type": "string",
+            "title": "Date"
+          },
+          "found": {
+            "type": "boolean",
+            "title": "Found"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarginStockItem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "date",
+          "found"
+        ],
+        "title": "MarginStockResponse"
+      },
+      "Market": {
+        "type": "string",
+        "enum": [
+          "SH",
+          "SZ",
+          "BJ",
+          "US",
+          "HK",
+          "BINANCE",
+          "FX"
+        ],
+        "title": "Market"
+      },
+      "MoneyFlowItem": {
+        "properties": {
+          "direction": {
+            "type": "string",
+            "title": "Direction",
+            "description": "资金方向: 北向(外资流入A股), 南向(内资流入港股)"
+          },
+          "plate": {
+            "type": "string",
+            "title": "Plate",
+            "description": "板块: 沪股通, 深股通, 港股通(沪), 港股通(深)"
+          },
+          "date": {
+            "type": "string",
+            "title": "Date"
+          },
+          "net_inflow_million": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Inflow Million",
+            "description": "当日净买入成交额 (百万元)"
+          },
+          "up_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Up Count",
+            "description": "板块内上涨个股数"
+          },
+          "down_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Down Count",
+            "description": "板块内下跌个股数"
+          },
+          "index_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Index Name",
+            "description": "关联指数"
+          },
+          "index_change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Index Change Pct",
+            "description": "关联指数涨跌幅(%)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "direction",
+          "plate",
+          "date"
+        ],
+        "title": "MoneyFlowItem"
+      },
+      "MoneyFlowResponse": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/MoneyFlowItem"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "count",
+          "data"
+        ],
+        "title": "MoneyFlowResponse"
+      },
+      "PMIItem": {
+        "properties": {
+          "month": {
+            "type": "string",
+            "title": "Month",
+            "description": "统计月份: YYYY-MM"
+          },
+          "manufacturing_index": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manufacturing Index",
+            "description": "制造业PMI指数"
+          },
+          "manufacturing_yoy_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manufacturing Yoy Pct",
+            "description": "制造业PMI同比增长(%)"
+          },
+          "non_manufacturing_index": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Non Manufacturing Index",
+            "description": "非制造业PMI指数"
+          },
+          "non_manufacturing_yoy_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Non Manufacturing Yoy Pct",
+            "description": "非制造业PMI同比增长(%)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "month"
+        ],
+        "title": "PMIItem"
+      },
+      "PMIResponse": {
+        "properties": {
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/PMIItem"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "updated_at",
+          "count",
+          "data"
+        ],
+        "title": "PMIResponse"
+      },
+      "PPIItem": {
+        "properties": {
+          "month": {
+            "type": "string",
+            "title": "Month",
+            "description": "统计月份: YYYY-MM"
+          },
+          "current_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Value",
+            "description": "当月PPI指数值"
+          },
+          "yoy_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yoy Pct",
+            "description": "当月同比增长(%)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "month"
+        ],
+        "title": "PPIItem"
+      },
+      "PPIResponse": {
+        "properties": {
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/PPIItem"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "updated_at",
+          "count",
+          "data"
+        ],
+        "title": "PPIResponse"
+      },
+      "ScreenerItem": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "ticker": {
+            "type": "string",
+            "title": "Ticker"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "latest_price": {
+            "type": "number",
+            "title": "Latest Price"
+          },
+          "pct_change": {
+            "type": "number",
+            "title": "Pct Change"
+          },
+          "volume": {
+            "type": "number",
+            "title": "Volume"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "ticker",
+          "name",
+          "latest_price",
+          "pct_change",
+          "volume",
+          "amount"
+        ],
+        "title": "ScreenerItem"
+      },
+      "ScreenerResponse": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ScreenerItem"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count",
+          "data"
+        ],
+        "title": "ScreenerResponse"
+      },
+      "SectorRankItem": {
+        "properties": {
+          "sector_name": {
+            "type": "string",
+            "title": "Sector Name"
+          },
+          "avg_price": {
+            "type": "number",
+            "title": "Avg Price"
+          },
+          "pct_change": {
+            "type": "number",
+            "title": "Pct Change"
+          },
+          "leading_stock": {
+            "type": "string",
+            "title": "Leading Stock"
+          },
+          "leading_stock_pct": {
+            "type": "number",
+            "title": "Leading Stock Pct"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sector_name",
+          "avg_price",
+          "pct_change",
+          "leading_stock",
+          "leading_stock_pct"
+        ],
+        "title": "SectorRankItem"
+      },
+      "SectorRankResponse": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SectorRankItem"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "count",
+          "data"
+        ],
+        "title": "SectorRankResponse"
+      },
+      "ShareholderItem": {
+        "properties": {
+          "rank": {
+            "type": "integer",
+            "title": "Rank",
+            "description": "持股排名 (1-10)"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "股东名称 (机构/个人)"
+          },
+          "shares": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shares",
+            "description": "持股数量 (股)"
+          },
+          "ratio_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratio Pct",
+            "description": "持股比例 (%)"
+          },
+          "share_nature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share Nature",
+            "description": "股本性质 (如：A股流通股/境外上市外资股)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rank",
+          "name"
+        ],
+        "title": "ShareholderItem"
+      },
+      "ShareholdersResponse": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "end_date": {
+            "type": "string",
+            "title": "End Date",
+            "description": "统计报告期"
+          },
+          "publish_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publish Date",
+            "description": "信息披露日期"
+          },
+          "total_shareholders": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Shareholders",
+            "description": "股东总户数"
+          },
+          "avg_shares_per_holder": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Shares Per Holder",
+            "description": "户均持股数量 (筹码集中度关键指标)"
+          },
+          "top_holders": {
+            "items": {
+              "$ref": "#/components/schemas/ShareholderItem"
+            },
+            "type": "array",
+            "title": "Top Holders"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "end_date",
+          "top_holders"
+        ],
+        "title": "ShareholdersResponse"
+      },
+      "SnapshotBatchRequest": {
+        "properties": {
+          "symbols": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Symbols",
+            "description": "批量股票代码列表，如 ['600519.SH.STK', 'AAPL.US.STK']"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbols"
+        ],
+        "title": "SnapshotBatchRequest"
+      },
+      "SnapshotBatchResponse": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "获取到的有效实时快照数量"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SnapshotItem"
+            },
+            "type": "array",
+            "title": "Data",
+            "description": "有效行情快照列表"
+          },
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing",
+            "description": "无实时行情或代码未识别的标的列表 (严格拒绝虚构数据)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count"
+        ],
+        "title": "SnapshotBatchResponse"
+      },
+      "SnapshotItem": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol",
+            "description": "规范化标的代码: [TICKER].[MARKET].[TYPE]"
+          },
+          "ticker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticker",
+            "description": "标的代码/简码 (如 600519, AAPL)"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "标的名称"
+          },
+          "latest_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Price",
+            "description": "最新成交价格 (无实时成交时为 None)"
+          },
+          "pre_close": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pre Close",
+            "description": "昨收价"
+          },
+          "open": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open",
+            "description": "今开盘价"
+          },
+          "high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "High",
+            "description": "今日最高价"
+          },
+          "low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Low",
+            "description": "今日最低价"
+          },
+          "change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change",
+            "description": "涨跌额"
+          },
+          "pct_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct Change",
+            "description": "涨跌幅(%)"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume",
+            "description": "今日成交量"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount",
+            "description": "今日成交额"
+          },
+          "turnover_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnover Rate",
+            "description": "换手率(%)"
+          },
+          "pe": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pe",
+            "description": "市盈率(动态/TTM)"
+          },
+          "pe_ttm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pe Ttm",
+            "description": "市盈率(TTM)"
+          },
+          "pb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pb",
+            "description": "市净率"
+          },
+          "total_market_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Market Cap",
+            "description": "总市值 (亿元/亿美元/亿港元)"
+          },
+          "market_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Cap",
+            "description": "总市值 (亿元/亿美元/亿港元)"
+          },
+          "circulating_market_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Circulating Market Cap",
+            "description": "流通市值 (亿元/亿美元/亿港元)"
+          },
+          "float_market_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Float Market Cap",
+            "description": "流通市值 (亿元/亿美元/亿港元)"
+          },
+          "dividend_yield": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dividend Yield",
+            "description": "股息率(%)"
+          },
+          "dividend_yield_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dividend Yield Pct",
+            "description": "股息率(%)"
+          },
+          "nav": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nav",
+            "description": "ETF 实时单位净值/IOPV (仅 ETF 标的有效)"
+          },
+          "premium_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Premium Rate",
+            "description": "ETF 折溢价率(%) = (最新价 - NAV) / NAV * 100"
+          },
+          "ask_prices": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ask Prices",
+            "description": "卖一至卖五档挂单价格 (仅 A股支持，其他市场为 None)"
+          },
+          "ask_volumes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ask Volumes",
+            "description": "卖一至卖五档挂单量 (手)"
+          },
+          "bid_prices": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bid Prices",
+            "description": "买一至买五档挂单价格 (仅 A股支持，其他市场为 None)"
+          },
+          "bid_volumes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bid Volumes",
+            "description": "买一至买五档挂单量 (手)"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestamp",
+            "description": "行情时间戳 (UTC 毫秒)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "name"
+        ],
+        "title": "SnapshotItem"
+      },
+      "TreasuryYieldItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "latest_yield": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Yield",
+            "description": "最新收益率 (%)"
+          },
+          "date": {
+            "type": "string",
+            "title": "Date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "code",
+          "date"
+        ],
+        "title": "TreasuryYieldItem"
+      },
+      "TreasuryYieldResponse": {
+        "properties": {
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/TreasuryYieldItem"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "updated_at",
+          "data"
+        ],
+        "title": "TreasuryYieldResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "ValuationPoint": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date"
+          },
+          "pe_ttm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pe Ttm"
+          },
+          "pb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pb"
+          },
+          "market_cap_billion": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Cap Billion"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date"
+        ],
+        "title": "ValuationPoint"
+      },
+      "ValuationResponse": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "ticker": {
+            "type": "string",
+            "title": "Ticker"
+          },
+          "market": {
+            "type": "string",
+            "title": "Market"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "date": {
+            "type": "string",
+            "title": "Date",
+            "description": "估值统计日期: YYYY-MM-DD"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "default": "CNY"
+          },
+          "pe_ttm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pe Ttm",
+            "description": "市盈率(TTM)"
+          },
+          "pe_static": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pe Static",
+            "description": "市盈率(静) / 预测市盈率"
+          },
+          "pb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pb",
+            "description": "市净率(PB)"
+          },
+          "market_cap_billion": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Cap Billion",
+            "description": "总市值 (亿元 或 10亿美元)"
+          },
+          "dividend_yield_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dividend Yield Pct",
+            "description": "股息率(%)"
+          },
+          "history": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ValuationPoint"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "History",
+            "description": "历史估值走势 (当 include_history=true 时返回)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "ticker",
+          "market",
+          "date"
+        ],
+        "title": "ValuationResponse"
+      }
+    }
+  }
+}

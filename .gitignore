@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -9,5 +10,33 @@ build/
 *.egg-info/
 .venv/
 .env
-.DS_Store
+
+# Node & Frontend
+node_modules/
+.pnpm-debug.log*
+dist-ssr/
+*.local
+
+# Swift & Xcode
+.build/
+DerivedData/
+*.xcworkspace/xcuserdata
+*.xcuserdata
+
+# Quant & Data Caches (避免巨型 Parquet/DuckDB 进入 Git)
 data/
+*.parquet
+*.duckdb
+*.duckdb.wal
+*.csv
+storage/parquet/
+
+# OS & IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.bak
+.git_origin_bak/
+.claude/
+.agents/

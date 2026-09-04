@@ -1,0 +1,23 @@
+services:
+  stock-data:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stock-data-service
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # 将宿主机 50GB 数据目录与容器持久化挂载绑定
+      - ./data:/app/data
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - MAX_CACHE_SIZE_GB=20.0
+      - GLOBAL_DISK_MIN_FREE_GB=10.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/system/storage"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

@@ -1,0 +1,68 @@
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any
+
+from quant_core.client.data_client import data_client
+from quant_core.backtest.broker import SimulatedBroker
+from quant_core.backtest.engine import BacktestEngine
+from quant_core.strategies.moving_average_cross import DualMovingAverageStrategy
+from quant_core.strategies.dividend_etf_rebalance import DividendETFRebalanceStrategy
+
+router = APIRouter()
+
+class BacktestRequest(BaseModel):
+    symbol: str = Field(default="510300.SH.ETF", description="回测标的代码")
+    strategy: str = Field(default="ma", description="策略类型: ma 或 dividend")
+    start: str = Field(default="2022-01-01", description="开始日期 YYYY-MM-DD")
+    end: str = Field(default="2024-01-01", description="结束日期 YYYY-MM-DD")
+    initial_cash: float = Field(default=100_000.0, description="初始资金 (CNY)")
+    params: Optional[Dict[str, Any]] = Field(default=None, description="自定义策略参数")
+
+@router.post("/backtest/run")
+def run_backtest_endpoint(req: BacktestRequest):
+    """在线运行策略回测并返回标准绩效与每日净值曲线"""
+    # 1. 获取行情数据
+    bars = data_client.get_bars(symbol=req.symbol, period="1d", start=req.start, end=req.end, adjust="qfq")
+    if not bars:
+        raise HTTPException(status_code=404, detail=f"No K-line data found for {req.symbol}")
+
+    # 2. 构造策略实例
+    if req.strategy == "ma":
+        fast = req.params.get("fast_period", 5) if req.params else 5
+        slow = req.params.get("slow_period", 20) if req.params else 20
+        strat = DualMovingAverageStrategy(fast_period=fast, slow_period=slow)
+    elif req.strategy == "dividend":
+        win = req.params.get("window", 120) if req.params else 120
+        strat = DividendETFRebalanceStrategy(window=win)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown strategy: {req.strategy}")
+
+    # 3. 构造撮合器与回测引擎
+    broker = SimulatedBroker(
+        slippage_pct=0.0005,
+        commission_rate=0.00025,
+        min_commission=5.0,
+        stamp_tax_rate=0.0005,
+        t_plus_one=True
+    )
+    engine = BacktestEngine(strategy=strat, broker=broker, initial_cash=req.initial_cash)
+
+    # 4. 执行回测
+    result = engine.run({req.symbol: bars})
+
+    return {
+        "summary": {
+            "initial_cash": result.initial_cash,
+            "final_equity": result.final_equity,
+            "total_return": result.total_return,
+            "annualized_return": result.annualized_return,
+            "max_drawdown": result.max_drawdown,
+            "sharpe_ratio": result.sharpe_ratio,
+            "sortino_ratio": result.sortino_ratio,
+            "calmar_ratio": result.calmar_ratio,
+            "win_rate": result.win_rate,
+            "profit_factor": result.profit_factor,
+            "total_trades": result.total_trades,
+        },
+        "daily_records": result.daily_records
+    }

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import EChartWrapper from '@/components/EChartWrapper.vue'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
 
 // 基础演示图表配置 (保持暗黑质感与图表插槽就绪)
 const chartOption = ref<Record<string, any>>({
@@ -47,7 +50,7 @@ const statCards = ref([
   { title: '核心宽基', value: '3,935.20', change: '+1.24%', isUp: true, desc: '主指数实时走势' },
   { title: '全市场量化池', value: '5,340 只', change: '在线', isUp: true, desc: '实时数据流监控' },
   { title: '策略回测中枢', value: '就绪', change: 'v0.1.0', isUp: true, desc: '内核服务运行中' },
-  { title: 'API 网关状态', value: 'Active', change: '8080/8000', isUp: true, desc: '底层端点已对齐' },
+  { title: 'API 网关状态', value: 'Active', change: '8090/8080', isUp: true, desc: '鉴权与计算双就绪' },
 ])
 </script>
 
@@ -62,7 +65,7 @@ const statCards = ref([
             <h1 class="text-xl font-bold text-white tracking-tight">量化投研中枢 (QuantScope)</h1>
           </div>
           <p class="text-xs text-zinc-400 mt-1.5">
-            全栈量化系统前端框架已就绪，保留 Raycast Institutional Dark 视觉设计系统与布局容器，可在此构建您的全新功能。
+            全栈量化系统前端框架已就绪，保留 Raycast Institutional Dark 视觉设计系统与布局容器，已接入自建通用鉴权服务。
           </p>
         </div>
         <div class="flex items-center space-x-2">
@@ -70,6 +73,49 @@ const statCards = ref([
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse-glow"></span>
             系统就绪
           </span>
+        </div>
+      </div>
+
+      <!-- 用户状态快捷感知条 -->
+      <div class="mt-4 p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+        <div class="flex items-center space-x-2.5">
+          <span class="text-base">{{ authStore.isLoggedIn ? (authStore.isVip ? '👑' : '👤') : '🔒' }}</span>
+          <span v-if="authStore.isLoggedIn" class="text-zinc-300">
+            欢迎回来，<strong class="text-white">{{ authStore.username }}</strong>！已为你加载专属投研配置。
+            <span
+              v-if="authStore.isVip"
+              class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30"
+            >
+              VIP 会员生效中
+            </span>
+            <span
+              v-else
+              class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] text-zinc-400 bg-white/5 border border-white/10"
+            >
+              普通用户
+            </span>
+          </span>
+          <span v-else class="text-zinc-400">
+            当前处于访客模式，登录后可保存专属策略、自选标的池并解锁 VIP 进阶权益。
+          </span>
+        </div>
+        <div>
+          <button
+            v-if="!authStore.isLoggedIn"
+            @click="authStore.openLogin()"
+            class="text-red-400 hover:text-red-300 font-semibold inline-flex items-center space-x-1 cursor-pointer"
+          >
+            <span>立即登录 / 注册</span>
+            <span>➔</span>
+          </button>
+          <button
+            v-else-if="!authStore.isVip"
+            @click="authStore.grantVip(30)"
+            class="text-amber-400 hover:text-amber-300 font-semibold inline-flex items-center space-x-1 cursor-pointer"
+          >
+            <span>⚡ 开通 VIP 体验</span>
+            <span>➔</span>
+          </button>
         </div>
       </div>
 

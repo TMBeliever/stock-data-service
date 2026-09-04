@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import UserMenu from '@/components/UserMenu.vue'
 
 const router = useRouter()
 
@@ -31,7 +32,7 @@ const serverStatus = ref('Quant Core v0.1.0')
         </div>
       </div>
 
-      <!-- 右侧：快捷键搜索与引擎徽标 -->
+      <!-- 右侧：快捷键搜索、引擎徽标与用户系统菜单 -->
       <div class="flex items-center space-x-2.5">
         <!-- 引擎版本标签 -->
         <div class="hidden sm:flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 text-[11px]">
@@ -50,6 +51,9 @@ const serverStatus = ref('Quant Core v0.1.0')
           <span class="hidden md:inline text-zinc-400 group-hover:text-zinc-200">命令中心</span>
           <span class="kbd-badge">⌘K</span>
         </button>
+
+        <!-- 用户登录/身份系统胶囊 -->
+        <UserMenu />
       </div>
     </div>
   </header>

@@ -2,7 +2,10 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import TopCapsuleNav from '@/components/TopCapsuleNav.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
+import AuthModal from '@/components/AuthModal.vue'
+import { useAuthStore } from '@/stores/auth'
 
+const authStore = useAuthStore()
 const showPalette = ref(false)
 
 function onGlobalKeydown(e: KeyboardEvent) {
@@ -14,6 +17,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown)
+  authStore.initAuth()
 })
 
 onUnmounted(() => {
@@ -44,6 +48,9 @@ onUnmounted(() => {
 
     <!-- 4. 全局 Raycast 极客命令面板 (⌘+K) -->
     <CommandPalette :show="showPalette" @close="showPalette = false" />
+
+    <!-- 5. 全局登录/注册身份认证模态窗 -->
+    <AuthModal />
   </div>
 </template>
 

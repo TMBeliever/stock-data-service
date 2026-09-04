@@ -9,49 +9,39 @@
 
 ```mermaid
 flowchart TD
-    subgraph DataPlatform["1. 数据底座 (packages/stock-data)"]
-        SD_Adapters["数据采集器 (AkShare / YahooFinance)"]
-        SD_Storage["存储引擎 (DuckDB + 本地 Parquet)"]
-        SD_Service["数据服务网关 (FastAPI / 端口: 8000)"]
-        SD_Adapters --> SD_Storage --> SD_Service
+    subgraph Clients["1. 客户端应用 (apps/* - pnpm 管理)"]
+        Client_Web["web-admin: Vue 3 + Vite + ECharts 桌面看盘"]
+        Client_Mobile["移动小程序 / 跨端 App (预备扩展)"]
     end
 
-    subgraph QuantCore["2. 量化内核 SDK (packages/quant-core)"]
-        QC_Factors["通用因子库 (SMA, RSI, MACD, BOLL, ATR, 动量)"]
-        QC_Broker["撮合引擎 (Next-Open撮合, A股 T+1, 印花税, 滑点)"]
-        QC_Engine["事件驱动回测引擎 (BacktestEngine, PerformanceMetrics)"]
-        QC_Benchmark["基准策略库 (DualMA, DividendRebalance)"]
+    subgraph MicroServices["2. 服务端微服务 (services/* - uv 管理)"]
+        CS_Service["common-server: 用户系统、JWT 鉴权、VIP 标识 (端口: 8090)"]
+        QS_Service["quant-server: 在线回测调度 & 每日净值曲线计算 (端口: 8080)"]
     end
 
-    subgraph ServiceApp["3. 服务控制面 (apps/quant-server)"]
-        QS_API["FastAPI 异步网关 (端口: 8080)"]
-        QS_Backtest["在线回测调度 & 每日净值曲线输出"]
-        QS_Strategies["策略管理与自描述参数 Schema"]
-        QS_API --> QS_Backtest
-        QS_API --> QS_Strategies
+    subgraph CorePackages["3. 底层算法包与数据底座 (packages/*)"]
+        QC_Core["quant-core: 因子库、Next-Open 撮合、A股制度、绩效统计 SDK"]
+        SD_Platform["stock-data: 全球行情抓取、复权清洗、DuckDB + 本地 Parquet 存储 (端口: 8000)"]
     end
 
-    subgraph Clients["4. 客户端与看板应用 (apps/*)"]
-        Client_Web["web-admin: Vue 3 + Vite + ECharts 看板"]
-        Client_Mobile["移动小程序 / Swift iOS 原生 App (预备扩展)"]
-    end
-
-    SD_Service -->|"行情流 / Parquet 零拷贝直读"| QuantCore
-    QuantCore -->|"本地 Editable 依赖"| ServiceApp
-    ServiceApp -->|"REST API / WebSocket"| Clients
+    Client_Web -->|"认证与通用请求 (带 JWT)"| CS_Service
+    Client_Web -->|"量化计算与回测请求"| QS_Service
+    CS_Service <-->|"SQLite / PostgreSQL"| CS_DB[(common.db)]
+    QS_Service --> QC_Core
+    QC_Core -->|"Parquet 零拷贝直读 / API"| SD_Platform
 ```
 
 ---
 
 ## 模块结构清单
 
-| 路径 | 模块类型 | 技术栈 | 核心定位与职责 |
+| 顶层分类 | 模块路径 | 技术栈 | 核心定位与职责 |
 | :--- | :--- | :--- | :--- |
-| **`packages/stock-data`** | 核心数据包 | Python / DuckDB / Polars / FastAPI | 全球资产(A股/美股/ETF)数据抓取、除权降水因子清洗、毫秒级 Parquet 存储与行情网关。 |
-| **`packages/quant-core`** | 核心内核 SDK | Python / Polars / NumPy / Pydantic | 标准量化内核底座：内置通用因子库、模拟真实交易所撮合、A股制度模拟与绩效统计报表。 |
-| **`apps/quant-server`** | 服务应用 | Python / FastAPI / Uvicorn | 量化平台后端中枢：对外暴露在线回测、策略自描述元数据查询与账户状态接口。 |
-| **`apps/web-admin`** | 前端应用 | Vue 3 / Vite / TypeScript / ECharts | 桌面端量化投资看板：策略参数配置、回测收益曲线可视化与风控预警展示。 |
-| **`docs/`** | 架构与开发文档 | Markdown | 包含深度架构设计规范、开发实战手册与多端对接规范。 |
+| **客户端应用 (`apps/`)** | **`apps/web-admin`** | Vue 3 / Vite / TypeScript / ECharts | 桌面端量化投资看盘看板：回测可视化、收益曲线绘制与策略调优。 |
+| **服务端服务 (`services/`)** | **`services/common-server`** | Python / FastAPI / SQLAlchemy 异步 / SQLite | **通用微服务中枢**：负责用户中心、密码加盐加密、JWT 鉴权、VIP 权限守卫。 |
+| **服务端服务 (`services/`)** | **`services/quant-server`** | Python / FastAPI / Uvicorn | **量化计算中枢**：对外暴露在线策略回测、参数 Schema 自描述元数据接口。 |
+| **底层共享包 (`packages/`)** | **`packages/quant-core`** | Python / Polars / NumPy / Pydantic | **量化算法内核 SDK**：内置技术指标因子库、模拟交易所撮合、A股制度与绩效报表。 |
+| **底层共享包 (`packages/`)** | **`packages/stock-data`** | Python / DuckDB / Polars / FastAPI | **全球数据底座**：行情采集、除权分拆折算因子计算、毫秒级 Parquet 存储网关。 |
 
 ---
 

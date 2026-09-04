@@ -2,7 +2,8 @@
 members = [
     "packages/stock-data",
     "packages/quant-core",
-    "apps/quant-server",
+    "services/quant-server",
+    "services/common-server",
 ]
 
 [project]

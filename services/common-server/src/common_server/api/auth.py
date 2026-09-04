@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from common_server.database import get_db
-from common_server.models import User
+from common_server.models import User, UserStrategy
+from common_server.api.user_data import DEFAULT_PRESET_STRATEGIES
 from common_server.schemas import (
     RegisterRequest, LoginRequest, UserResponse, TokenResponse, GrantVipRequest, MessageResponse
 )
@@ -51,6 +52,18 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     db.add(user)
     await db.commit()
     await db.refresh(user)
+
+    # 5. 为新注册用户自动初始化写入 4 套标准经典策略
+    for preset in DEFAULT_PRESET_STRATEGIES:
+        strat = UserStrategy(
+            user_id=user.id,
+            name=preset["name"],
+            description=preset["description"],
+            code=preset["code"],
+            symbol=preset["symbol"]
+        )
+        db.add(strat)
+    await db.commit()
 
     return user
 

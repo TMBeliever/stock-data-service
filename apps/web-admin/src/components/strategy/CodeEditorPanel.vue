@@ -437,16 +437,6 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- 快捷新建空白策略按钮 -->
-        <button
-          @click="handleCreateBlankStrategy"
-          title="新建一份空白策略"
-          class="px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-xs text-zinc-300 hover:text-white transition-all flex items-center space-x-1 cursor-pointer"
-        >
-          <span>➕</span>
-          <span class="hidden sm:inline">新建策略</span>
-        </button>
-
         <!-- 保存策略按钮 -->
         <button
           @click="openSaveModal"

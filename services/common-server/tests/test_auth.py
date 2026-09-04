@@ -25,16 +25,16 @@ async def override_get_db():
     async with TestingSessionLocal() as session:
         yield session
 
-app.dependency_overrides[get_db] = override_get_db
-
 @pytest_asyncio.fixture(autouse=True)
 async def prepare_database():
     """每个测试运行前使用内存数据库初始化与清理，严禁影响生产或开发库"""
+    app.dependency_overrides[get_db] = override_get_db
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.mark.asyncio

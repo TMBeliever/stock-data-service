@@ -282,8 +282,10 @@ async def list_user_strategies(
     result = await db.execute(stmt)
     strategies = list(result.scalars().all())
 
-    # 若用户策略库完全为空，自动为该用户持久化初始化 4 套标准经典策略
-    if not strategies:
+    # 若用户的策略库中尚未包含任何预置策略（如老用户数据迁移、或首次访问），自动为其补全 4 套初始标准策略
+    preset_names = {p["name"] for p in DEFAULT_PRESET_STRATEGIES}
+    existing_names = {s.name for s in strategies}
+    if not (existing_names & preset_names):
         for preset in DEFAULT_PRESET_STRATEGIES:
             strat = UserStrategy(
                 user_id=current_user.id,

@@ -24,15 +24,15 @@ async def override_get_db():
     async with TestingSessionLocal() as session:
         yield session
 
-app.dependency_overrides[get_db] = override_get_db
-
 @pytest_asyncio.fixture(autouse=True)
 async def prepare_database():
+    app.dependency_overrides[get_db] = override_get_db
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.mark.asyncio
@@ -67,12 +67,12 @@ async def test_user_strategies_and_backtest_records():
         assert strat_data["name"] == "沪深300双均线策略"
         strat_id = strat_data["id"]
 
-        # 3. 获取策略列表
+        # 3. 获取策略列表 (4 套初始标准策略 + 1 套新建策略 = 5)
         list_resp = await client.get("/api/v1/user/strategies", headers=headers)
         assert list_resp.status_code == 200
         strategies = list_resp.json()
-        assert len(strategies) == 1
-        assert strategies[0]["id"] == strat_id
+        assert len(strategies) == 5
+        assert any(s["id"] == strat_id for s in strategies)
 
         # 4. 更新策略
         update_resp = await client.put(f"/api/v1/user/strategies/{strat_id}", headers=headers, json={

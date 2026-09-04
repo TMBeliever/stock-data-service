@@ -7,6 +7,7 @@ from quant_core.backtest.broker import SimulatedBroker
 from quant_core.backtest.engine import BacktestEngine
 from quant_core.strategies.moving_average_cross import DualMovingAverageStrategy
 from quant_core.strategies.dividend_etf_rebalance import DividendETFRebalanceStrategy
+from quant_core.strategies.dividend_dca import SmartDividendDCAStrategy
 
 router = APIRouter()
 
@@ -34,6 +35,10 @@ def run_backtest_endpoint(req: BacktestRequest):
     elif req.strategy == "dividend":
         win = req.params.get("window", 120) if req.params else 120
         strat = DividendETFRebalanceStrategy(window=win)
+    elif req.strategy == "dca":
+        base_amt = req.params.get("base_amount", 1000.0) if req.params else 1000.0
+        win = req.params.get("window", 250) if req.params else 250
+        strat = SmartDividendDCAStrategy(base_amount=base_amt, window=win, enable_take_profit=True)
     else:
         raise HTTPException(status_code=400, detail=f"Unknown strategy: {req.strategy}")
 

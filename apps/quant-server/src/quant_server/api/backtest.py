@@ -9,12 +9,14 @@ from quant_core.strategies.moving_average_cross import DualMovingAverageStrategy
 from quant_core.strategies.dividend_etf_rebalance import DividendETFRebalanceStrategy
 from quant_core.strategies.dividend_dca import SmartDividendDCAStrategy
 from quant_core.strategies.buy_and_hold import BuyAndHoldStrategy
+from quant_core.strategies.extreme_dip_heavy import ExtremeDipHeavyStrategy
+from quant_core.strategies.dynamic_rebalance import DynamicRebalanceStrategy
 
 router = APIRouter()
 
 class BacktestRequest(BaseModel):
     symbol: str = Field(default="510300.SH.ETF", description="回测标的代码")
-    strategy: str = Field(default="dca", description="策略类型: dca, all_in, ma, dividend")
+    strategy: str = Field(default="dca", description="策略类型: dca, all_in, ma, dividend, dip_heavy, rebalance")
     start: str = Field(default="2021-01-01", description="开始日期 YYYY-MM-DD")
     end: Optional[str] = Field(default=None, description="结束日期 YYYY-MM-DD (留空为最新日)")
     initial_cash: float = Field(default=100_000.0, description="初始资金 (CNY)")
@@ -43,6 +45,16 @@ def run_backtest_endpoint(req: BacktestRequest):
     elif req.strategy in ("all_in", "buy_and_hold"):
         target_pct = req.params.get("target_pct", 0.99) if req.params else 0.99
         strat = BuyAndHoldStrategy(target_pct=target_pct)
+    elif req.strategy in ("dip_heavy", "extreme_dip"):
+        ma_p = req.params.get("ma_period", 120) if req.params else 120
+        dip_t = req.params.get("dip_threshold", 0.20) if req.params else 0.20
+        def_pct = req.params.get("defensive_pct", 0.20) if req.params else 0.20
+        strat = ExtremeDipHeavyStrategy(ma_period=ma_p, dip_threshold=dip_t, defensive_pct=def_pct)
+    elif req.strategy in ("rebalance", "dynamic_rebalance"):
+        tgt = req.params.get("target_pct", 0.85) if req.params else 0.85
+        band = req.params.get("rebalance_band", 0.05) if req.params else 0.05
+        chk = req.params.get("check_interval", 5) if req.params else 5
+        strat = DynamicRebalanceStrategy(target_pct=tgt, rebalance_band=band, check_interval=chk)
     else:
         raise HTTPException(status_code=400, detail=f"Unknown strategy: {req.strategy}")
 

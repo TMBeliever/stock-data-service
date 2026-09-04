@@ -12,11 +12,12 @@ export default defineConfig(({ mode }) => {
   const quantTarget = isOnline && env.VITE_ONLINE_QUANT === 'true' ? `http://${onlineHost}:8080` : 'http://localhost:8080'
   const authTarget = isOnline && env.VITE_ONLINE_AUTH === 'true' ? `http://${onlineHost}:8090` : 'http://localhost:8090'
   const aiTarget = env.VITE_AI_TARGET || 'http://localhost:8070'
+  const agentTarget = env.VITE_AGENT_TARGET || 'http://localhost:8060'
 
   console.log(`\n==================================================`)
   console.log(isOnline
     ? `  🌐 Web-Admin 环境模式: 【线上部署环境】 -> 行情中台: http://${onlineHost}:8000`
-    : `  💻 Web-Admin 环境模式: 【本地全闭环环境】 -> 基础服务: http://localhost:8000/8080/8090/8070`
+    : `  💻 Web-Admin 环境模式: 【本地全闭环环境】 -> 基础服务: http://localhost:8000/8080/8090/8070/8060`
   )
   console.log(`==================================================\n`)
 
@@ -33,6 +34,11 @@ export default defineConfig(({ mode }) => {
         // 0. AI 大模型协同与流式中枢
         '/api/v1/ai': {
           target: aiTarget,
+          changeOrigin: true,
+        },
+        // 0.1 Quant Agent 智能投研与多端工具中枢 (quant-agent :8060)
+        '/api/v1/agent': {
+          target: agentTarget,
           changeOrigin: true,
         },
         // 1. 通用业务与用户鉴权服务 (common-server :8090)

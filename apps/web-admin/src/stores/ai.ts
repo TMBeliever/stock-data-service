@@ -3,6 +3,15 @@ import { ref, computed } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useStrategyStore } from '@/stores/strategy'
 
+export interface AiToolCall {
+  id: string
+  name: string
+  arguments?: Record<string, any>
+  outputPreview?: string
+  status: 'calling' | 'done' | 'failed'
+  step?: number
+}
+
 export interface AiChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -10,6 +19,7 @@ export interface AiChatMessage {
   timestamp: number
   codeBlock?: string
   pageContext?: string
+  toolCalls?: AiToolCall[]
 }
 
 export interface QuickPrompt {
@@ -230,19 +240,19 @@ ${contextSnippet}`
     try {
       const systemPrompt = buildSystemPrompt(currentRoutePath)
 
-      const resp = await fetch('/api/v1/ai/stream', {
+      const resp = await fetch('/api/v1/agent/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: promptText,
           model: aiModel.value,
-          stream: true,
+          page_context: currentRoutePath,
           system_prompt: systemPrompt,
         }),
       })
 
       if (!resp.ok) {
-        throw new Error(`AI 服务异常 (${resp.status}): ${await resp.text()}`)
+        throw new Error(`智能体服务异常 (${resp.status}): ${await resp.text()}`)
       }
 
       const reader = resp.body?.getReader()
@@ -250,6 +260,7 @@ ${contextSnippet}`
 
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
+      let currentEventType = 'message'
 
       while (true) {
         const { done, value } = await reader.read()
@@ -260,20 +271,65 @@ ${contextSnippet}`
         buffer = lines.pop() || ''
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const rawData = line.slice(6).trim()
-            if (rawData === '[DONE]') {
+          const trimmed = line.trim()
+          if (!trimmed) {
+            currentEventType = 'message'
+            continue
+          }
+
+          if (trimmed.startsWith('event:')) {
+            currentEventType = trimmed.slice(6).trim()
+            continue
+          }
+
+          if (trimmed.startsWith('data:')) {
+            const rawData = trimmed.slice(5).trim()
+            if (rawData === '[DONE]' || currentEventType === 'done') {
               break
             }
+
             try {
-              const parsed = JSON.parse(rawData)
-              if (parsed.delta) {
-                assistantMsg.content += parsed.delta
-              } else if (parsed.content) {
-                assistantMsg.content = parsed.content
+              if (currentEventType === 'tool_call') {
+                const call = JSON.parse(rawData)
+                if (!assistantMsg.toolCalls) assistantMsg.toolCalls = []
+                const existing = assistantMsg.toolCalls.find((t) => t.id === call.id)
+                if (!existing) {
+                  assistantMsg.toolCalls.push({
+                    id: call.id,
+                    name: call.name,
+                    arguments: call.arguments,
+                    status: 'calling',
+                    step: call.step,
+                  })
+                }
+              } else if (currentEventType === 'tool_result') {
+                const res = JSON.parse(rawData)
+                if (!assistantMsg.toolCalls) assistantMsg.toolCalls = []
+                const existing = assistantMsg.toolCalls.find((t) => t.id === res.id)
+                if (existing) {
+                  existing.status = 'done'
+                  existing.outputPreview = res.output_preview
+                } else {
+                  assistantMsg.toolCalls.push({
+                    id: res.id,
+                    name: res.name,
+                    outputPreview: res.output_preview,
+                    status: 'done',
+                    step: res.step,
+                  })
+                }
+              } else if (currentEventType === 'message') {
+                const parsed = JSON.parse(rawData)
+                if (parsed.delta) {
+                  assistantMsg.content += parsed.delta
+                } else if (parsed.content) {
+                  assistantMsg.content = parsed.content
+                }
               }
             } catch {
-              assistantMsg.content += rawData
+              if (currentEventType === 'message') {
+                assistantMsg.content += rawData
+              }
             }
           }
         }

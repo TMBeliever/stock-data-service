@@ -82,6 +82,32 @@ function renderMarkdown(content: string) {
   }
 }
 
+const toolMetaMap: Record<string, { label: string; icon: string }> = {
+  get_stock_kline: { label: '高精度 K 线走势', icon: '📈' },
+  get_stock_valuation: { label: '个股实时估值 (PE/PB/分位)', icon: '💎' },
+  get_stock_financials: { label: '上市公司三大财报 (PIT)', icon: '📑' },
+  get_stock_profile: { label: '公司画像与行业分类', icon: '🏢' },
+  get_stock_shareholders: { label: '股东户数与筹码集中度', icon: '👥' },
+  get_market_sectors: { label: '全市场行业/概念板块排名', icon: '📊' },
+  get_dragon_tiger_list: { label: '每日交易所龙虎榜明细', icon: '🐉' },
+  screen_stocks: { label: 'A股截面强势股选股器', icon: '🎯' },
+  get_macro_treasury_yield: { label: '中美10年期国债收益率', icon: '🏛️' },
+  get_system_storage_status: { label: '量化数据中台存储水位', icon: '💾' },
+  validate_strategy_code: { label: 'Python 量化策略代码诊断', icon: '🔍' },
+  run_backtest_fast: { label: '沙箱极速量化回测引擎', icon: '⚡' },
+}
+
+function getToolMeta(name: string) {
+  return toolMetaMap[name] || { label: name, icon: '🔧' }
+}
+
+function formatToolArgs(args?: Record<string, any>) {
+  if (!args || Object.keys(args).length === 0) return ''
+  return Object.entries(args)
+    .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
+    .join(', ')
+}
+
 // 切换模型处理
 function handleSelectModel(modelKey: 'gemini-flash-lite-latest' | 'claude') {
   if (modelKey === 'claude') {
@@ -487,33 +513,61 @@ onUnmounted(() => {
             <span>{{ new Date(msg.timestamp).toLocaleTimeString() }}</span>
           </div>
 
-          <!-- 当 AI 刚响应、内容尚未吐出时：展示 Loading 小机器人卡片 -->
+          <!-- 当 AI 刚响应、内容尚未吐出时：展示 Loading 小机器人卡片与工具执行状态 -->
           <div
             v-if="msg.role === 'assistant' && (!msg.content || !msg.content.trim())"
-            class="p-3.5 bg-[#171922]/90 border border-amber-500/25 rounded-2xl rounded-tl-sm shadow-xl flex items-center space-x-3.5 backdrop-blur-md self-start max-w-full"
+            class="p-3.5 bg-[#171922]/90 border border-amber-500/25 rounded-2xl rounded-tl-sm shadow-xl flex flex-col space-y-2.5 backdrop-blur-md self-start max-w-full w-full"
           >
-            <!-- 小机器人动画主体 -->
-            <div class="relative shrink-0 flex items-center justify-center">
-              <div class="absolute -inset-1 rounded-full bg-gradient-to-r from-amber-500/30 to-orange-500/30 blur-sm animate-pulse"></div>
-              <div class="relative w-10 h-10 rounded-xl bg-gradient-to-b from-zinc-800 to-zinc-900 border border-amber-500/40 flex items-center justify-center text-xl shadow-lg robot-float">
-                <span class="absolute -top-1 w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
-                <span>🤖</span>
+            <div class="flex items-center space-x-3.5">
+              <!-- 小机器人动画主体 -->
+              <div class="relative shrink-0 flex items-center justify-center">
+                <div class="absolute -inset-1 rounded-full bg-gradient-to-r from-amber-500/30 to-orange-500/30 blur-sm animate-pulse"></div>
+                <div class="relative w-10 h-10 rounded-xl bg-gradient-to-b from-zinc-800 to-zinc-900 border border-amber-500/40 flex items-center justify-center text-xl shadow-lg robot-float">
+                  <span class="absolute -top-1 w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
+                  <span>🤖</span>
+                </div>
+              </div>
+
+              <!-- 思考状态文字与跳动粒子 -->
+              <div class="flex-1 min-w-0 space-y-1">
+                <div class="flex items-center space-x-2">
+                  <span class="text-xs font-semibold text-amber-300 tracking-wide">
+                    {{ msg.toolCalls && msg.toolCalls.length > 0 ? 'Quant Copilot 正在调用金融/量化工具链' : 'Quant Copilot 正在思考' }}
+                  </span>
+                  <span class="flex space-x-1 items-center">
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 0ms"></span>
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 150ms"></span>
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 300ms"></span>
+                  </span>
+                </div>
+                <div class="text-[11px] text-zinc-400 truncate flex items-center space-x-1.5">
+                  <span class="text-amber-500/80">⚡</span>
+                  <span>{{ msg.toolCalls && msg.toolCalls.length > 0 ? '正在连接金融中台 MCP 获取实时数据并执行验证...' : '正在检索量化语义树与因子逻辑，即将生成回复...' }}</span>
+                </div>
               </div>
             </div>
 
-            <!-- 思考状态文字与跳动粒子 -->
-            <div class="flex-1 min-w-0 space-y-1">
-              <div class="flex items-center space-x-2">
-                <span class="text-xs font-semibold text-amber-300 tracking-wide">Quant Copilot 正在思考</span>
-                <span class="flex space-x-1 items-center">
-                  <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 0ms"></span>
-                  <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 150ms"></span>
-                  <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 300ms"></span>
+            <!-- 工具执行动态卡片列表 (思考阶段) -->
+            <div v-if="msg.toolCalls && msg.toolCalls.length > 0" class="pt-2 border-t border-white/[0.06] space-y-1.5">
+              <div
+                v-for="tool in msg.toolCalls"
+                :key="tool.id"
+                class="px-2.5 py-1.5 rounded-xl border bg-black/40 text-[11px] font-mono flex items-center justify-between transition-all"
+                :class="tool.status === 'calling' ? 'border-amber-500/40 text-amber-300' : 'border-emerald-500/30 text-emerald-300'"
+              >
+                <div class="flex items-center space-x-1.5 truncate">
+                  <span class="text-xs">{{ getToolMeta(tool.name).icon }}</span>
+                  <span class="font-semibold text-zinc-200">{{ getToolMeta(tool.name).label }}</span>
+                  <span v-if="formatToolArgs(tool.arguments)" class="text-[10px] text-zinc-400 truncate max-w-[150px]">
+                    ({{ formatToolArgs(tool.arguments) }})
+                  </span>
+                </div>
+                <span
+                  class="text-[9px] px-1.5 py-0.5 rounded shrink-0 ml-1.5"
+                  :class="tool.status === 'calling' ? 'bg-amber-500/20 text-amber-300 animate-pulse' : 'bg-emerald-500/20 text-emerald-300'"
+                >
+                  {{ tool.status === 'calling' ? '⚡ 执行中...' : '✓ 完成' }}
                 </span>
-              </div>
-              <div class="text-[11px] text-zinc-400 truncate flex items-center space-x-1.5">
-                <span class="text-amber-500/80">⚡</span>
-                <span>正在检索量化语义树与因子逻辑，即将生成回复...</span>
               </div>
             </div>
           </div>
@@ -526,6 +580,47 @@ onUnmounted(() => {
               : 'bg-white/[0.03] border border-white/[0.06] text-zinc-300 self-start rounded-2xl rounded-tl-sm w-full'"
             class="p-3 leading-relaxed shadow-sm"
           >
+            <!-- 助手端：工具调用链路审计卡片 (Tool Calls Audit Strip) -->
+            <div
+              v-if="msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0"
+              class="mb-3 space-y-1.5"
+            >
+              <div class="text-[10px] text-zinc-400 font-mono flex items-center space-x-1.5 px-0.5">
+                <span class="text-amber-400">🔧</span>
+                <span class="font-semibold text-zinc-300">已调用的投研工具链 ({{ msg.toolCalls.length }})：</span>
+              </div>
+              <div
+                v-for="tool in msg.toolCalls"
+                :key="tool.id"
+                class="rounded-xl border bg-black/40 text-[11px] font-mono overflow-hidden transition-all"
+                :class="tool.status === 'calling' ? 'border-amber-500/40 text-amber-300' : 'border-emerald-500/25 text-emerald-300'"
+              >
+                <details class="group/detail">
+                  <summary class="px-2.5 py-1.5 flex items-center justify-between cursor-pointer select-none hover:bg-white/[0.02]">
+                    <div class="flex items-center space-x-1.5 truncate">
+                      <span class="text-xs">{{ getToolMeta(tool.name).icon }}</span>
+                      <span class="font-semibold text-zinc-200">{{ getToolMeta(tool.name).label }}</span>
+                      <span v-if="formatToolArgs(tool.arguments)" class="text-[10px] text-zinc-400 truncate max-w-[130px]">
+                        ({{ formatToolArgs(tool.arguments) }})
+                      </span>
+                    </div>
+                    <div class="flex items-center space-x-1.5 shrink-0 ml-1.5">
+                      <span
+                        class="text-[9px] px-1.5 py-0.5 rounded"
+                        :class="tool.status === 'calling' ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'"
+                      >
+                        {{ tool.status === 'calling' ? '执行中' : '✓ 真实数据' }}
+                      </span>
+                      <span v-if="tool.outputPreview" class="text-[9px] text-zinc-500 group-open/detail:rotate-180 transition-transform">▼</span>
+                    </div>
+                  </summary>
+                  <div v-if="tool.outputPreview" class="p-2 border-t border-white/[0.06] bg-black/70 text-[10px] text-zinc-400 font-mono overflow-x-auto max-h-36">
+                    <pre class="whitespace-pre-wrap leading-tight">{{ tool.outputPreview }}</pre>
+                  </div>
+                </details>
+              </div>
+            </div>
+
             <!-- Markdown 内容 -->
             <div
               class="prose prose-invert prose-xs max-w-none break-words space-y-2 select-text"

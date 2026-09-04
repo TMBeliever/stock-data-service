@@ -5,6 +5,7 @@ members = [
     "packages/ai-core",
     "services/quant-server",
     "services/common-server",
+    "services/quant-agent",
 ]
 
 [project]

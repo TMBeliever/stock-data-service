@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from ai_core.config import ai_config
-from ai_core.models import Message, AIResponse
+from ai_core.models import Message, AIResponse, ToolDefinition
 from ai_core.orchestrator import ai_orchestrator
 
 app = FastAPI(
@@ -29,6 +29,7 @@ class GenerateRequest(BaseModel):
     prompt: Optional[str] = Field(None, description="简单输入提示词")
     system_prompt: Optional[str] = Field(None, description="系统提示词设定")
     messages: Optional[List[Message]] = Field(None, description="标准多轮消息列表 (若提供则优先于 prompt)")
+    tools: Optional[List[ToolDefinition]] = Field(None, description="可选模型挂载工具定义列表")
     provider: Optional[str] = Field(None, description="驱动类型: 'key' 或 'cli' (默认从配置自动读取)")
     model: Optional[str] = Field(None, description="指定模型名称 (仅适用于 key 驱动)")
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="采样随机度")
@@ -81,6 +82,7 @@ async def generate_completion(req: GenerateRequest):
         response = await ai_orchestrator.generate(
             messages=messages,
             provider_type=req.provider,
+            tools=req.tools,
             **extra_kwargs
         )
         return response
@@ -105,13 +107,16 @@ async def stream_completion_post(req: GenerateRequest):
             async for chunk in ai_orchestrator.generate_stream(
                 messages=messages,
                 provider_type=req.provider,
+                tools=req.tools,
                 **extra_kwargs
             ):
-                payload = {
+                payload: Dict[str, Any] = {
                     "delta": chunk.delta,
                     "role": chunk.role,
                     "finish_reason": chunk.finish_reason
                 }
+                if chunk.tool_calls:
+                    payload["tool_calls"] = [tc.model_dump() for tc in chunk.tool_calls]
                 yield {"event": "message", "data": json.dumps(payload, ensure_ascii=False)}
         except Exception as e:
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}

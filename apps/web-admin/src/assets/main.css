@@ -1,0 +1,195 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   Raycast 极客暗黑质感设计系统 (Raycast Institutional Dark Theme)
+   ========================================================================== */
+
+:root {
+  /* 基础背景与色阶 */
+  --bg-app: #0a0a0c;
+  --bg-surface-1: rgba(18, 18, 22, 0.65);
+  --bg-surface-2: rgba(26, 26, 32, 0.75);
+  --bg-surface-active: rgba(36, 36, 46, 0.85);
+  --bg-capsule: rgba(18, 18, 22, 0.78);
+  
+  /* 边框与微光 */
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-medium: rgba(255, 255, 255, 0.14);
+  --border-highlight: rgba(255, 255, 255, 0.24);
+  --border-glow-red: rgba(255, 45, 85, 0.4);
+  --border-glow-amber: rgba(255, 95, 61, 0.4);
+
+  /* 文字层级 (高对比度灰度) */
+  --text-primary: #f4f4f6;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+  --text-muted: #52525b;
+
+  /* A 股金融语义色彩 */
+  --up-color: #ff2d55;             /* 上涨 / 看多 玫瑰红 */
+  --up-bg: rgba(255, 45, 85, 0.12);
+  --up-border: rgba(255, 45, 85, 0.28);
+  
+  --down-color: #30d4a4;           /* 下跌 / 看空 薄荷绿 */
+  --down-bg: rgba(48, 212, 164, 0.12);
+  --down-border: rgba(48, 212, 164, 0.28);
+
+  --accent-orange: #ff5f3d;        /* 品牌点缀 晚霞橙 */
+  --accent-orange-glow: rgba(255, 95, 61, 0.25);
+  --accent-purple: #8b5cf6;        /* 深度量化 / 研报 极客紫 */
+  --accent-purple-glow: rgba(139, 92, 246, 0.25);
+  --accent-blue: #3b82f6;          /* 宏观 / 量化 科技蓝 */
+
+  /* 阴影与光晕 */
+  --shadow-raycast: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 24px 64px -12px rgba(0, 0, 0, 0.75);
+  --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 8px 24px -4px rgba(0, 0, 0, 0.45);
+  --shadow-glow-red: 0 0 35px -5px rgba(255, 45, 85, 0.2);
+  --shadow-glow-orange: 0 0 35px -5px rgba(255, 95, 61, 0.2);
+}
+
+/* ---------- 基础重置 ---------- */
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+  user-select: none;
+}
+
+/* 允许文本内容与表格自由复制 */
+p, span, h1, h2, h3, h4, h5, h6, table, code, pre, .selectable {
+  user-select: text;
+}
+
+/* ---------- 弥散光晕背景与微粒噪点质感 ---------- */
+.raycast-bg-container {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.raycast-glow-top {
+  position: absolute;
+  top: -180px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 900px;
+  height: 480px;
+  background: radial-gradient(circle, rgba(255, 95, 61, 0.12) 0%, rgba(255, 45, 85, 0.08) 45%, rgba(10, 10, 12, 0) 70%);
+  filter: blur(60px);
+}
+
+.raycast-glow-subtle {
+  position: absolute;
+  top: 30%;
+  right: -100px;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.06) 0%, rgba(10, 10, 12, 0) 70%);
+  filter: blur(80px);
+}
+
+/* 微细噪点纹理叠加 (Film Grain Texture) */
+.raycast-noise-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.028;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+}
+
+/* ---------- 通用玻璃拟态与卡片 ---------- */
+.glass-panel {
+  background: var(--bg-surface-1);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-panel-interactive {
+  background: var(--bg-surface-1);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+}
+
+.glass-panel-interactive:hover {
+  background: var(--bg-surface-2);
+  border-color: var(--border-medium);
+  transform: translateY(-1px);
+  box-shadow: 0 12px 32px -4px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--border-medium);
+}
+
+/* 顶部悬浮磨砂胶囊 */
+.capsule-nav {
+  background: var(--bg-capsule);
+  backdrop-filter: blur(24px) saturate(190%);
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-raycast);
+}
+
+/* ---------- 快捷键徽标 (Key Badge) ---------- */
+.kbd-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  min-width: 20px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+}
+
+/* ---------- 优雅极细暗黑滚动条 ---------- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* ---------- 呼吸灯脉冲动画 ---------- */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(1.15); }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ---------- 数字等宽字体类 ---------- */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}

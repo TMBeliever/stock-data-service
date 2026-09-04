@@ -250,6 +250,71 @@ function onCornerMouseUp() {
   window.removeEventListener('mouseup', onCornerMouseUp)
 }
 
+// -------------------------------------------------------------
+// 悬浮胶囊召唤器自由拖动 (Draggable Floating Trigger) 逻辑
+// -------------------------------------------------------------
+const triggerPos = ref({
+  x: typeof window !== 'undefined' ? Math.max(20, window.innerWidth - 220) : 1150,
+  y: typeof window !== 'undefined' ? Math.max(20, window.innerHeight - 70) : 720,
+})
+
+let isDraggingTrigger = false
+let triggerMouseStartX = 0
+let triggerMouseStartY = 0
+let triggerInitialX = 0
+let triggerInitialY = 0
+let hasTriggerMoved = false
+
+function onTriggerMouseDown(e: MouseEvent) {
+  if (e.button !== 0) return // 仅响应鼠标左键
+  isDraggingTrigger = true
+  hasTriggerMoved = false
+  triggerMouseStartX = e.clientX
+  triggerMouseStartY = e.clientY
+  triggerInitialX = triggerPos.value.x
+  triggerInitialY = triggerPos.value.y
+
+  window.addEventListener('mousemove', onTriggerMouseMove)
+  window.addEventListener('mouseup', onTriggerMouseUp)
+}
+
+function onTriggerMouseMove(e: MouseEvent) {
+  if (!isDraggingTrigger) return
+  const deltaX = e.clientX - triggerMouseStartX
+  const deltaY = e.clientY - triggerMouseStartY
+
+  if (Math.hypot(deltaX, deltaY) > 3) {
+    hasTriggerMoved = true
+  }
+
+  const maxX = Math.max(10, window.innerWidth - 200)
+  const maxY = Math.max(10, window.innerHeight - 56)
+  const newX = Math.min(Math.max(10, triggerInitialX + deltaX), maxX)
+  const newY = Math.min(Math.max(10, triggerInitialY + deltaY), maxY)
+
+  triggerPos.value = { x: newX, y: newY }
+}
+
+function onTriggerMouseUp(e: MouseEvent) {
+  if (!isDraggingTrigger) return
+  isDraggingTrigger = false
+  window.removeEventListener('mousemove', onTriggerMouseMove)
+  window.removeEventListener('mouseup', onTriggerMouseUp)
+
+  // 若用户未进行明显拖拽，则触发点击唤醒助手
+  if (!hasTriggerMoved) {
+    aiStore.open()
+  }
+}
+
+function handleWindowResize() {
+  if (typeof window === 'undefined') return
+  const maxX = Math.max(10, window.innerWidth - 200)
+  const maxY = Math.max(10, window.innerHeight - 56)
+  if (triggerPos.value.x > maxX) triggerPos.value.x = maxX
+  if (triggerPos.value.y > maxY) triggerPos.value.y = maxY
+}
+
 // 全局 ⌘+J 唤起快捷键
 function handleGlobalKeydown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
@@ -260,29 +325,40 @@ function handleGlobalKeydown(e: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('keydown', handleGlobalKeydown)
+  window.addEventListener('resize', handleWindowResize)
+  handleWindowResize()
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
+  window.removeEventListener('resize', handleWindowResize)
   window.removeEventListener('mousemove', onHeaderMouseMove)
   window.removeEventListener('mouseup', onHeaderMouseUp)
   window.removeEventListener('mousemove', onCornerMouseMove)
   window.removeEventListener('mouseup', onCornerMouseUp)
+  window.removeEventListener('mousemove', onTriggerMouseMove)
+  window.removeEventListener('mouseup', onTriggerMouseUp)
 })
 </script>
 
 <template>
-  <div>
-    <!-- 1. 收起状态：右下角极简暗色毛玻璃悬浮胶囊 (Refined Obsidian Glass Floating Trigger) -->
+  <teleport to="body">
+    <!-- 1. 收起状态：支持全屏自由拖拽的暗色毛玻璃悬浮胶囊 (Draggable Floating Capsule) -->
     <transition name="fade">
-      <button
+      <div
         v-if="!aiStore.isOpen"
-        @click="aiStore.open()"
-        class="fixed bottom-6 right-6 z-40 group flex items-center space-x-2.5 pl-3 pr-3.5 py-2 rounded-full bg-[#13151b]/92 hover:bg-[#181a23]/96 border border-white/[0.12] hover:border-amber-500/50 shadow-2xl shadow-black/80 hover:shadow-amber-500/15 backdrop-blur-2xl transition-all duration-200 transform hover:-translate-y-0.5 cursor-pointer select-none"
-        title="唤醒全站 AI 智能投研助手 (快捷键: ⌘+J)"
+        @mousedown="onTriggerMouseDown"
+        :style="{
+          position: 'fixed',
+          left: `${triggerPos.x}px`,
+          top: `${triggerPos.y}px`,
+          zIndex: 9999,
+        }"
+        class="group flex items-center space-x-2.5 pl-3 pr-3.5 py-2 rounded-full bg-[#13151b]/95 hover:bg-[#181a23] border border-white/[0.14] hover:border-amber-500/50 shadow-2xl shadow-black/80 hover:shadow-amber-500/20 backdrop-blur-2xl transition-shadow duration-200 cursor-grab active:cursor-grabbing select-none"
+        title="按住鼠标左键可自由拖动位置，点击唤醒全站 AI 智能助手 (⌘+J)"
       >
         <!-- 左侧机器人状态微章 -->
-        <div class="relative flex items-center justify-center w-7 h-7 rounded-xl bg-gradient-to-br from-amber-500/20 via-orange-500/15 to-transparent border border-amber-500/30 text-sm shadow-sm group-hover:border-amber-400/60 transition-colors">
+        <div class="relative flex items-center justify-center w-7 h-7 rounded-xl bg-gradient-to-br from-amber-500/20 via-orange-500/15 to-transparent border border-amber-500/30 text-sm shadow-sm group-hover:border-amber-400/60 transition-colors pointer-events-none">
           <span>🤖</span>
           <!-- 呼吸状态灯 -->
           <span
@@ -292,7 +368,7 @@ onUnmounted(() => {
         </div>
 
         <!-- 中部文字说明 -->
-        <div class="flex flex-col text-left">
+        <div class="flex flex-col text-left pointer-events-none">
           <div class="flex items-center space-x-1.5">
             <span class="text-xs font-semibold text-zinc-100 group-hover:text-amber-300 transition-colors tracking-wide">Quant Copilot</span>
           </div>
@@ -303,22 +379,24 @@ onUnmounted(() => {
         </div>
 
         <!-- 右侧快捷键 Badge -->
-        <div class="ml-1 pl-2 border-l border-white/[0.1] flex items-center">
+        <div class="ml-1 pl-2 border-l border-white/[0.1] flex items-center pointer-events-none">
           <kbd class="text-[10px] px-1.5 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.12] text-zinc-300 font-mono shadow-inner group-hover:border-amber-500/40 group-hover:text-amber-300 transition-colors">⌘J</kbd>
         </div>
-      </button>
+      </div>
     </transition>
 
-    <!-- 2. 展开状态：自由拖拽与四角鼠标缩放的毛玻璃独立悬浮窗 -->
+    <!-- 2. 展开状态：自由拖拽与四角鼠标缩放的毛玻璃独立悬浮窗 (Fixed Floating Window) -->
     <div
       v-if="aiStore.isOpen"
       :style="{
+        position: 'fixed',
         left: `${aiStore.position.x}px`,
         top: `${aiStore.position.y}px`,
         width: `${aiStore.size.width}px`,
         height: `${aiStore.size.height}px`,
+        zIndex: 9999,
       }"
-      class="fixed z-50 bg-[#121316]/95 border border-white/[0.14] rounded-2xl shadow-2xl flex flex-col backdrop-blur-2xl select-none relative group"
+      class="bg-[#121316]/95 border border-white/[0.14] rounded-2xl shadow-2xl flex flex-col backdrop-blur-2xl select-none group"
     >
       <!-- 提示气泡 Toast -->
       <div
@@ -634,7 +712,7 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
-  </div>
+  </teleport>
 </template>
 
 <style scoped>

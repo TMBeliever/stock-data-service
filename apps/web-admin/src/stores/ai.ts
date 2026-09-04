@@ -60,6 +60,16 @@ export const useAiStore = defineStore('ai', () => {
   }
 
   function open() {
+    if (typeof window !== 'undefined') {
+      const maxX = Math.max(10, window.innerWidth - size.value.width - 20)
+      const maxY = Math.max(10, window.innerHeight - size.value.height - 20)
+      if (position.value.x > maxX || position.value.x < 10) {
+        position.value.x = Math.max(10, maxX)
+      }
+      if (position.value.y > maxY || position.value.y < 10) {
+        position.value.y = Math.max(70, Math.min(position.value.y, maxY))
+      }
+    }
     isOpen.value = true
   }
 

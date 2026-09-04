@@ -13,7 +13,7 @@ services:
   quant-server:
     build:
       context: .
-      dockerfile: apps/quant-server/Dockerfile
+      dockerfile: services/quant-server/Dockerfile
     container_name: quant-server-service
     restart: unless-stopped
     ports:
@@ -25,5 +25,19 @@ services:
     depends_on:
       - stock-data
 
+  common-server:
+    build:
+      context: services/common-server
+      dockerfile: Dockerfile
+    container_name: common-server-service
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    environment:
+      - COMMON_ENVIRONMENT=production
+    volumes:
+      - common_data_storage:/app/data
+
 volumes:
   stock_data_storage:
+  common_data_storage:

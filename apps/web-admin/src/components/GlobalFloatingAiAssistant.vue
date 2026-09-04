@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRoute } from 'vue-router'
 import { marked } from 'marked'
 import { useAiStore } from '@/stores/ai'
@@ -253,7 +254,7 @@ function onCornerMouseUp() {
 // -------------------------------------------------------------
 // 悬浮胶囊召唤器自由拖动 (Draggable Floating Trigger) 逻辑
 // -------------------------------------------------------------
-const triggerPos = aiStore.triggerPosition
+const { triggerPosition: triggerPos } = storeToRefs(aiStore)
 
 let isDraggingTrigger = false
 let triggerMouseStartX = 0
@@ -268,8 +269,8 @@ function onTriggerMouseDown(e: MouseEvent) {
   hasTriggerMoved = false
   triggerMouseStartX = e.clientX
   triggerMouseStartY = e.clientY
-  triggerInitialX = triggerPos.value.x
-  triggerInitialY = triggerPos.value.y
+  triggerInitialX = triggerPos.value?.x ?? 1150
+  triggerInitialY = triggerPos.value?.y ?? 720
 
   window.addEventListener('mousemove', onTriggerMouseMove)
   window.addEventListener('mouseup', onTriggerMouseUp)
@@ -299,13 +300,14 @@ function onTriggerMouseUp(e: MouseEvent) {
   window.removeEventListener('mouseup', onTriggerMouseUp)
 
   // 若用户未进行明显拖拽，则触发点击唤醒助手（在悬浮球旁边展开）
-  if (!hasTriggerMoved) {
+  if (!hasTriggerMoved && triggerPos.value) {
     aiStore.open(triggerPos.value)
   }
 }
 
 function handleWindowResize() {
   if (typeof window === 'undefined') return
+  if (!triggerPos.value) return
   const maxX = Math.max(10, window.innerWidth - 200)
   const maxY = Math.max(10, window.innerHeight - 56)
   if (triggerPos.value.x > maxX) triggerPos.value.x = maxX
@@ -347,8 +349,8 @@ onUnmounted(() => {
         @mousedown="onTriggerMouseDown"
         :style="{
           position: 'fixed',
-          left: `${triggerPos.x}px`,
-          top: `${triggerPos.y}px`,
+          left: `${triggerPos?.x ?? 1150}px`,
+          top: `${triggerPos?.y ?? 720}px`,
           zIndex: 9999,
         }"
         class="group flex items-center space-x-2.5 pl-3 pr-3.5 py-2 rounded-full bg-[#13151b]/95 hover:bg-[#181a23] border border-white/[0.14] hover:border-amber-500/50 shadow-2xl shadow-black/80 hover:shadow-amber-500/20 backdrop-blur-2xl transition-shadow duration-200 cursor-grab active:cursor-grabbing select-none"

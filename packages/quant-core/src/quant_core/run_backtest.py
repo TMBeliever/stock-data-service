@@ -75,9 +75,9 @@ def main():
         comm_dca = sum(t.commission for t in engine_dca.portfolio.trades)
 
         print("\n" + "=" * 62)
-        print("         >>> 3. 执行 暴跌黄金坑一击打满 (Extreme Dip Heavy) <<<")
+        print("    >>> 3. 执行 暴跌黄金坑一击打满死拿 (One-Shot Dip All-In) <<<")
         print("=" * 62)
-        strat_dip = ExtremeDipHeavyStrategy(ma_period=120, dip_threshold=0.20, defensive_pct=0.20)
+        strat_dip = ExtremeDipHeavyStrategy(dip_threshold=0.20, one_shot=True)
         broker_dip = create_broker()
         engine_dip = BacktestEngine(strategy=strat_dip, broker=broker_dip, initial_cash=args.cash)
         res_dip = engine_dip.run({args.symbol: bars})
@@ -99,7 +99,7 @@ def main():
         print("                     【四大核心量化策略多维绩效横向终极大对比】")
         print("=" * 90)
         col_fmt = "{:<20} | {:>14} | {:>14} | {:>16} | {:>16}"
-        print(col_fmt.format("指标项目", "1.死拿 (All-In)", "2.智能定投", "3.黄金坑打满", "4.动态再平衡(85/15)"))
+        print(col_fmt.format("指标项目", "1.死拿 (All-In)", "2.智能定投", "3.黄金坑打满死拿", "4.动态再平衡(85/15)"))
         print("-" * 90)
         print(col_fmt.format("初始本金池", f"{res_allin.initial_cash:,.0f} 元", f"{res_dca.initial_cash:,.0f} 元", f"{res_dip.initial_cash:,.0f} 元", f"{res_reb.initial_cash:,.0f} 元"))
         print(col_fmt.format("期末账户总资产", f"{res_allin.final_equity:,.2f} 元", f"{res_dca.final_equity:,.2f} 元", f"{res_dip.final_equity:,.2f} 元", f"{res_reb.final_equity:,.2f} 元"))
@@ -123,7 +123,7 @@ def main():
     elif args.strategy == "all_in":
         strat = BuyAndHoldStrategy(target_pct=0.99)
     elif args.strategy == "dip_heavy":
-        strat = ExtremeDipHeavyStrategy(ma_period=120, dip_threshold=0.20, defensive_pct=0.20)
+        strat = ExtremeDipHeavyStrategy(dip_threshold=0.20, one_shot=True)
     elif args.strategy == "rebalance":
         strat = DynamicRebalanceStrategy(target_pct=0.85, rebalance_band=0.05, check_interval=5)
     else:

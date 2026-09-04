@@ -46,10 +46,11 @@ def run_backtest_endpoint(req: BacktestRequest):
         target_pct = req.params.get("target_pct", 0.99) if req.params else 0.99
         strat = BuyAndHoldStrategy(target_pct=target_pct)
     elif req.strategy in ("dip_heavy", "extreme_dip"):
-        ma_p = req.params.get("ma_period", 120) if req.params else 120
+        one_s = req.params.get("one_shot", True) if req.params else True
         dip_t = req.params.get("dip_threshold", 0.20) if req.params else 0.20
+        ma_p = req.params.get("ma_period", 120) if req.params else 120
         def_pct = req.params.get("defensive_pct", 0.20) if req.params else 0.20
-        strat = ExtremeDipHeavyStrategy(ma_period=ma_p, dip_threshold=dip_t, defensive_pct=def_pct)
+        strat = ExtremeDipHeavyStrategy(dip_threshold=dip_t, one_shot=one_s, ma_period=ma_p, defensive_pct=def_pct)
     elif req.strategy in ("rebalance", "dynamic_rebalance"):
         tgt = req.params.get("target_pct", 0.85) if req.params else 0.85
         band = req.params.get("rebalance_band", 0.05) if req.params else 0.05

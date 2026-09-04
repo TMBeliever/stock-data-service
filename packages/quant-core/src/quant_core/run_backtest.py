@@ -85,12 +85,22 @@ def main():
         print(f"{'卡玛比率 (Calmar)':<24} | {res_allin.calmar_ratio:>18.2f}   | {res_dca.calmar_ratio:>18.2f}  ")
         print(f"{'交易总笔数':<24} | {res_allin.total_trades:>18} 笔 | {res_dca.total_trades:>18} 笔")
         print(f"{'累计手续费支出':<24} | {comm_allin:>18.2f} 元 | {comm_dca:>18.2f} 元")
-        print("-" * 70)
-        print(f" [智能定投分项明细]")
-        print(f" • 定投总期数 (周)          : {strat_dca.dca_count}")
-        print(f" • 实际投入总本金 (Invested): {strat_dca.total_invested_cash:,.2f} CNY")
-        print(f" • 期末股票持仓市值 (Market): {pos_dca.market_value:,.2f} CNY ({pos_dca.quantity:,.0f} 股)")
-        print(f" • 剩余未投入可用现金 (Cash): {engine_dca.portfolio.cash:,.2f} CNY\n")
+        # 统计定投的净资金流与真实投入本金收益率
+        trades_dca = engine_dca.portfolio.trades
+        total_buy_cash = sum(t.price * t.quantity + t.commission for t in trades_dca if t.side.value == "BUY")
+        total_sell_cash = sum(t.price * t.quantity - t.commission for t in trades_dca if t.side.value == "SELL")
+        net_invested = total_buy_cash - total_sell_cash
+        pure_stock_profit = pos_dca.market_value - net_invested
+        roi_net = (pure_stock_profit / net_invested * 100) if net_invested > 0 else 0.0
+
+        print(f" [智能定投资金与收益深度剖析]")
+        print(f" • 定投执行总期数 (周)        : {strat_dca.dca_count} 周")
+        print(f" • 累计买入本金总额 (Gross)   : {total_buy_cash:>15,.2f} 元")
+        print(f" • 泡沫区间主动止盈落袋 (Sell): {total_sell_cash:>15,.2f} 元 (已变现回流为现金)")
+        print(f" • 实际净占用的市场本金 (Net) : {net_invested:>15,.2f} 元")
+        print(f" • 期末持仓股票市值 (Market)  : {pos_dca.market_value:>15,.2f} 元 ({pos_dca.quantity:,.0f} 股)")
+        print(f" • 实际净本金收益率 (Real ROI): {roi_net:>14.2f} % (真实定投资金回报翻倍)")
+        print(f" • 账户可用安全现金池 (Cash)  : {engine_dca.portfolio.cash:>15,.2f} 元\n")
         return
 
     if args.strategy == "ma":

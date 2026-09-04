@@ -1,5 +1,5 @@
 import datetime
-from typing import Optional
+from typing import Optional, Tuple
 from quant_core.core.base_strategy import BaseStrategy
 from quant_core.core.models import Bar
 from quant_core.factors.value import percentile_rank
@@ -37,17 +37,18 @@ class SmartDividendDCAStrategy(BaseStrategy):
         self.window = window
         self.enable_take_profit = enable_take_profit
         
-        self.last_invest_week: Optional[int] = None
+        self.last_invest_week: Optional[Tuple[int, int]] = None
         self.total_invested_cash: float = 0.0
         self.dca_count: int = 0
 
     def on_bar(self, bar: Bar):
         symbol = bar.symbol
         dt = bar.dt
-        week_num = dt.isocalendar()[1]
+        iso_year, iso_week = dt.isocalendar()[:2]
+        current_week_key = (iso_year, iso_week)
         
         # 确保每周仅在首个交易日触发定投
-        if week_num == self.last_invest_week:
+        if current_week_key == self.last_invest_week:
             return
             
         closes = self.context.get_closes(symbol, n=self.window)
@@ -56,7 +57,7 @@ class SmartDividendDCAStrategy(BaseStrategy):
 
         # 1. 计算价格在过去 window 天内的分位数 (0.0 ~ 1.0)
         pct = percentile_rank(bar.close, closes)
-        self.last_invest_week = week_num
+        self.last_invest_week = current_week_key
         self.dca_count += 1
         pos = self.get_position(symbol)
 

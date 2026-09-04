@@ -1,0 +1,16 @@
+services:
+  quant-system:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quant-system-service
+    restart: unless-stopped
+    volumes:
+      # 只读挂载同级 stock-data 的 50GB 数据底座，享受 Zero-Copy 读取
+      - ../stock-data/data:/app/data:ro
+      - ../stock-data:/stock-data:ro
+    environment:
+      - QUANT_DATA_SERVICE_HTTP=http://stock-data:8000
+      - QUANT_DATA_SERVICE_WS=ws://stock-data:8000/ws/market
+      - QUANT_STOCK_DATA_LOCAL_PATH=/stock-data
+      - QUANT_ENVIRONMENT=production

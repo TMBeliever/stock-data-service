@@ -2,11 +2,23 @@
 import { ref, nextTick, watch } from 'vue'
 import { marked } from 'marked'
 import { useStrategyStore } from '@/stores/strategy'
+import { useAuthStore } from '@/stores/auth'
 
 const strategyStore = useStrategyStore()
+const authStore = useAuthStore()
 
 const inputPrompt = ref('')
 const chatContainer = ref<HTMLDivElement | null>(null)
+const showVipModal = ref(false)
+const isActivatingVip = ref(false)
+const toastMsg = ref('')
+
+function showToast(msg: string) {
+  toastMsg.value = msg
+  setTimeout(() => {
+    toastMsg.value = ''
+  }, 3000)
+}
 
 // 常用量化灵感提示词
 const quickPrompts = [
@@ -47,10 +59,12 @@ function handleQuickPrompt(promptText: string) {
 
 function copyCode(code: string) {
   navigator.clipboard.writeText(code)
+  showToast('📋 代码已复制到剪贴板')
 }
 
 function applyCode(code: string) {
   strategyStore.applyCodeToEditor(code)
+  showToast('⚡ 策略代码已载入编辑器！')
 }
 
 // 格式化 markdown 内容
@@ -61,12 +75,52 @@ function renderMarkdown(content: string) {
     return content
   }
 }
+
+// 切换模型处理：VIP 权益鉴权
+function handleSelectModel(modelKey: 'gemini-flash-lite-latest' | 'claude') {
+  if (modelKey === 'claude') {
+    if (!authStore.isLoggedIn) {
+      authStore.openLogin()
+      return
+    }
+    if (!authStore.isVip) {
+      showVipModal.value = true
+      return
+    }
+  }
+  strategyStore.aiModel = modelKey
+}
+
+// 一键激活 VIP
+async function handleActivateVip() {
+  isActivatingVip.value = true
+  try {
+    const ok = await authStore.grantVip(30)
+    if (ok) {
+      strategyStore.aiModel = 'claude'
+      showVipModal.value = false
+      showToast('🎉 VIP 会员激活成功！已解锁 Claude 3.7 本机深度推理引擎！')
+    } else {
+      alert('激活失败，请检查网络后重试')
+    }
+  } finally {
+    isActivatingVip.value = false
+  }
+}
 </script>
 
 <template>
-  <div class="flex flex-col h-full bg-[#121316] border border-white/[0.06] rounded-2xl overflow-hidden shadow-xl">
+  <div class="flex flex-col h-full bg-[#121316] border border-white/[0.06] rounded-2xl overflow-hidden shadow-xl relative">
+    <!-- 提示气泡 Toast -->
+    <div
+      v-if="toastMsg"
+      class="absolute top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl bg-emerald-500/90 text-white font-medium text-xs shadow-xl backdrop-blur-sm animate-bounce"
+    >
+      {{ toastMsg }}
+    </div>
+
     <!-- 1. 顶部状态与模型切换器 -->
-    <div class="px-4 py-3 border-b border-white/[0.08] bg-white/[0.02] flex items-center justify-between">
+    <div class="px-4 py-3 border-b border-white/[0.08] bg-white/[0.02] flex items-center justify-between shrink-0">
       <div class="flex items-center space-x-2">
         <div class="w-6 h-6 rounded-lg bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-xs text-white font-bold shadow-md shadow-orange-500/20">
           🤖
@@ -78,28 +132,43 @@ function renderMarkdown(content: string) {
               class="w-1.5 h-1.5 rounded-full"
               :class="strategyStore.isAiStreaming ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'"
             ></span>
-            <span>{{ strategyStore.isAiStreaming ? '思考生成中...' : '双模就绪' }}</span>
+            <span>{{ strategyStore.isAiStreaming ? '深度思考生成中...' : '双模就绪' }}</span>
           </div>
         </div>
       </div>
 
-      <!-- 模型下拉选择 -->
-      <div class="flex items-center space-x-1.5 bg-black/40 p-1 rounded-xl border border-white/[0.08]">
+      <!-- 模型下拉/切换胶囊 -->
+      <div class="flex items-center space-x-1 bg-black/40 p-1 rounded-xl border border-white/[0.08]">
+        <!-- 默认轻量模型 Gemini -->
         <button
-          @click="strategyStore.aiModel = 'gemini-flash-lite-latest'"
+          @click="handleSelectModel('gemini-flash-lite-latest')"
           :class="strategyStore.aiModel === 'gemini-flash-lite-latest' ? 'bg-white/10 text-amber-300 font-semibold shadow-sm' : 'text-zinc-400 hover:text-zinc-200'"
           class="px-2 py-0.5 rounded-lg text-[10px] transition-all flex items-center space-x-1 cursor-pointer"
         >
           <span>⚡</span>
           <span>Gemini</span>
         </button>
+
+        <!-- VIP 专属深度推理模型 Claude -->
         <button
-          @click="strategyStore.aiModel = 'claude'"
+          @click="handleSelectModel('claude')"
           :class="strategyStore.aiModel === 'claude' ? 'bg-white/10 text-purple-300 font-semibold shadow-sm' : 'text-zinc-400 hover:text-zinc-200'"
-          class="px-2 py-0.5 rounded-lg text-[10px] transition-all flex items-center space-x-1 cursor-pointer"
+          class="px-2 py-0.5 rounded-lg text-[10px] transition-all flex items-center space-x-1 cursor-pointer relative"
         >
           <span>🧠</span>
-          <span>Claude 本机</span>
+          <span>Claude</span>
+          <span
+            v-if="!authStore.isVip"
+            class="px-1 py-0.1 rounded text-[8px] bg-gradient-to-r from-amber-500 to-orange-500 text-black font-extrabold tracking-tighter"
+          >
+            VIP
+          </span>
+          <span
+            v-else
+            class="text-[9px] text-amber-400"
+          >
+            👑
+          </span>
         </button>
       </div>
     </div>
@@ -162,7 +231,7 @@ function renderMarkdown(content: string) {
     </div>
 
     <!-- 3. 灵感快捷提示词 -->
-    <div class="px-3 py-2 border-t border-white/[0.06] bg-black/20">
+    <div class="px-3 py-2 border-t border-white/[0.06] bg-black/20 shrink-0">
       <div class="text-[10px] text-zinc-500 mb-1.5 flex items-center space-x-1">
         <span>💡</span>
         <span>快速提示词灵感：</span>
@@ -181,7 +250,7 @@ function renderMarkdown(content: string) {
     </div>
 
     <!-- 4. 底部输入框与发送按钮 -->
-    <div class="p-3 border-t border-white/[0.08] bg-white/[0.02]">
+    <div class="p-3 border-t border-white/[0.08] bg-white/[0.02] shrink-0">
       <div class="relative">
         <textarea
           v-model="inputPrompt"
@@ -202,7 +271,88 @@ function renderMarkdown(content: string) {
       </div>
       <div class="flex items-center justify-between text-[10px] text-zinc-500 mt-1 px-1">
         <span>按 Enter 发送</span>
-        <span>由 {{ strategyStore.aiModel === 'claude' ? 'Claude 3.7 本机引擎' : 'Gemini 3.7 闪电引擎' }} 驱动</span>
+        <span class="flex items-center space-x-1">
+          <span v-if="strategyStore.aiModel === 'claude'" class="text-purple-400">👑 由 Claude 3.7 本机深度推理引擎驱动</span>
+          <span v-else class="text-amber-400">⚡ 由 Gemini 3.7 闪电引擎驱动</span>
+        </span>
+      </div>
+    </div>
+
+    <!-- 5. VIP 会员专属权益引导弹窗 Modal -->
+    <div
+      v-if="showVipModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fadeIn"
+    >
+      <div class="w-full max-w-md bg-[#18191e] border border-amber-500/30 rounded-2xl shadow-2xl overflow-hidden p-6 space-y-4">
+        <!-- 头部图标与标题 -->
+        <div class="flex items-center justify-between pb-3 border-b border-white/[0.08]">
+          <div class="flex items-center space-x-2.5">
+            <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-lg shadow-lg shadow-orange-500/30">
+              👑
+            </div>
+            <div>
+              <h3 class="text-sm font-bold text-white">解锁 VIP 专属深度推理模型</h3>
+              <p class="text-[11px] text-zinc-400">Claude 3.7 Sonnet 本机安全推理与无限投研特权</p>
+            </div>
+          </div>
+          <button
+            @click="showVipModal = false"
+            class="text-zinc-400 hover:text-white transition-colors cursor-pointer text-sm"
+          >
+            ✕
+          </button>
+        </div>
+
+        <!-- VIP 特权清单 -->
+        <div class="space-y-2.5 text-xs text-zinc-300">
+          <div class="p-3 rounded-xl bg-amber-500/5 border border-amber-500/15 flex items-start space-x-2.5">
+            <span class="text-base">🧠</span>
+            <div>
+              <div class="font-bold text-amber-300">Claude 3.7 本机安全深度推理</div>
+              <p class="text-[11px] text-zinc-400 mt-0.5">
+                基于本机独立 CLI 与专用硬件直连，具备超强 AST 语法树解析与多因子数学逻辑推演，代码准确率大幅提升。
+              </p>
+            </div>
+          </div>
+
+          <div class="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-start space-x-2.5">
+            <span class="text-base">♾️</span>
+            <div>
+              <div class="font-bold text-white">无限制云端策略库持久化</div>
+              <p class="text-[11px] text-zinc-400 mt-0.5">
+                普通用户最多保存 3 套策略，VIP 用户享有无上限个人策略持久化存储与历史版本管理。
+              </p>
+            </div>
+          </div>
+
+          <div class="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-start space-x-2.5">
+            <span class="text-base">📜</span>
+            <div>
+              <div class="font-bold text-white">全历史回测档案永久归档与对比</div>
+              <p class="text-[11px] text-zinc-400 mt-0.5">
+                每一次回测参数、夏普比率、胜率与成交流水均可永久留存，并支持随时一键参数复原。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部激活操作按钮 -->
+        <div class="pt-2 flex items-center justify-between gap-3">
+          <button
+            @click="showVipModal = false"
+            class="w-1/3 py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 text-xs transition-colors cursor-pointer"
+          >
+            稍后再说
+          </button>
+          <button
+            @click="handleActivateVip"
+            :disabled="isActivatingVip"
+            class="w-2/3 py-2 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 disabled:opacity-50 text-white font-bold text-xs shadow-lg shadow-orange-500/25 transition-all cursor-pointer flex items-center justify-center space-x-1.5"
+          >
+            <span>⚡</span>
+            <span>{{ isActivatingVip ? '正在激活...' : '立即开通 30 天 VIP 免费体验' }}</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>

@@ -1,6 +1,6 @@
 import datetime
 from typing import Optional
-from sqlalchemy import String, Boolean, DateTime, func
+from sqlalchemy import String, Boolean, DateTime, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column
 from common_server.database import Base
 
@@ -44,3 +44,56 @@ class User(Base):
                 exp = exp.replace(tzinfo=datetime.timezone.utc)
             return exp > now
         return False
+
+
+class UserStrategy(Base):
+    """用户自定义量化策略库"""
+    __tablename__ = "user_strategies"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    code: Mapped[str] = mapped_column(String, nullable=False)  # Python 源码
+    symbol: Mapped[str] = mapped_column(String(32), default="510300.SH.ETF", nullable=False)
+    
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False
+    )
+
+
+class BacktestRecord(Base):
+    """用户历史回测归档记录"""
+    __tablename__ = "backtest_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    strategy_id: Mapped[Optional[int]] = mapped_column(ForeignKey("user_strategies.id", ondelete="SET NULL"), nullable=True)
+    strategy_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    start_date: Mapped[str] = mapped_column(String(32), nullable=False)
+    end_date: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    
+    initial_cash: Mapped[float] = mapped_column(nullable=False)
+    final_equity: Mapped[float] = mapped_column(nullable=False)
+    total_return: Mapped[float] = mapped_column(nullable=False)
+    annualized_return: Mapped[float] = mapped_column(nullable=False)
+    max_drawdown: Mapped[float] = mapped_column(nullable=False)
+    sharpe_ratio: Mapped[float] = mapped_column(nullable=False)
+    win_rate: Mapped[float] = mapped_column(nullable=False)
+    total_trades: Mapped[int] = mapped_column(nullable=False)
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
+

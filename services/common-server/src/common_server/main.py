@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from common_server.config import settings
 from common_server.database import init_db
 from common_server.api.auth import router as auth_router
+from common_server.api.user_data import router as user_data_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,8 +28,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 注册认证与用户路由
+# 注册认证与用户数据路由
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(user_data_router, prefix="/api/v1/user", tags=["User Quant Data"])
 
 @app.get("/health", tags=["System"])
 async def health_check():

@@ -1,17 +1,31 @@
 <script setup lang="ts">
-import { ref, computed, shallowRef, onMounted, onUnmounted } from 'vue'
+import { ref, computed, shallowRef, onMounted, onUnmounted, watch } from 'vue'
 import { Codemirror } from 'vue-codemirror'
 import { python } from '@codemirror/lang-python'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { autocompletion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
 import type { EditorView } from '@codemirror/view'
-import { useStrategyStore, STRATEGY_TEMPLATES } from '@/stores/strategy'
+import { useStrategyStore, type UserStrategyItem } from '@/stores/strategy'
+import { useAuthStore } from '@/stores/auth'
 
 const strategyStore = useStrategyStore()
+const authStore = useAuthStore()
 
 const editorView = shallowRef<EditorView | null>(null)
 const showCheatSheet = ref(false)
+const showSaveModal = ref(false)
+const showMyStrategies = ref(false)
 const insertToast = ref('')
+
+// 保存策略弹窗状态
+const saveMode = ref<'create' | 'update'>('create')
+const saveNameInput = ref('')
+const saveDescInput = ref('')
+
+// 判断当前是否在编辑已有的云端策略 (id > 0)
+const canUpdateCurrent = computed(() => {
+  return !!strategyStore.activeStrategyId && strategyStore.activeStrategyId > 0
+})
 
 // 1. 量化专有智能代码补全 (Quant Intellisense Source)
 function quantCompletionSource(context: CompletionContext): CompletionResult | null {
@@ -85,14 +99,14 @@ function quantCompletionSource(context: CompletionContext): CompletionResult | n
         { label: 'quantity', type: 'property', detail: 'float', info: '当前持仓总股数' },
         { label: 'available_quantity', type: 'property', detail: 'float', info: 'A 股 T+1 可卖出股数' },
         { label: 'avg_cost', type: 'property', detail: 'float', info: '持仓均价成本' },
-        { label: 'current_price', type: 'property', detail: 'float', info: '当前最新市价' },
+        { label: 'current_price', type: 'property', detail: 'float', info: '最新市价' },
         { label: 'market_value', type: 'property', detail: 'float', info: '持仓总市值' },
       ],
       validFor: /^\w*$/,
     }
   }
 
-  // E. 全局通用指标函数智能提示 (用户打出 s, r, m, b, a 等字符触发)
+  // E. 全局通用指标函数智能提示
   const word = context.matchBefore(/\w+/)
   if (!word || (word.from === word.to && !context.explicit)) return null
 
@@ -126,13 +140,11 @@ function handleReady(payload: { view: EditorView }) {
   editorView.value = payload.view
 }
 
-// 2. 将代码精准插入当前编辑器光标所在行/位置
+// 2. 将代码精准插入当前编辑器光标所在行
 function insertSnippet(codeToInsert: string) {
   if (editorView.value) {
     const view = editorView.value
     const { from, to } = view.state.selection.main
-    
-    // 如果光标在缩进中，按当前光标插入；如果单行则换行缩进
     const snippetWithNewline = codeToInsert.trim() + '\n'
     view.dispatch({
       changes: { from, to, insert: snippetWithNewline },
@@ -141,7 +153,6 @@ function insertSnippet(codeToInsert: string) {
     })
     view.focus()
   } else {
-    // 降级追加
     strategyStore.code += `\n        ${codeToInsert}\n`
   }
 
@@ -153,7 +164,7 @@ function showToast(msg: string) {
   insertToast.value = msg
   setTimeout(() => {
     insertToast.value = ''
-  }, 2500)
+  }, 2800)
 }
 
 const lineCount = computed(() => strategyStore.code.split('\n').length)
@@ -195,30 +206,108 @@ const apiCheatSheet = [
   },
 ]
 
-function handleTemplateChange(e: Event) {
-  const target = e.target as HTMLSelectElement
-  if (target && target.value) {
-    strategyStore.applyTemplate(target.value)
-  }
-}
-
-function handleResetTemplate() {
-  if (confirm('确定要重置为当前选中模板的初始代码吗？未保存的修改将被覆盖。')) {
-    strategyStore.applyTemplate(strategyStore.selectedTemplate)
-  }
-}
-
 function copyCode() {
   navigator.clipboard.writeText(strategyStore.code)
   showToast('📋 代码已复制到剪贴板')
 }
 
+// 快速新建空白策略
+function handleCreateBlankStrategy() {
+  strategyStore.createBlankStrategy()
+  showMyStrategies.value = false
+  showToast('✨ 已创建空白策略模板，编写后点击保存即可存入策略库')
+}
+
+// 打开保存弹窗：允许选择“修改原策略”或“另存为新策略”
+function openSaveModal() {
+  if (!authStore.isLoggedIn) {
+    authStore.openLogin()
+    return
+  }
+
+  if (canUpdateCurrent.value) {
+    saveMode.value = 'update'
+    saveNameInput.value = strategyStore.activeStrategyName
+  } else {
+    saveMode.value = 'create'
+    saveNameInput.value = strategyStore.activeStrategyName.includes('未保存')
+      ? '我的新量化策略'
+      : strategyStore.activeStrategyName
+  }
+  saveDescInput.value = ''
+  showSaveModal.value = true
+}
+
+// 切换保存模式
+function setSaveMode(mode: 'create' | 'update') {
+  saveMode.value = mode
+  if (mode === 'create') {
+    if (saveNameInput.value === strategyStore.activeStrategyName) {
+      saveNameInput.value = `${strategyStore.activeStrategyName} (副本)`
+    }
+  } else {
+    saveNameInput.value = strategyStore.activeStrategyName
+  }
+}
+
+// 确认保存
+async function confirmSaveStrategy() {
+  if (!saveNameInput.value.trim()) {
+    showToast('⚠️ 策略名称不能为空')
+    return
+  }
+  const res = await strategyStore.saveStrategy(
+    saveNameInput.value.trim(),
+    saveDescInput.value.trim(),
+    saveMode.value
+  )
+  if (res.success) {
+    showSaveModal.value = false
+    showToast(res.message)
+  } else {
+    alert(res.message)
+  }
+}
+
+// 载入已有策略
+function handleSelectUserStrategy(strat: UserStrategyItem) {
+  strategyStore.loadUserStrategy(strat)
+  showMyStrategies.value = false
+  showToast(`📂 已载入策略: ${strat.name}`)
+}
+
+// 删除已有策略
+async function handleDeleteUserStrategy(strat: UserStrategyItem, e: Event) {
+  e.stopPropagation()
+  if (confirm(`确定要彻底删除策略「${strat.name}」吗？`)) {
+    const ok = await strategyStore.deleteUserStrategy(strat.id)
+    if (ok) {
+      showToast('🗑️ 策略已删除')
+    }
+  }
+}
+
+// 键盘快捷键监听 (⌘+Enter 运行回测, ⌘+S 保存策略)
 function handleKeyDown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
     e.preventDefault()
     strategyStore.runBacktest()
+  } else if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+    e.preventDefault()
+    openSaveModal()
   }
 }
+
+watch(
+  () => authStore.isLoggedIn,
+  (logged) => {
+    if (logged) {
+      strategyStore.fetchUserStrategies()
+      strategyStore.fetchUserBacktests()
+    }
+  },
+  { immediate: true }
+)
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeyDown)
@@ -241,143 +330,235 @@ onUnmounted(() => {
 
     <!-- 1. 顶部操作栏 -->
     <div class="px-4 py-3 border-b border-white/[0.08] bg-white/[0.02] flex flex-wrap items-center justify-between gap-2 shrink-0">
-      <!-- 左侧：文件名与模板选择器 -->
-      <div class="flex items-center space-x-2.5">
+      <!-- 左侧：策略名称、我的策略库下拉与新建策略 -->
+      <div class="flex items-center space-x-2">
+        <!-- 策略名称徽标 -->
         <div class="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] text-xs font-mono text-zinc-300">
           <span class="text-amber-400">🐍</span>
-          <span class="font-semibold text-white">custom_strategy.py</span>
+          <span class="font-semibold text-white truncate max-w-[150px] sm:max-w-[200px]">
+            {{ strategyStore.activeStrategyName }}
+          </span>
+          <span
+            v-if="strategyStore.activeStrategyId && strategyStore.activeStrategyId > 0"
+            class="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/20 text-emerald-400 font-sans"
+          >
+            云端已同步
+          </span>
+          <span
+            v-else
+            class="px-1.5 py-0.2 rounded text-[9px] bg-amber-500/20 text-amber-400 font-sans"
+          >
+            本地草稿
+          </span>
         </div>
 
-        <!-- 预设模板选择器 -->
-        <div class="flex items-center space-x-1.5">
-          <span class="text-[11px] text-zinc-400">预设模板:</span>
-          <select
-            :value="strategyStore.selectedTemplate"
-            @change="handleTemplateChange"
-            class="bg-black/50 border border-white/[0.1] rounded-lg px-2.5 py-1 text-xs text-zinc-200 hover:text-white focus:outline-none focus:border-amber-500/50 cursor-pointer"
+        <!-- 我的云端策略库下拉按钮 -->
+        <div class="relative">
+          <button
+            @click="showMyStrategies = !showMyStrategies"
+            class="px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-xs text-zinc-300 hover:text-white transition-all flex items-center space-x-1.5 cursor-pointer"
           >
-            <option v-for="(tpl, key) in STRATEGY_TEMPLATES" :key="key" :value="key">
-              {{ tpl.name }}
-            </option>
-          </select>
+            <span>📂</span>
+            <span>我的策略库</span>
+            <span
+              class="px-1.5 py-0.2 rounded-full bg-red-500/20 text-red-400 text-[10px] font-bold font-mono"
+            >
+              {{ strategyStore.userStrategies.length }}
+            </span>
+          </button>
+
+          <!-- 策略库下拉浮层 -->
+          <div
+            v-if="showMyStrategies"
+            class="absolute top-9 left-0 z-40 w-80 bg-[#18191e] border border-white/[0.12] rounded-xl shadow-2xl p-2.5 space-y-2 animate-fadeIn"
+          >
+            <div class="flex items-center justify-between px-1 pb-1.5 border-b border-white/[0.06] text-xs">
+              <span class="font-bold text-white">个人专属策略库</span>
+              <span class="text-[10px] text-zinc-400">
+                {{ authStore.isVip ? '👑 VIP 无限配额' : `已存 ${strategyStore.userStrategies.length} / 10 套` }}
+              </span>
+            </div>
+
+            <!-- 未登录提示条 -->
+            <div v-if="!authStore.isLoggedIn" class="p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.06] text-center space-y-1.5 text-xs text-zinc-400">
+              <p class="text-[11px]">当前为本地离线体验，登录后可永久同步至云端</p>
+              <button
+                @click="authStore.openLogin(); showMyStrategies = false"
+                class="w-full py-1 rounded-lg bg-gradient-to-r from-red-500 to-amber-500 text-white font-bold text-xs"
+              >
+                立即登录 / 注册
+              </button>
+            </div>
+
+            <!-- 策略列表 -->
+            <div class="max-h-64 overflow-y-auto space-y-1 text-xs">
+              <div
+                v-for="strat in strategyStore.userStrategies"
+                :key="strat.id"
+                @click="handleSelectUserStrategy(strat)"
+                :class="strategyStore.activeStrategyId === strat.id ? 'bg-red-500/15 border-red-500/40 text-white' : 'hover:bg-white/[0.04] text-zinc-300 border-transparent'"
+                class="p-2 rounded-lg border flex items-center justify-between cursor-pointer transition-colors group"
+              >
+                <div class="truncate mr-2">
+                  <div class="font-semibold text-xs truncate flex items-center space-x-1.5">
+                    <span>{{ strat.name }}</span>
+                    <span
+                      v-if="strategyStore.activeStrategyId === strat.id"
+                      class="text-[9px] px-1 py-0.2 rounded bg-red-500/30 text-red-300 font-normal"
+                    >
+                      正在编辑
+                    </span>
+                  </div>
+                  <div class="text-[10px] text-zinc-500 truncate mt-0.5">
+                    {{ strat.description || '默认标的: ' + strat.symbol }}
+                  </div>
+                </div>
+
+                <button
+                  @click="handleDeleteUserStrategy(strat, $event)"
+                  title="删除策略"
+                  class="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all text-[11px]"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <!-- 底部：快速新建空白策略 -->
+            <div class="pt-1.5 border-t border-white/[0.06]">
+              <button
+                @click="handleCreateBlankStrategy"
+                class="w-full py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-all text-xs flex items-center justify-center space-x-1.5 cursor-pointer"
+              >
+                <span>➕</span>
+                <span>新建空白策略</span>
+              </button>
+            </div>
+          </div>
         </div>
+
+        <!-- 快捷新建空白策略按钮 -->
+        <button
+          @click="handleCreateBlankStrategy"
+          title="新建一份空白策略"
+          class="px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-xs text-zinc-300 hover:text-white transition-all flex items-center space-x-1 cursor-pointer"
+        >
+          <span>➕</span>
+          <span class="hidden sm:inline">新建策略</span>
+        </button>
+
+        <!-- 保存策略按钮 -->
+        <button
+          @click="openSaveModal"
+          :disabled="strategyStore.isSavingStrategy"
+          class="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-xs text-zinc-200 hover:text-white transition-all flex items-center space-x-1 cursor-pointer"
+        >
+          <span>💾</span>
+          <span>{{ strategyStore.isSavingStrategy ? '保存中...' : '保存策略' }}</span>
+        </button>
       </div>
 
-      <!-- 右侧：API速查、重置、复制与运行回测按钮 -->
+      <!-- 右侧：API 速查、代码操作与运行回测 -->
       <div class="flex items-center space-x-2">
-        <!-- API 文档与指标速查按钮 -->
+        <!-- 常用 API 片段速查表按钮 -->
         <button
-          @click="showCheatSheet = !showCheatSheet"
-          title="量化 API 与内置指标速查手册"
-          class="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 hover:text-amber-200 transition-all text-xs flex items-center space-x-1 cursor-pointer"
+          @click="showCheatSheet = true"
+          class="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 transition-all text-xs flex items-center space-x-1 cursor-pointer"
         >
           <span>📖</span>
-          <span class="font-semibold text-[11px]">API 速查</span>
+          <span class="hidden sm:inline">API 速查</span>
         </button>
 
-        <button
-          @click="handleResetTemplate"
-          title="重置为模板初始代码"
-          class="p-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-zinc-400 hover:text-white transition-all text-xs cursor-pointer"
-        >
-          🔄
-        </button>
-
+        <!-- 复制代码 -->
         <button
           @click="copyCode"
-          title="复制当前源码"
-          class="px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-zinc-400 hover:text-white transition-all text-xs flex items-center space-x-1 cursor-pointer"
+          class="px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-zinc-400 hover:text-zinc-200 transition-all text-xs flex items-center space-x-1 cursor-pointer"
         >
           <span>📋</span>
-          <span class="hidden sm:inline text-[11px]">复制</span>
+          <span class="hidden sm:inline">复制</span>
         </button>
 
         <!-- 运行回测主按钮 -->
         <button
-          @click="strategyStore.runBacktest()"
+          @click="strategyStore.runBacktest"
           :disabled="strategyStore.isBacktesting"
-          class="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-red-500 via-rose-500 to-amber-500 hover:from-red-600 hover:to-amber-600 disabled:opacity-50 text-white text-xs font-bold flex items-center space-x-1.5 shadow-lg shadow-red-500/20 transition-all cursor-pointer group"
+          class="px-3.5 py-1 rounded-lg bg-gradient-to-r from-red-500 to-amber-500 hover:from-red-600 hover:to-amber-600 disabled:opacity-50 text-white font-semibold text-xs flex items-center space-x-1.5 shadow-md shadow-red-500/20 transition-all cursor-pointer"
         >
-          <span v-if="strategyStore.isBacktesting" class="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-          <span v-else class="text-sm group-hover:scale-110 transition-transform">▶</span>
-          <span>{{ strategyStore.isBacktesting ? '沙箱撮合中...' : '运行回测' }}</span>
-          <span class="hidden md:inline text-[10px] opacity-70 font-mono bg-black/20 px-1 py-0.5 rounded">⌘↵</span>
+          <span v-if="!strategyStore.isBacktesting">▶</span>
+          <span v-else class="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
+          <span>{{ strategyStore.isBacktesting ? '撮合中...' : '运行回测' }}</span>
+          <span class="hidden sm:inline text-[10px] text-white/60 font-mono font-normal">(⌘+Enter)</span>
         </button>
       </div>
     </div>
 
     <!-- 2. CodeMirror 编辑器主体 -->
-    <div class="flex-1 relative overflow-hidden bg-[#0d0e11] font-mono text-[13px]">
+    <div class="flex-1 relative overflow-hidden bg-[#1e1e1e]">
       <Codemirror
         v-model="strategyStore.code"
         :extensions="extensions"
-        :autofocus="true"
-        :indent-with-tab="true"
-        :tab-size="4"
+        :style="{ height: '100%', width: '100%', fontSize: '13px' }"
         @ready="handleReady"
-        style="height: 100%; width: 100%;"
       />
+    </div>
 
-      <!-- 4. API 速查浮动抽屉 -->
-      <div
-        v-if="showCheatSheet"
-        class="absolute inset-0 z-30 bg-[#121316]/95 backdrop-blur-md p-5 flex flex-col space-y-4 animate-fadeIn overflow-y-auto"
-      >
-        <div class="flex items-center justify-between pb-3 border-b border-white/[0.08]">
+    <!-- 3. 底部状态栏 -->
+    <div class="px-4 py-1.5 bg-black/40 border-t border-white/[0.06] flex items-center justify-between text-[11px] text-zinc-500 font-mono shrink-0">
+      <div class="flex items-center space-x-4">
+        <span>行数: {{ lineCount }}</span>
+        <span>字符: {{ charCount }}</span>
+        <span class="hidden sm:inline">编码: UTF-8</span>
+      </div>
+      <div class="flex items-center space-x-2">
+        <span class="text-zinc-400">按「⌘+S」打开保存对话框</span>
+        <span>·</span>
+        <span class="text-zinc-400">打字自动弹出 quant 代码补全</span>
+      </div>
+    </div>
+
+    <!-- 4. API 速查抽屉 Modal -->
+    <div
+      v-if="showCheatSheet"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn"
+    >
+      <div class="w-full max-w-2xl bg-[#18191e] border border-white/[0.12] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+        <!-- 弹窗头部 -->
+        <div class="px-5 py-3.5 border-b border-white/[0.08] flex items-center justify-between bg-white/[0.02]">
           <div class="flex items-center space-x-2">
-            <span class="text-lg">📖</span>
-            <div>
-              <div class="flex items-center space-x-2">
-                <h3 class="text-sm font-bold text-white">QuantScope 策略 API 与内置指标速查</h3>
-                <span class="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300 font-mono">
-                  支持打字自动补全 self. / bar. / sma
-                </span>
-              </div>
-              <p class="text-[11px] text-zinc-400 mt-0.5">
-                点击下方任意条目的【+ 插入光标处】，系统将自动将该 API 插入到当前编辑器光标位置。
-              </p>
-            </div>
+            <span class="text-base">📖</span>
+            <h3 class="text-sm font-bold text-white">量化 API 与内置指标速查</h3>
           </div>
           <button
             @click="showCheatSheet = false"
-            class="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white flex items-center justify-center text-sm cursor-pointer"
+            class="text-zinc-400 hover:text-white transition-colors cursor-pointer text-sm"
           >
             ✕
           </button>
         </div>
 
-        <div class="space-y-4 text-xs font-mono">
-          <div
-            v-for="(cat, cIdx) in apiCheatSheet"
-            :key="cIdx"
-            class="space-y-2 p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06]"
-          >
-            <div class="text-xs font-bold text-amber-300 font-sans flex items-center space-x-1.5">
+        <!-- 弹窗内容：分类展示常用 API -->
+        <div class="flex-1 overflow-y-auto p-5 space-y-5 text-xs">
+          <div v-for="(cat, idx) in apiCheatSheet" :key="idx" class="space-y-2.5">
+            <div class="font-bold text-zinc-300 text-xs flex items-center space-x-1.5 border-b border-white/[0.06] pb-1">
               <span>{{ cat.category }}</span>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
               <div
-                v-for="(item, iIdx) in cat.items"
-                :key="iIdx"
-                class="p-2.5 rounded-lg bg-black/40 border border-white/[0.04] flex flex-col justify-between space-y-2 hover:border-amber-500/30 transition-all group"
+                v-for="(item, i) in cat.items"
+                :key="i"
+                class="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.06] hover:border-amber-500/40 transition-colors space-y-1.5"
               >
-                <div>
-                  <div class="text-zinc-200 font-semibold text-[11px] group-hover:text-amber-300 transition-colors">
-                    {{ item.name }}
-                  </div>
-                  <div class="text-zinc-500 text-[10px] font-sans mt-0.5">{{ item.desc }}</div>
+                <div class="flex items-center justify-between">
+                  <span class="font-mono font-bold text-amber-300 text-[11px]">{{ item.name }}</span>
+                  <button
+                    @click="insertSnippet(item.code)"
+                    class="px-2 py-0.5 rounded bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 text-[10px] font-semibold transition-all cursor-pointer"
+                  >
+                    + 插入光标处
+                  </button>
                 </div>
-                <div class="flex items-center justify-between pt-1.5 border-t border-white/[0.04]">
-                  <code class="text-[10px] text-red-300 truncate max-w-[200px]">{{ item.code }}</code>
-                  <div class="flex items-center space-x-1">
-                    <button
-                      @click="insertSnippet(item.code)"
-                      class="px-2 py-0.5 rounded bg-gradient-to-r from-red-500/80 to-amber-500/80 hover:from-red-500 hover:to-amber-500 text-white font-semibold text-[10px] cursor-pointer shadow-sm transition-all"
-                    >
-                      + 插入光标处
-                    </button>
-                  </div>
-                </div>
+                <div class="text-[11px] text-zinc-400 leading-tight">{{ item.desc }}</div>
+                <pre class="bg-black/40 p-1.5 rounded text-[10px] font-mono text-zinc-300 overflow-x-auto select-all">{{ item.code }}</pre>
               </div>
             </div>
           </div>
@@ -385,70 +566,95 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- 3. 底部状态栏 -->
-    <div class="px-3 py-1.5 border-t border-white/[0.08] bg-white/[0.02] flex items-center justify-between text-[11px] text-zinc-400 font-mono shrink-0">
-      <div class="flex items-center space-x-3">
-        <span class="flex items-center space-x-1 text-emerald-400">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-          <span>代码补全已就绪 (键入 self. 或 bar.)</span>
-        </span>
-        <span>·</span>
-        <span>Python 3.12</span>
-      </div>
+    <!-- 5. 保存策略弹窗 Modal (支持新增或修改原策略) -->
+    <div
+      v-if="showSaveModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn"
+    >
+      <div class="w-full max-w-md bg-[#18191e] border border-white/[0.12] rounded-2xl shadow-2xl overflow-hidden p-5 space-y-4">
+        <div class="flex items-center justify-between pb-3 border-b border-white/[0.08]">
+          <div class="flex items-center space-x-2">
+            <span class="text-amber-400 text-base">💾</span>
+            <h3 class="text-sm font-bold text-white">保存策略至云端策略库</h3>
+          </div>
+          <button
+            @click="showSaveModal = false"
+            class="text-zinc-400 hover:text-white transition-colors cursor-pointer text-sm"
+          >
+            ✕
+          </button>
+        </div>
 
-      <div class="flex items-center space-x-3 text-zinc-500">
-        <span>{{ lineCount }} 行</span>
-        <span>{{ charCount }} 字符</span>
-        <span>UTF-8</span>
+        <div class="space-y-3.5 text-xs">
+          <!-- 保存模式切换（仅在当前正在编辑已有云端策略时展示） -->
+          <div v-if="canUpdateCurrent" class="space-y-1.5">
+            <label class="block text-zinc-400 font-medium">请选择保存目标：</label>
+            <div class="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                @click="setSaveMode('update')"
+                :class="saveMode === 'update' ? 'bg-amber-500/15 border-amber-500/60 text-white shadow-sm ring-1 ring-amber-500/30' : 'bg-black/30 border-white/[0.08] text-zinc-400 hover:text-zinc-200'"
+                class="p-2.5 rounded-xl border text-left cursor-pointer transition-all flex flex-col justify-between"
+              >
+                <div class="flex items-center space-x-1.5 font-bold text-xs text-amber-300">
+                  <span>📝 修改覆盖原策略</span>
+                </div>
+                <p class="text-[10px] text-zinc-400 mt-1 truncate">直接更新当前「{{ strategyStore.activeStrategyName }}」</p>
+              </button>
+
+              <button
+                type="button"
+                @click="setSaveMode('create')"
+                :class="saveMode === 'create' ? 'bg-emerald-500/15 border-emerald-500/60 text-white shadow-sm ring-1 ring-emerald-500/30' : 'bg-black/30 border-white/[0.08] text-zinc-400 hover:text-zinc-200'"
+                class="p-2.5 rounded-xl border text-left cursor-pointer transition-all flex flex-col justify-between"
+              >
+                <div class="flex items-center space-x-1.5 font-bold text-xs text-emerald-400">
+                  <span>➕ 另存为全新策略</span>
+                </div>
+                <p class="text-[10px] text-zinc-400 mt-1">创建一份独立新档案，原策略不变</p>
+              </button>
+            </div>
+          </div>
+
+          <!-- 策略名称输入 -->
+          <div>
+            <label class="block text-zinc-400 mb-1 font-medium">策略名称</label>
+            <input
+              v-model="saveNameInput"
+              type="text"
+              placeholder="如: 沪深300双均线金叉策略"
+              class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500/50"
+            />
+          </div>
+
+          <!-- 策略描述输入 -->
+          <div>
+            <label class="block text-zinc-400 mb-1 font-medium">策略简述 (可选)</label>
+            <textarea
+              v-model="saveDescInput"
+              placeholder="如: 适用于大盘宽基 ETF 震荡与趋势行情的自动仓位调节策略"
+              rows="2"
+              class="w-full resize-none bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500/50"
+            ></textarea>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end space-x-2 pt-2 border-t border-white/[0.08]">
+          <button
+            @click="showSaveModal = false"
+            class="px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 text-xs transition-colors cursor-pointer"
+          >
+            取消
+          </button>
+          <button
+            @click="confirmSaveStrategy"
+            :disabled="strategyStore.isSavingStrategy"
+            class="px-4 py-1.5 rounded-xl bg-gradient-to-r from-red-500 to-amber-500 hover:from-red-600 hover:to-amber-600 disabled:opacity-50 text-white font-bold text-xs shadow-lg shadow-red-500/20 transition-all cursor-pointer flex items-center space-x-1.5"
+          >
+            <span>{{ strategyStore.isSavingStrategy ? '正在保存...' : (saveMode === 'update' ? '确认更新原策略' : '确认新建并保存') }}</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>
 </template>
-
-<style>
-/* 针对 CodeMirror 深度定制暗黑透明风格与行号居中对齐 */
-.cm-editor {
-  height: 100% !important;
-  background-color: #0d0e11 !important;
-}
-.cm-scroller {
-  font-family: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace !important;
-  line-height: 1.6 !important;
-}
-.cm-gutters {
-  background-color: #0d0e11 !important;
-  border-right: 1px solid rgba(255, 255, 255, 0.06) !important;
-  color: rgba(255, 255, 255, 0.25) !important;
-}
-
-/* 自动补全下拉框高质感暗黑微光风格 */
-.cm-tooltip-autocomplete {
-  background-color: #16171b !important;
-  border: 1px solid rgba(255, 255, 255, 0.12) !important;
-  border-radius: 12px !important;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5) !important;
-  padding: 4px !important;
-  font-family: 'JetBrains Mono', monospace !important;
-}
-.cm-tooltip-autocomplete ul li {
-  padding: 4px 8px !important;
-  border-radius: 6px !important;
-  color: #e4e4e7 !important;
-  font-size: 11px !important;
-}
-.cm-tooltip-autocomplete ul li[aria-selected] {
-  background: linear-gradient(to right, rgba(239, 68, 68, 0.25), rgba(245, 158, 11, 0.25)) !important;
-  color: #ffffff !important;
-}
-.cm-completionDetail {
-  font-style: normal !important;
-  color: #a1a1aa !important;
-  font-size: 10px !important;
-  margin-left: 6px !important;
-}
-.cm-completionMatchedText {
-  color: #fbbf24 !important;
-  text-decoration: none !important;
-  font-weight: bold !important;
-}
-</style>

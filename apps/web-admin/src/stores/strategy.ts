@@ -1,5 +1,36 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { useAuthStore } from '@/stores/auth'
+
+export interface UserStrategyItem {
+  id: number
+  user_id: number
+  name: string
+  description?: string | null
+  code: string
+  symbol: string
+  created_at: string
+  updated_at: string
+}
+
+export interface UserBacktestItem {
+  id: number
+  user_id: number
+  strategy_id?: number | null
+  strategy_name: string
+  symbol: string
+  start_date: string
+  end_date?: string | null
+  initial_cash: number
+  final_equity: number
+  total_return: number
+  annualized_return: number
+  max_drawdown: number
+  sharpe_ratio: number
+  win_rate: number
+  total_trades: number
+  created_at: string
+}
 
 export interface BacktestSummary {
   initial_cash: number
@@ -56,10 +87,16 @@ export interface AiChatMessage {
   codeBlock?: string
 }
 
-export const STRATEGY_TEMPLATES: Record<string, { name: string; desc: string; code: string }> = {
-  ma: {
+// 4 套标准经典策略（直接内置在用户的初始策略库中）
+export const DEFAULT_INITIAL_STRATEGIES: UserStrategyItem[] = [
+  {
+    id: -1,
+    user_id: 0,
     name: '经典双均线趋势策略 (Dual MA)',
-    desc: '短期均线金叉做多，死叉平仓避险，经典趋势跟踪范式',
+    description: '短期均线金叉做多，死叉平仓避险，经典趋势跟踪范式',
+    symbol: '510300.SH.ETF',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
     code: `from quant_core.core.base_strategy import BaseStrategy
 from quant_core.core.models import Bar
 
@@ -99,9 +136,14 @@ class DualMAStrategy(BaseStrategy):
                 self.close_position(symbol, reason="死叉平仓")
 `
   },
-  dividend_dca: {
+  {
+    id: -2,
+    user_id: 0,
     name: '动态估值分位数定投 (Smart DCA)',
-    desc: '按历史价格分位数动态调权，极度低估时加倍定投，估值过高主动止盈',
+    description: '按历史价格分位数动态调权，极度低估时加倍定投，估值过高主动止盈',
+    symbol: '510880.SH.ETF',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
     code: `from quant_core.core.base_strategy import BaseStrategy
 from quant_core.core.models import Bar
 
@@ -130,7 +172,6 @@ class SmartDividendDCAStrategy(BaseStrategy):
             return
 
         curr_price = bar.close
-        # 计算历史分位数
         less_count = sum(1 for c in closes if c < curr_price)
         pct = less_count / len(closes)
 
@@ -151,9 +192,14 @@ class SmartDividendDCAStrategy(BaseStrategy):
                 self.sell(symbol, sell_qty, price=curr_price, reason=f"高估主动止盈(分位{pct:.1%})")
 `
   },
-  grid: {
+  {
+    id: -3,
+    user_id: 0,
     name: '动态网格波动套利 (Grid Trading)',
-    desc: '在震荡市中利用均价带上下挂单，高抛低吸捕捉微观波动利润',
+    description: '在震荡市中利用均价带上下挂单，高抛低吸捕捉微观波动利润',
+    symbol: '510500.SH.ETF',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
     code: `from quant_core.core.base_strategy import BaseStrategy
 from quant_core.core.models import Bar
 
@@ -176,7 +222,6 @@ class GridTradingStrategy(BaseStrategy):
         if len(closes) < 30:
             return
 
-        ma_center = sum(closes) / len(closes)
         curr_price = bar.close
         pos = self.get_position(symbol)
 
@@ -199,9 +244,14 @@ class GridTradingStrategy(BaseStrategy):
                 self.last_trade_price = curr_price
 `
   },
-  dip_heavy: {
+  {
+    id: -4,
+    user_id: 0,
     name: '极端急跌重仓抄底 (Extreme Dip)',
-    desc: '大盘或核心资产年内极端暴跌 15% 以上时果断重仓介入，反弹至均线平仓',
+    description: '大盘或核心资产年内极端暴跌 15% 以上时果断重仓介入，反弹至均线平仓',
+    symbol: '510300.SH.ETF',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
     code: `from quant_core.core.base_strategy import BaseStrategy
 from quant_core.core.models import Bar
 
@@ -239,28 +289,37 @@ class ExtremeDipHeavyStrategy(BaseStrategy):
             self.order_target_percent(symbol, 0.20, reason="价格回归均线减仓止盈")
 `
   }
-}
+]
 
 const STORAGE_CODE_KEY = 'quantscope_custom_strategy_code'
 
 export const useStrategyStore = defineStore('strategy', () => {
-  // 1. 代码编辑器状态
-  const savedCode = localStorage.getItem(STORAGE_CODE_KEY)
-  const code = ref(savedCode || STRATEGY_TEMPLATES.ma.code)
-  const selectedTemplate = ref('ma')
+  // 1. 用户专属云端策略库状态（默认为预置的 4 套初始策略）
+  const userStrategies = ref<UserStrategyItem[]>([...DEFAULT_INITIAL_STRATEGIES])
+  const activeStrategyId = ref<number | null>(DEFAULT_INITIAL_STRATEGIES[0].id)
+  const activeStrategyName = ref<string>(DEFAULT_INITIAL_STRATEGIES[0].name)
+  const userStrategiesLoading = ref(false)
+  const isSavingStrategy = ref(false)
 
-  // 2. 回测参数状态
-  const symbol = ref('510300.SH.ETF')
+  // 2. 代码编辑器当前内容
+  const savedCode = localStorage.getItem(STORAGE_CODE_KEY)
+  const code = ref(savedCode || DEFAULT_INITIAL_STRATEGIES[0].code)
+
+  // 3. 回测参数状态
+  const symbol = ref(DEFAULT_INITIAL_STRATEGIES[0].symbol)
   const startDate = ref('2023-01-01')
   const endDate = ref('')
   const initialCash = ref(100000)
 
-  // 3. 回测运行状态与结果
+  // 4. 回测运行状态与结果
   const isBacktesting = ref(false)
   const backtestError = ref<string | null>(null)
   const backtestResult = ref<BacktestResultData | null>(null)
+  const userBacktests = ref<UserBacktestItem[]>([])
+  const isSavingBacktest = ref(false)
+  const userBacktestsLoading = ref(false)
 
-  // 4. AI Copilot 对话状态
+  // 5. AI Copilot 对话状态
   const aiModel = ref<'gemini-flash-lite-latest' | 'claude'>('gemini-flash-lite-latest')
   const isAiStreaming = ref(false)
   const aiMessages = ref<AiChatMessage[]>([
@@ -279,15 +338,6 @@ export const useStrategyStore = defineStore('strategy', () => {
     return match ? match[1].trim() : null
   }
 
-  // 切换预设模板
-  function applyTemplate(key: string) {
-    if (STRATEGY_TEMPLATES[key]) {
-      selectedTemplate.value = key
-      code.value = STRATEGY_TEMPLATES[key].code
-      localStorage.setItem(STORAGE_CODE_KEY, code.value)
-    }
-  }
-
   // 更新代码并暂存
   function updateCode(newCode: string) {
     code.value = newCode
@@ -297,6 +347,169 @@ export const useStrategyStore = defineStore('strategy', () => {
   // 将 AI 生成的代码直接覆盖至代码编辑器
   function applyCodeToEditor(targetCode: string) {
     updateCode(targetCode)
+  }
+
+  // 创建空白新策略
+  function createBlankStrategy() {
+    activeStrategyId.value = null
+    activeStrategyName.value = '新自定策略 (未保存)'
+    const blankCode = `from quant_core.core.base_strategy import BaseStrategy
+from quant_core.core.models import Bar
+
+class MyCustomStrategy(BaseStrategy):
+    """
+    我的自定量化策略
+    """
+    def __init__(self):
+        super().__init__(name="MyStrategy")
+
+    def on_bar(self, bar: Bar):
+        # 在此处编写您的交易撮合逻辑
+        closes = self.context.get_closes(bar.symbol, n=20)
+        if len(closes) < 20:
+            return
+        
+        # 示例：以 80% 目标仓位买入
+        pos = self.get_position(bar.symbol)
+        if pos.quantity == 0:
+            self.order_target_percent(bar.symbol, 0.8, reason="开仓信号")
+`
+    updateCode(blankCode)
+  }
+
+  // 载入云端策略到编辑器
+  function loadUserStrategy(strat: UserStrategyItem) {
+    activeStrategyId.value = strat.id
+    activeStrategyName.value = strat.name
+    code.value = strat.code
+    symbol.value = strat.symbol || '510300.SH.ETF'
+    localStorage.setItem(STORAGE_CODE_KEY, strat.code)
+  }
+
+  // 拉取用户的策略列表（若登录则向后端请求，后端无数据时会自动初始化）
+  async function fetchUserStrategies() {
+    const authStore = useAuthStore()
+    if (!authStore.token) {
+      userStrategies.value = [...DEFAULT_INITIAL_STRATEGIES]
+      return
+    }
+    userStrategiesLoading.value = true
+    try {
+      const res = await fetch('/api/v1/user/strategies', {
+        headers: { Authorization: `Bearer ${authStore.token}` },
+      })
+      if (res.ok) {
+        const data: UserStrategyItem[] = await res.json()
+        if (data && data.length > 0) {
+          userStrategies.value = data
+          // 如果当前策略是本地临时策略，尝试对齐云端策略
+          if (activeStrategyId.value === null || activeStrategyId.value < 0) {
+            const matched = data.find((s) => s.name === activeStrategyName.value) || data[0]
+            if (matched) {
+              activeStrategyId.value = matched.id
+              activeStrategyName.value = matched.name
+            }
+          }
+        }
+      }
+    } finally {
+      userStrategiesLoading.value = false
+    }
+  }
+
+  // 保存策略：支持【修改原策略 (update)】与【另存为全新策略 (create)】
+  async function saveStrategy(
+    name: string,
+    description?: string,
+    mode: 'create' | 'update' = 'create'
+  ): Promise<{ success: boolean; message: string }> {
+    const authStore = useAuthStore()
+    if (!authStore.isLoggedIn) {
+      authStore.openLogin()
+      return { success: false, message: '请先登录' }
+    }
+
+    isSavingStrategy.value = true
+    try {
+      let res: Response
+      // 满足修改条件：显式选择 update 且当前已载入合法的云端策略 (id > 0)
+      if (mode === 'update' && activeStrategyId.value && activeStrategyId.value > 0) {
+        res = await fetch(`/api/v1/user/strategies/${activeStrategyId.value}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authStore.token}`,
+          },
+          body: JSON.stringify({
+            name: name.trim(),
+            description: description || null,
+            code: code.value,
+            symbol: symbol.value,
+          }),
+        })
+      } else {
+        // 新增独立策略 (新建或另存为)
+        res = await fetch('/api/v1/user/strategies', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authStore.token}`,
+          },
+          body: JSON.stringify({
+            name: name.trim(),
+            description: description || null,
+            code: code.value,
+            symbol: symbol.value,
+          }),
+        })
+      }
+
+      const data = await res.json()
+      if (!res.ok) {
+        return { success: false, message: data.detail || '保存失败' }
+      }
+
+      activeStrategyId.value = data.id
+      activeStrategyName.value = data.name
+      await fetchUserStrategies()
+      const actionText = mode === 'update' ? '已更新原策略' : '已保存为新策略'
+      return { success: true, message: `🎉 ${actionText}「${data.name}」并同步至云端！` }
+    } catch (err: any) {
+      return { success: false, message: err.message || '网络连接异常' }
+    } finally {
+      isSavingStrategy.value = false
+    }
+  }
+
+  // 删除云端策略
+  async function deleteUserStrategy(id: number): Promise<boolean> {
+    const authStore = useAuthStore()
+    // 如果是前端预置策略（id < 0），直接从前端列表中过滤
+    if (id < 0) {
+      userStrategies.value = userStrategies.value.filter((s) => s.id !== id)
+      if (activeStrategyId.value === id) {
+        createBlankStrategy()
+      }
+      return true
+    }
+
+    if (!authStore.token) return false
+    try {
+      const res = await fetch(`/api/v1/user/strategies/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${authStore.token}` },
+      })
+      if (res.ok) {
+        if (activeStrategyId.value === id) {
+          createBlankStrategy()
+        }
+        await fetchUserStrategies()
+        return true
+      }
+      return false
+    } catch {
+      return false
+    }
   }
 
   // 发起回测请求
@@ -330,6 +543,96 @@ export const useStrategyStore = defineStore('strategy', () => {
       backtestResult.value = null
     } finally {
       isBacktesting.value = false
+    }
+  }
+
+  // 拉取用户历史回测记录
+  async function fetchUserBacktests() {
+    const authStore = useAuthStore()
+    if (!authStore.token) {
+      userBacktests.value = []
+      return
+    }
+    userBacktestsLoading.value = true
+    try {
+      const res = await fetch('/api/v1/user/backtests', {
+        headers: { Authorization: `Bearer ${authStore.token}` },
+      })
+      if (res.ok) {
+        userBacktests.value = await res.json()
+      }
+    } finally {
+      userBacktestsLoading.value = false
+    }
+  }
+
+  // 保存当前回测记录到用户名下
+  async function saveBacktestRecord(customName?: string): Promise<{ success: boolean; message: string }> {
+    const authStore = useAuthStore()
+    if (!authStore.isLoggedIn) {
+      authStore.openLogin()
+      return { success: false, message: '请先登录后归档回测记录' }
+    }
+    if (!backtestResult.value) {
+      return { success: false, message: '当前没有可归档的回测结果，请先运行回测' }
+    }
+
+    isSavingBacktest.value = true
+    try {
+      const sum = backtestResult.value.summary
+      const res = await fetch('/api/v1/user/backtests', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authStore.token}`,
+        },
+        body: JSON.stringify({
+          strategy_id: activeStrategyId.value && activeStrategyId.value > 0 ? activeStrategyId.value : null,
+          strategy_name: customName || activeStrategyName.value,
+          symbol: symbol.value,
+          start_date: startDate.value,
+          end_date: endDate.value || null,
+          initial_cash: sum.initial_cash,
+          final_equity: sum.final_equity,
+          total_return: sum.total_return,
+          annualized_return: sum.annualized_return,
+          max_drawdown: sum.max_drawdown,
+          sharpe_ratio: sum.sharpe_ratio,
+          win_rate: sum.win_rate,
+          total_trades: sum.total_trades,
+        }),
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        return { success: false, message: data.detail || '回测归档失败' }
+      }
+
+      await fetchUserBacktests()
+      return { success: true, message: '🎉 回测绩效已永久归档到您的档案！' }
+    } catch (err: any) {
+      return { success: false, message: err.message || '网络连接异常' }
+    } finally {
+      isSavingBacktest.value = false
+    }
+  }
+
+  // 删除历史回测记录
+  async function deleteUserBacktest(id: number): Promise<boolean> {
+    const authStore = useAuthStore()
+    if (!authStore.token) return false
+    try {
+      const res = await fetch(`/api/v1/user/backtests/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${authStore.token}` },
+      })
+      if (res.ok) {
+        await fetchUserBacktests()
+        return true
+      }
+      return false
+    } catch {
+      return false
     }
   }
 
@@ -427,14 +730,12 @@ export const useStrategyStore = defineStore('strategy', () => {
                 assistantMsg.content = parsed.content
               }
             } catch {
-              // 容忍非 JSON delta
               assistantMsg.content += rawData
             }
           }
         }
       }
 
-      // 提取代码块供一键应用
       const codeBlock = extractPythonCode(assistantMsg.content)
       if (codeBlock) {
         assistantMsg.codeBlock = codeBlock
@@ -448,7 +749,6 @@ export const useStrategyStore = defineStore('strategy', () => {
 
   return {
     code,
-    selectedTemplate,
     symbol,
     startDate,
     endDate,
@@ -459,11 +759,26 @@ export const useStrategyStore = defineStore('strategy', () => {
     aiModel,
     isAiStreaming,
     aiMessages,
-    applyTemplate,
+    userStrategies,
+    userBacktests,
+    activeStrategyId,
+    activeStrategyName,
+    isSavingStrategy,
+    isSavingBacktest,
+    userStrategiesLoading,
+    userBacktestsLoading,
     updateCode,
     applyCodeToEditor,
+    createBlankStrategy,
     runBacktest,
     sendAiMessage,
     extractPythonCode,
+    fetchUserStrategies,
+    saveStrategy,
+    loadUserStrategy,
+    deleteUserStrategy,
+    fetchUserBacktests,
+    saveBacktestRecord,
+    deleteUserBacktest,
   }
 })

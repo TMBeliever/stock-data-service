@@ -35,8 +35,13 @@ export default defineConfig(({ mode }) => {
           target: aiTarget,
           changeOrigin: true,
         },
-        // 1. 通用业务与用户鉴权服务
+        // 1. 通用业务与用户鉴权服务 (common-server :8090)
         '/api/v1/auth': {
+          target: authTarget,
+          changeOrigin: true,
+        },
+        // 2. 用户个人策略库与历史回测归档服务 (common-server :8090)
+        '/api/v1/user': {
           target: authTarget,
           changeOrigin: true,
         },

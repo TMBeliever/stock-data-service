@@ -1,0 +1,22 @@
+[project]
+name = "ai-core"
+version = "0.1.0"
+description = "Universal AI Model Gateway & Foundation Engine supporting API Key & CLI Process drivers"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.0.0",
+    "httpx>=0.27.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ai_core"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

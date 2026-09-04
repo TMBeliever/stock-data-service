@@ -14,7 +14,8 @@
     "backtest:online": "uv run python run_backtest.py --env online",
     "test:core": "uv run pytest packages/quant-core/tests -v",
     "test:common": "uv run pytest services/common-server/tests -v",
-    "test:data": "uv run pytest packages/stock-data/tests -m 'not live' -v"
+    "test:data": "uv run pytest packages/stock-data/tests -m 'not live' -v",
+    "test:ai": "uv run pytest packages/ai-core/tests -v"
   },
   "devDependencies": {}
 }

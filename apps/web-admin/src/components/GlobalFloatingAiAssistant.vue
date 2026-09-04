@@ -253,10 +253,7 @@ function onCornerMouseUp() {
 // -------------------------------------------------------------
 // 悬浮胶囊召唤器自由拖动 (Draggable Floating Trigger) 逻辑
 // -------------------------------------------------------------
-const triggerPos = ref({
-  x: typeof window !== 'undefined' ? Math.max(20, window.innerWidth - 220) : 1150,
-  y: typeof window !== 'undefined' ? Math.max(20, window.innerHeight - 70) : 720,
-})
+const triggerPos = aiStore.triggerPosition
 
 let isDraggingTrigger = false
 let triggerMouseStartX = 0
@@ -301,9 +298,9 @@ function onTriggerMouseUp(e: MouseEvent) {
   window.removeEventListener('mousemove', onTriggerMouseMove)
   window.removeEventListener('mouseup', onTriggerMouseUp)
 
-  // 若用户未进行明显拖拽，则触发点击唤醒助手
+  // 若用户未进行明显拖拽，则触发点击唤醒助手（在悬浮球旁边展开）
   if (!hasTriggerMoved) {
-    aiStore.open()
+    aiStore.open(triggerPos.value)
   }
 }
 
@@ -319,7 +316,7 @@ function handleWindowResize() {
 function handleGlobalKeydown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
     e.preventDefault()
-    aiStore.toggleOpen()
+    aiStore.toggleOpen(triggerPos.value)
   }
 }
 

@@ -54,23 +54,66 @@ export const useAiStore = defineStore('ai', () => {
     return match ? match[1].trim() : null
   }
 
-  // 3. 悬浮窗动作
-  function toggleOpen() {
-    isOpen.value = !isOpen.value
+  // 悬浮胶囊的位置（默认右下角，支持全屏自由拖动）
+  const triggerPosition = ref({
+    x: typeof window !== 'undefined' ? Math.max(20, window.innerWidth - 220) : 1150,
+    y: typeof window !== 'undefined' ? Math.max(20, window.innerHeight - 70) : 720,
+  })
+
+  // 计算紧贴悬浮球展开的最佳视口坐标
+  function calculatePositionNear(anchor?: { x: number; y: number }, capsuleW = 190, capsuleH = 44) {
+    if (typeof window === 'undefined') return { x: 900, y: 85 }
+
+    const targetAnchor = anchor || triggerPosition.value
+    const screenW = window.innerWidth
+    const screenH = window.innerHeight
+    const winW = size.value.width
+    const winH = size.value.height
+
+    let x = targetAnchor.x
+    let y = targetAnchor.y
+
+    // 水平位置判断：
+    // 若胶囊位于屏幕右半边，窗口向左对齐胶囊右边缘展开；
+    // 若位于屏幕左半边，窗口与胶囊左边缘对齐展开
+    if (targetAnchor.x > screenW / 2) {
+      x = targetAnchor.x + capsuleW - winW
+    } else {
+      x = targetAnchor.x
+    }
+
+    // 垂直位置判断：
+    // 若胶囊位于屏幕下半部，窗口展开在胶囊上方（留出 10px 间距）；
+    // 若位于屏幕上半部，窗口展开在胶囊下方（留出 10px 间距）
+    if (targetAnchor.y > screenH / 2) {
+      y = targetAnchor.y - winH - 10
+    } else {
+      y = targetAnchor.y + capsuleH + 10
+    }
+
+    // 视口安全边缘保护，保证绝对在屏幕可见范围
+    const clampedX = Math.max(12, Math.min(x, screenW - winW - 12))
+    const clampedY = Math.max(20, Math.min(y, screenH - winH - 20))
+
+    return { x: clampedX, y: clampedY }
   }
 
-  function open() {
-    if (typeof window !== 'undefined') {
-      const maxX = Math.max(10, window.innerWidth - size.value.width - 20)
-      const maxY = Math.max(10, window.innerHeight - size.value.height - 20)
-      if (position.value.x > maxX || position.value.x < 10) {
-        position.value.x = Math.max(10, maxX)
-      }
-      if (position.value.y > maxY || position.value.y < 10) {
-        position.value.y = Math.max(70, Math.min(position.value.y, maxY))
-      }
+  // 3. 悬浮窗动作
+  function open(anchorPos?: { x: number; y: number }) {
+    if (anchorPos) {
+      triggerPosition.value = { ...anchorPos }
     }
+    const target = calculatePositionNear(anchorPos || triggerPosition.value)
+    position.value = target
     isOpen.value = true
+  }
+
+  function toggleOpen(anchorPos?: { x: number; y: number }) {
+    if (isOpen.value) {
+      close()
+    } else {
+      open(anchorPos)
+    }
   }
 
   function close() {
@@ -263,6 +306,7 @@ ${contextSnippet}`
   return {
     isOpen,
     position,
+    triggerPosition,
     size,
     aiModel,
     isStreaming,

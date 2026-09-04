@@ -8,14 +8,15 @@ from quant_core.backtest.engine import BacktestEngine
 from quant_core.strategies.moving_average_cross import DualMovingAverageStrategy
 from quant_core.strategies.dividend_etf_rebalance import DividendETFRebalanceStrategy
 from quant_core.strategies.dividend_dca import SmartDividendDCAStrategy
+from quant_core.strategies.buy_and_hold import BuyAndHoldStrategy
 
 router = APIRouter()
 
 class BacktestRequest(BaseModel):
     symbol: str = Field(default="510300.SH.ETF", description="回测标的代码")
-    strategy: str = Field(default="ma", description="策略类型: ma 或 dividend")
-    start: str = Field(default="2022-01-01", description="开始日期 YYYY-MM-DD")
-    end: str = Field(default="2024-01-01", description="结束日期 YYYY-MM-DD")
+    strategy: str = Field(default="dca", description="策略类型: dca, all_in, ma, dividend")
+    start: str = Field(default="2021-01-01", description="开始日期 YYYY-MM-DD")
+    end: Optional[str] = Field(default=None, description="结束日期 YYYY-MM-DD (留空为最新日)")
     initial_cash: float = Field(default=100_000.0, description="初始资金 (CNY)")
     params: Optional[Dict[str, Any]] = Field(default=None, description="自定义策略参数")
 
@@ -39,15 +40,18 @@ def run_backtest_endpoint(req: BacktestRequest):
         base_amt = req.params.get("base_amount", 1000.0) if req.params else 1000.0
         win = req.params.get("window", 250) if req.params else 250
         strat = SmartDividendDCAStrategy(base_amount=base_amt, window=win, enable_take_profit=True)
+    elif req.strategy in ("all_in", "buy_and_hold"):
+        target_pct = req.params.get("target_pct", 0.99) if req.params else 0.99
+        strat = BuyAndHoldStrategy(target_pct=target_pct)
     else:
         raise HTTPException(status_code=400, detail=f"Unknown strategy: {req.strategy}")
 
-    # 3. 构造撮合器与回测引擎
+    # 3. 构造撮合器 (万0.8 免5, ETF免印花税)
     broker = SimulatedBroker(
         slippage_pct=0.0005,
-        commission_rate=0.00025,
-        min_commission=5.0,
-        stamp_tax_rate=0.0005,
+        commission_rate=0.00008,
+        min_commission=0.0,
+        stamp_tax_rate=0.0,
         t_plus_one=True
     )
     engine = BacktestEngine(strategy=strat, broker=broker, initial_cash=req.initial_cash)

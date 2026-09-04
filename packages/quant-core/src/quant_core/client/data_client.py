@@ -21,9 +21,10 @@ class DataClient:
         symbol: str,
         period: str = "1d",
         start: Optional[str] = None,
-        end: Optional[str] = None
+        end: Optional[str] = None,
+        adjust: str = "raw"
     ) -> Optional[pl.DataFrame]:
-        """尝试从本地 stock-data 存储目录零拷贝读取 Parquet"""
+        """尝试从本地 stock-data 存储目录零拷贝读取 Parquet，并支持动态 QFQ/HFQ 复权"""
         possible_dirs = [
             os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../stock-data/data")),
             os.path.abspath("packages/stock-data/data"),
@@ -42,6 +43,24 @@ class DataClient:
             df = pl.read_parquet(matches[0])
             if "timestamp" not in df.columns:
                 return None
+
+            # 动态复权处理 (QFQ 前复权 / HFQ 后复权)
+            if "factor" in df.columns and adjust.lower() in ("qfq", "hfq"):
+                valid_factors = df["factor"].drop_nulls()
+                if len(valid_factors) > 0:
+                    latest_factor = float(valid_factors[-1]) if valid_factors[-1] is not None and valid_factors[-1] > 0 else 1.0
+                    filled_factor = pl.col("factor").forward_fill().backward_fill()
+                    if adjust.lower() == "qfq":
+                        ratio = filled_factor / latest_factor
+                    else:  # hfq
+                        ratio = filled_factor
+
+                    df = df.with_columns([
+                        (pl.col("open") * ratio).cast(pl.Float32).alias("open"),
+                        (pl.col("high") * ratio).cast(pl.Float32).alias("high"),
+                        (pl.col("low") * ratio).cast(pl.Float32).alias("low"),
+                        (pl.col("close") * ratio).cast(pl.Float32).alias("close"),
+                    ])
 
             if start:
                 try:
@@ -73,8 +92,8 @@ class DataClient:
         limit: Optional[int] = None
     ) -> Optional[pl.DataFrame]:
         """优先本地读取，回落 HTTP 服务"""
-        # 1. 尝试本地 Parquet 直读 (0.001s 极速直通)
-        local_df = self._try_get_local_parquet(symbol, period=period, start=start, end=end)
+        # 1. 尝试本地 Parquet 直读 (0.001s 极速直通，支持 QFQ)
+        local_df = self._try_get_local_parquet(symbol, period=period, start=start, end=end, adjust=adjust)
         if local_df is not None and not local_df.is_empty():
             return local_df
 
@@ -118,9 +137,9 @@ class DataClient:
         period: str = "1d",
         start: Optional[str] = None,
         end: Optional[str] = None,
-        adjust: str = "raw"
+        adjust: str = "qfq"
     ) -> List[Bar]:
-        """从基础数据服务拉取并转换为标准的 Bar 对象列表，供事件驱动回测使用"""
+        """从基础数据服务或本地存储拉取并转换为标准的 Bar 对象列表 (默认采用 QFQ 前复权保证连续性)"""
         df = self.get_kline_df(symbol, period=period, start=start, end=end, adjust=adjust)
         if df is None or df.is_empty():
             return []

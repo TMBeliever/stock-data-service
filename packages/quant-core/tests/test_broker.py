@@ -48,3 +48,16 @@ def test_broker_sell_stamp_tax():
     assert trade.tax == 50.0        # 印花税万5
     assert trade.commission == 25.0 # 佣金 25 元
     assert pos.quantity == 0.0
+
+def test_broker_wan_zero_point_eight_mian_wu():
+    broker = SimulatedBroker()  # 默认万0.8 免5
+    portfolio = Portfolio(initial_cash=50_000.0, cash=50_000.0)
+    order = Order(
+        order_id="ord3", symbol="512890.SH.ETF", side=OrderSide.BUY,
+        quantity=1000.0, created_at=1000, updated_at=1000
+    )
+    trade = broker.match_order(order, current_price=1.0, portfolio=portfolio, timestamp=1000)
+    assert trade is not None
+    assert trade.commission < 0.10  # 1000元 * 万0.8 = 0.08元
+    assert trade.tax == 0.0         # ETF免税
+

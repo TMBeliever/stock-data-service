@@ -7,16 +7,17 @@ class SimulatedBroker:
     真实模拟撮合器 (Simulated Exchange & Broker)：
     严格模拟 A 股与美股交易所的撮合逻辑、滑点、佣金与印花税。
     - A 股印花税：卖出单向征收 0.05% (ETF / 指数免印花税)
-    - 佣金：双向万二点五 (0.025%)，默认最低 5 元起征点
+    - 佣金：万0.8 (0.00008)，支持免5 (最低佣金 0 元起征)
+    - 印花税：仅 A 股个股单向 0.05% (ETF 与指数完全免税)
     - 滑点模型：固定比例或固定价格滑点
     - T+1 交易制度：当天买入可用数量锁定，当日不可卖出
     """
     def __init__(
         self,
         slippage_pct: float = 0.0005,        # 0.05% 滑点
-        commission_rate: float = 0.00025,    # 万2.5 佣金
-        min_commission: float = 5.0,         # 最低佣金 5 元 (免5可设为 0)
-        stamp_tax_rate: float = 0.0005,      # 印花税万5 (仅股票卖出单向)
+        commission_rate: float = 0.00008,    # 万0.8 佣金 (0.008%)
+        min_commission: float = 0.0,         # 最低佣金 0 元 (免5)
+        stamp_tax_rate: float = 0.0005,      # 印花税万5 (仅股票卖出单向，ETF自动免征)
         t_plus_one: bool = True,             # 开启 A 股 T+1
         lot_size: int = 100                  # 买入一手 100 股限制
     ):

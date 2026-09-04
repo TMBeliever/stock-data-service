@@ -107,6 +107,20 @@ class AkShareAdapter(BaseDataSource):
                             factors = computed_factors
                 except Exception as e:
                     print(f"[AkShareAdapter] Warning: failed to fetch hfq factor for {info.symbol}: {e}")
+            elif info.asset_type == AssetType.ETF:
+                try:
+                    df_acc = ak.fund_open_fund_info_em(symbol=ticker, indicator="累计净值走势")
+                    df_unit = ak.fund_open_fund_info_em(symbol=ticker, indicator="单位净值走势")
+                    if df_acc is not None and df_unit is not None and not df_acc.empty and not df_unit.empty:
+                        df_acc["净值日期"] = df_acc["净值日期"].astype(str)
+                        df_unit["净值日期"] = df_unit["净值日期"].astype(str)
+                        m_nav = pd.merge(df_acc[["净值日期", "累计净值"]], df_unit[["净值日期", "单位净值"]], on="净值日期")
+                        m_nav["factor"] = m_nav["累计净值"] / m_nav["单位净值"]
+                        nav_map = dict(zip(m_nav["净值日期"], m_nav["factor"]))
+                        factors = [nav_map.get(str(d), None) for d in df_raw[date_col]]
+                except Exception as e:
+                    print(f"[AkShareAdapter] Warning: failed to fetch ETF nav factor for {info.symbol}: {e}")
+
 
             # 组织为标准 Polars DataFrame
             pldf = pl.DataFrame({

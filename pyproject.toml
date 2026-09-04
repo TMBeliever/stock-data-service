@@ -22,3 +22,8 @@ package = false
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"
 default = true
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+
+

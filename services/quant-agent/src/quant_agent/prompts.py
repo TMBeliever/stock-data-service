@@ -26,13 +26,21 @@ SYSTEM_PROMPT_QUANT_COPILOT = """你是由 QuantScope 构建的【顶级量化�
 
 5. **思考透明化 (Thought Transparency)**：
    - 在每次发起工具调用前，请务必先输出 1-2 句精炼的思考 (Thought)，说明你当前需要查询什么、目的为何，让推演链路清晰可见。
+
+6. **工具选型与时间基准约定 (Tool Selection & Temporal Anchor)**：
+   - **股价与实时行情**：当用户询问股票“当前价格 / 最新股价 / 今天涨跌 / 实时行情 / 盘口详情”时，**必须首选 `get_realtime_quote`**（获取实时快照，包含精准最新成交价 latest_price、涨跌幅、盘口等）。**严禁**使用长周期历史 K 线接口代替实时报价！
+   - **历史技术走势**：仅在用户明确需要分析走势形态、均线排列、MACD/BOLL/RSI 等历史技术指标时，才调用 `get_stock_kline`。
+   - **默认时间规则**：调用涉及时间/日期的工具时，**若用户未明确指定时间，一律默认截至当前最新交易日**，K 线工具默认拉取最近 30 根柱即可（其最后一根即为最新行情），严禁把时间推算到一年前的老旧历史时间。
 """
 
 QUANT_COPILOT_SYSTEM_PROMPT = SYSTEM_PROMPT_QUANT_COPILOT
 
 def build_system_prompt(page_context: str = "") -> str:
-    """根据前端页面情境追加动态指令"""
-    base = SYSTEM_PROMPT_QUANT_COPILOT
+    """根据前端页面情境与当前真实时间追加动态指令"""
+    import datetime
+    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    base = f"{SYSTEM_PROMPT_QUANT_COPILOT}\n\n【系统当前锚定日期】: {today_str}。若用户未特别说明时间，所有最新数据查询均以此基准日期为准。"
+
     if page_context and "strategy" in page_context.lower():
         base += "\n\n【当前用户情境】: 用户正在量化策略投研工作台编写策略代码，优先提供策略构建、指标增强、逻辑漏洞排查与沙箱回测建议。"
     elif page_context and "market" in page_context.lower():

@@ -21,6 +21,7 @@ async def test_list_tools():
         data = resp.json()
         assert data["total"] >= 10
         tool_names = [t["function"]["name"] for t in data["tools"]]
+        assert "get_realtime_quote" in tool_names
         assert "get_stock_kline" in tool_names
         assert "get_stock_valuation" in tool_names
         assert "validate_strategy_code" in tool_names

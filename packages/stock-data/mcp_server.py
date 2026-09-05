@@ -29,27 +29,44 @@ async def _call_api(endpoint: str, params: dict = None) -> str:
             return json.dumps({"error": "Internal execution error", "detail": str(e)}, ensure_ascii=False)
 
 @mcp.tool()
+async def get_realtime_quote(symbol: str) -> str:
+    """
+    【首选核心报价工具】获取单只或多只股票/ETF/指数的最新实时行情报价快照 (Quote / Snapshot):
+    包含最新成交价 (latest_price)、今日涨跌额/涨跌幅 (change / pct_change)、昨收价 (pre_close)、
+    今开 (open)、最高最低 (high/low)、成交量额 (volume/amount)、换手率 (turnover_rate)、
+    市盈率 PE(TTM)、市净率 PB、总市值 (total_market_cap)、股息率以及买卖五档盘口。
+    【重要】：当用户询问股票“当前价格/最新股价/今天涨跌/实时行情/盘口/详情”时，必须优先调用此工具！数据秒级更新且精炼。
+    :param symbol: 标的代码，支持简写自动推断 (如 600519, 002594, 510300, AAPL)
+    """
+    return await _call_api("/api/v1/snapshot", {"symbols": symbol})
+
+@mcp.tool()
 async def get_stock_kline(
     symbol: str,
     period: str = "1d",
     start: Optional[str] = None,
     end: Optional[str] = None,
     adjust: str = "qfq",
-    indicators: Optional[str] = None
+    indicators: Optional[str] = None,
+    limit: Optional[int] = 30
 ) -> str:
     """
-    获取股票、ETF 或宽基指数的高精度 K 线行情走势。
+    获取股票、ETF 或宽基指数的高精度历史 K 线走势与量化技术指标。
+    【注意】：仅在分析走势形态、技术均线、MACD/BOLL/RSI 等历史序列时调用；若仅查询当前最新股价，请调用 get_realtime_quote。
+    用户未指定时间时，默认截止到当前最新交易日，并默认返回最近 30 根 K 线柱（最后一根为最新行情，响应中包含 latest 字段）。
     :param symbol: 标的代码，支持简写自动推断 (如 002594, 600519, 510300, QQQ, AAPL)
     :param period: K线周期: 1m, 5m, 15m, 30m, 60m, 1d (默认 1d)
-    :param start: 起始日期 YYYY-MM-DD (默认最近1年)
-    :param end: 截止日期 YYYY-MM-DD (默认当天)
+    :param start: 起始日期 YYYY-MM-DD
+    :param end: 截止日期 YYYY-MM-DD (未指定时默认为当前最新交易日)
     :param adjust: 复权方式: raw(不复权), qfq(前复权, 推荐), hfq(后复权)
     :param indicators: 可选追加量化技术指标，逗号分隔，如: MA,MACD,RSI,BOLL,ATR,ALL
+    :param limit: 返回的最大 K 线柱数限制 (默认返回最近 30 根，最后一根为最新交易日)
     """
     params = {"symbol": symbol, "period": period, "adjust": adjust}
     if start: params["start"] = start
     if end: params["end"] = end
     if indicators: params["indicators"] = indicators
+    if limit is not None: params["limit"] = limit
     return await _call_api("/api/v1/kline", params)
 
 @mcp.tool()

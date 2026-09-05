@@ -74,6 +74,7 @@ class KlineResponse(BaseModel):
     period: str
     adjust: str
     count: int
+    latest: Optional[KlinePoint] = None
     data: List[KlinePoint]
 
 def parse_symbol(symbol_str: str) -> tuple[str, str, str]:

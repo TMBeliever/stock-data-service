@@ -161,10 +161,12 @@ async def get_kline(
             atr=round(row["atr"], 4) if "atr" in row and row["atr"] is not None else None,
         ))
 
+    latest_point = data_points[-1] if data_points else None
     return KlineResponse(
         symbol=clean_symbol,
         period=period.value,
         adjust=adjust.value,
         count=len(data_points),
+        latest=latest_point,
         data=data_points
     )

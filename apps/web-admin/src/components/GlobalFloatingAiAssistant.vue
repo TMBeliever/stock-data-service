@@ -83,6 +83,7 @@ function renderMarkdown(content: string) {
 }
 
 const toolMetaMap: Record<string, { label: string; icon: string }> = {
+  get_realtime_quote: { label: '实时行情快照 (最新价/盘口)', icon: '⚡' },
   get_stock_kline: { label: '高精度 K 线走势', icon: '📈' },
   get_stock_valuation: { label: '个股实时估值 (PE/PB/分位)', icon: '💎' },
   get_stock_financials: { label: '上市公司三大财报 (PIT)', icon: '📑' },
@@ -94,7 +95,7 @@ const toolMetaMap: Record<string, { label: string; icon: string }> = {
   get_macro_treasury_yield: { label: '中美10年期国债收益率', icon: '🏛️' },
   get_system_storage_status: { label: '量化数据中台存储水位', icon: '💾' },
   validate_strategy_code: { label: 'Python 量化策略代码诊断', icon: '🔍' },
-  run_backtest_fast: { label: '沙箱极速量化回测引擎', icon: '⚡' },
+  run_backtest_fast: { label: '沙箱极速量化回测引擎', icon: '🚀' },
 }
 
 function getToolMeta(name: string) {

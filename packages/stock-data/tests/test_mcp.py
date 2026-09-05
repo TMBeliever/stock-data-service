@@ -8,6 +8,7 @@ async def test_mcp_tools_registration():
     tools = await mcp.list_tools()
     tool_names = [t.name for t in tools]
     
+    assert "get_realtime_quote" in tool_names
     assert "get_stock_kline" in tool_names
     assert "get_stock_valuation" in tool_names
     assert "get_stock_financials" in tool_names
@@ -18,6 +19,19 @@ async def test_mcp_tools_registration():
     assert "screen_stocks" in tool_names
     assert "get_macro_treasury_yield" in tool_names
     assert "get_system_storage_status" in tool_names
+
+@pytest.mark.asyncio
+async def test_mcp_call_tool_realtime_quote():
+    """测试 MCP 工具实时行情调用 (贵州茅台)"""
+    res = await mcp.call_tool("get_realtime_quote", {"symbol": "600519"})
+    assert res.is_error is False
+    assert len(res.content) > 0
+    text_content = res.content[0].text
+    data = json.loads(text_content)
+    assert data["count"] >= 1
+    assert data["data"][0]["name"] == "贵州茅台"
+    assert data["data"][0]["latest_price"] is not None
+    assert data["data"][0]["latest_price"] > 1000.0
 
 @pytest.mark.asyncio
 async def test_mcp_call_tool_valuation_real():

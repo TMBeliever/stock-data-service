@@ -48,11 +48,13 @@ def test_token_governor_truncation():
     short_text = "Hello world"
     assert governor.truncate_observation(short_text) == "Hello world"
 
-    # 超长文本截断测试
-    long_text = "Line\n" * 20 + "A" * 300
+    # 超长文本截断测试 (首尾双向保留)
+    long_text = "HEAD_START\n" + "Line\n" * 20 + "A" * 300 + "\nTAIL_END"
     truncated = governor.truncate_observation(long_text)
     assert len(truncated) > 0
     assert "Output truncated by TokenGovernor" in truncated
+    assert "HEAD_START" in truncated
+    assert "TAIL_END" in truncated
 
 def test_token_governor_compaction():
     governor = TokenGovernor(compaction_step_threshold=3)

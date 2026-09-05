@@ -41,18 +41,31 @@ class TokenGovernor:
         if not needs_truncation:
             return text
 
-        # 按行与字符双重截断
-        head_lines = lines[: self.max_observation_lines]
-        truncated_text = "\n".join(head_lines)
-        if len(truncated_text) > self.max_observation_chars:
-            truncated_text = truncated_text[: self.max_observation_chars]
+        # 按行与字符双重截断：保留头部与尾部（头部保留结构定义与元数据，尾部保留最新时间记录与结论）
+        head_lines_count = max(1, int(self.max_observation_lines * 0.55))
+        tail_lines_count = max(1, self.max_observation_lines - head_lines_count)
+        head_chars = max(100, int(self.max_observation_chars * 0.55))
+        tail_chars = max(100, self.max_observation_chars - head_chars)
+
+        head_lines = lines[:head_lines_count]
+        head_text = "\n".join(head_lines)
+        if len(head_text) > head_chars:
+            head_text = head_text[:head_chars]
+
+        tail_lines = lines[-tail_lines_count:] if total_lines > tail_lines_count else []
+        tail_text = "\n".join(tail_lines)
+        if len(tail_text) > tail_chars:
+            tail_text = tail_text[-tail_chars:]
+
+        omitted_lines = max(0, total_lines - len(head_lines) - len(tail_lines))
+        omitted_chars = max(0, total_chars - len(head_text) - len(tail_text))
 
         notice = (
-            f"\n\n... [⚠️ Output truncated by TokenGovernor: total {total_chars} chars, "
-            f"{total_lines} lines; showing first {len(truncated_text)} chars. "
-            f"Please refine query or use range/offset parameters if needed] ..."
+            f"\n\n... [⚠️ Output truncated by TokenGovernor: omitted {omitted_lines} lines / {omitted_chars} chars in middle; "
+            f"showing head (first {len(head_text)} chars) and tail (last {len(tail_text)} chars). "
+            f"Latest data is preserved at the end] ...\n\n"
         )
-        return truncated_text + notice
+        return head_text + notice + tail_text
 
     def sort_tools_for_caching(self, tools: List[ToolDefinition]) -> List[ToolDefinition]:
         """

@@ -8,13 +8,14 @@ from ai_core.models import Message, ToolDefinition
 
 from quant_agent.config import agent_config
 from quant_agent.prompts import build_system_prompt, QUANT_COPILOT_SYSTEM_PROMPT
+from quant_agent.admin_tools import get_admin_tool_registry
 
 logger = logging.getLogger(__name__)
 
 class QuantAgent(BaseAgent):
     """
     量化投研与策略工程智能体 (Quant Copilot):
-    继承自通用智能体底座 BaseAgent，特化挂载 MCP 金融行情工具与本地量化沙箱工具。
+    继承自通用智能体底座 BaseAgent，特化挂载 MCP 金融行情工具、本地量化沙箱工具，以及超级管理员专属运维控制工具。
     """
     def __init__(self):
         token_governor = TokenGovernor(
@@ -41,6 +42,9 @@ class QuantAgent(BaseAgent):
             server_name="stock-data-mcp",
             category="quant"
         )
+
+        # 超级管理员专属 DevOps 运维工具注册表
+        self._admin_tool_registry = get_admin_tool_registry()
 
         # 注册内部沙箱量化工具
         self._register_internal_quant_tools()
@@ -129,6 +133,14 @@ class QuantAgent(BaseAgent):
         except Exception as e:
             logger.error("Failed to initialize MCP tools for QuantAgent: %s", e)
 
+    def get_active_tool_registry(self, is_admin: bool = False) -> ToolRegistry:
+        """根据用户权限动态合成激活的工具注册表"""
+        if is_admin:
+            # 管理员模式：融合基础量化工具 + 超管 DevOps 运维工具
+            return self.tool_registry.copy().merge(self._admin_tool_registry)
+        # 普通用户模式：严格仅暴露基础量化工具
+        return self.tool_registry
+
     async def chat_stream(
         self,
         messages: List[Message],
@@ -136,20 +148,33 @@ class QuantAgent(BaseAgent):
         provider: Optional[str] = None,
         system_prompt: Optional[str] = None,
         page_context: str = "",
-        temperature: float = 0.2
+        temperature: float = 0.2,
+        is_admin: bool = False,
+        execution_mode: str = "auto",
+        sensitive_tools: Optional[List[str]] = None,
+        approved_tool_calls: Optional[List[str]] = None,
+        approved_tool_call: Optional[Dict[str, Any]] = None,
+        thinking_level: str = "medium"
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """流式调用封装：注入情境提示词并启动通用 ReAct 循环"""
         await self.initialize_tools()
 
-        final_system_prompt = system_prompt or build_system_prompt(page_context)
+        final_system_prompt = system_prompt or build_system_prompt(page_context, is_admin=is_admin, thinking_level=thinking_level)
+        active_registry = self.get_active_tool_registry(is_admin=is_admin)
 
         async for event in self.stream_chat(
             messages=messages,
             model=model,
             provider=provider,
             temperature=temperature,
-            system_prompt_override=final_system_prompt
+            system_prompt_override=final_system_prompt,
+            tool_registry_override=active_registry,
+            execution_mode=execution_mode,
+            sensitive_tools=sensitive_tools,
+            approved_tool_calls=approved_tool_calls,
+            approved_tool_call=approved_tool_call
         ):
             yield event
 
 quant_agent = QuantAgent()
+

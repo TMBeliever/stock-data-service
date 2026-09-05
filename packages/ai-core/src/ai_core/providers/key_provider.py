@@ -77,8 +77,8 @@ class APIKeyProvider(BaseAIProvider):
         if tools:
             payload["tools"] = [t.to_openai_dict() for t in tools]
 
-        # 传递用户自定义的 temperature、max_tokens 等参数
-        for k in ["temperature", "max_tokens", "top_p", "frequency_penalty", "presence_penalty"]:
+        # 传递用户自定义的 temperature、max_tokens、reasoning_effort 等参数
+        for k in ["temperature", "max_tokens", "top_p", "frequency_penalty", "presence_penalty", "reasoning_effort"]:
             if k in kwargs and kwargs[k] is not None:
                 payload[k] = kwargs[k]
 

@@ -131,3 +131,78 @@ async def test_base_agent_react_loop():
     assert "message" in event_names
     assert "done" in event_names
 
+@pytest.mark.asyncio
+async def test_execution_mode_confirm_sensitive_interception():
+    """测试敏感模式下未授权工具调用被成功拦截，返回 requires_approval"""
+    registry = ToolRegistry()
+
+    @tool(name="run_command", description="执行 Shell 命令")
+    def mock_shell(command: str) -> str:
+        return f"Executed: {command}"
+
+    registry.register(mock_shell)
+    agent = BaseAgent(name="SecurityAgent", tool_registry=registry)
+
+    async def mock_llm_generate(messages, tools, model=None, provider=None, temperature=None):
+        return {
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_docker_123",
+                    "name": "run_command",
+                    "arguments": {"command": "docker ps -a"}
+                }
+            ]
+        }
+
+    agent._call_llm_generate = mock_llm_generate
+
+    # 未授权调用：应当拦截并产出 requires_approval
+    events = []
+    async for event in agent.stream_chat(
+        prompt="查看 docker 容器",
+        execution_mode="confirm_sensitive",
+        sensitive_tools=["run_command"]
+    ):
+        events.append(event)
+
+    event_names = [e["event"] for e in events]
+    assert "requires_approval" in event_names
+    assert "done" in event_names
+
+    # 验证已授权调用：传入 approved_tool_calls 后应当顺利执行
+    approved_events = []
+    async for event in agent.stream_chat(
+        prompt="查看 docker 容器",
+        execution_mode="confirm_sensitive",
+        sensitive_tools=["run_command"],
+        approved_tool_calls=["call_docker_123"]
+    ):
+        approved_events.append(event)
+
+    approved_event_names = [e["event"] for e in approved_events]
+    assert "requires_approval" not in approved_event_names
+    assert "tool_call" in approved_event_names
+    assert "tool_result" in approved_event_names
+
+    # 验证直接携带 approved_tool_call 恢复执行 (杜绝死循环)
+    resumed_events = []
+    async for event in agent.stream_chat(
+        prompt="查看 docker 容器",
+        execution_mode="confirm_sensitive",
+        sensitive_tools=["run_command"],
+        approved_tool_call={
+            "id": "call_docker_123",
+            "name": "run_command",
+            "arguments": {"command": "docker ps -a"},
+            "step": 1
+        }
+    ):
+        resumed_events.append(event)
+
+    resumed_names = [e["event"] for e in resumed_events]
+    assert "requires_approval" not in resumed_names
+    assert "tool_call" in resumed_names
+    assert "tool_result" in resumed_names
+
+

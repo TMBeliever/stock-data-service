@@ -30,6 +30,16 @@ class AgentConfig(BaseSettings):
     COMMON_SERVER_URL: str = os.getenv("COMMON_SERVER_URL", "http://localhost:8090")
     
     # 智能体最大思考轮数 (防止 Dead Loop)
-    MAX_AGENT_STEPS: int = 6
+    MAX_AGENT_STEPS: int = 8
+
+    # JWT 鉴权密钥 (与 common-server 共享，用于验证超管身份)
+    JWT_SECRET_KEY: str = os.getenv("COMMON_SECRET_KEY", "quant_system_common_secret_key_2026_super_secure")
+    JWT_ALGORITHM: str = os.getenv("COMMON_ALGORITHM", "HS256")
+
+    # 项目根工作区路径 (用于超管运维管理)
+    WORKSPACE_ROOT: str = os.getenv(
+        "WORKSPACE_ROOT",
+        str((Path(__file__).resolve().parents[4]).resolve())
+    )
 
 agent_config = AgentConfig()

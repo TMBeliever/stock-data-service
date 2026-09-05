@@ -46,15 +46,17 @@ export const useAiStore = defineStore('ai', () => {
     y: 85,
   })
 
-  // 默认尺寸：420px 宽 x 580px 高
+  // 默认尺寸：840px 宽 x 620px 高 (宽屏容纳 Codex 边栏与主画布)
   const size = ref({
-    width: 420,
-    height: 580,
+    width: typeof window !== 'undefined' ? Math.min(840, window.innerWidth - 40) : 840,
+    height: typeof window !== 'undefined' ? Math.min(620, window.innerHeight - 80) : 620,
   })
+
 
   // 2. 模型状态与对话记录
   const aiModel = ref<'gemini-flash-lite-latest' | 'claude'>('gemini-flash-lite-latest')
   const isStreaming = ref(false)
+  const abortController = ref<AbortController | null>(null)
 
   const messages = ref<AiChatMessage[]>([
     {
@@ -165,22 +167,32 @@ export const useAiStore = defineStore('ai', () => {
 
   // 4. 根据当前页面路径获取快捷提示词
   function getQuickPromptsForRoute(routePath: string): QuickPrompt[] {
+    const authStore = useAuthStore()
+    const prompts: QuickPrompt[] = []
+
+    if (authStore.isAdmin) {
+      prompts.push(
+        { label: '🖥️ 服务器与服务体检', prompt: '检查一下当前服务器所有微服务的运行状态、端口以及系统 CPU/内存/磁盘健康情况。' },
+        { label: '🐳 检查 Docker 容器运行时', prompt: '查看当前服务器是否安装了 Docker，列出正在运行的容器和状态。' },
+      )
+    }
+
     if (routePath.startsWith('/strategy')) {
-      return [
+      prompts.push(
         { label: '📈 编写双均线金叉策略', prompt: '请帮我写一个双均线趋势策略，参数为快线 5 日，慢线 20 日，金叉全仓 80% 买入，死叉全仓平仓。' },
         { label: '🛡️ 添加 5% 移动止盈止损', prompt: '基于现有 BaseStrategy 规范，为当前量化策略增加动态移动止损 (Trailing Stop) 保护逻辑。' },
         { label: '💰 动态分位数估值定投', prompt: '请编写一个针对 510880 红利 ETF 的动态分位数估值定投策略，低估加倍买，高估分批主动止盈。' },
         { label: '🔍 诊断偷价与未来函数', prompt: '请帮我全面诊断当前策略代码中是否存在未来函数、偷价漏洞、滑点未覆盖或数组越界问题。' },
-      ]
+      )
     } else {
-      // 市场看板 / 默认页面
-      return [
+      prompts.push(
         { label: '📊 解读今日 A 股盘面', prompt: '请根据当前市场主要宽基指数（沪深300、中证500）与成交情况，客观解读今日盘面主力动向与多空力量对比。' },
         { label: '💎 哪些 ETF 处于低估区间', prompt: '从估值分位数与股息率角度，分析当前 A 股市场中有哪些行业或宽基 ETF 处于历史前 20% 的极度低估安全区间？' },
         { label: '📉 高位震荡防守策略', prompt: '在大盘宽基指数处于窄幅震荡且量能萎缩时，量化投资者通常采用什么样的对冲或网格套利策略来保护本金？' },
         { label: '🏦 宏观利率与降准影响', prompt: '近期国债基准收益率走势与央行货币政策变动，对于高股息红利资产和成长科技资产各自有什么传导逻辑？' },
-      ]
+      )
     }
+    return prompts
   }
 
   // 5. 组装情境感知的系统 Prompt
@@ -248,6 +260,7 @@ ${contextSnippet}`
     isStreaming.value = true
 
     try {
+      const authStore = useAuthStore()
       const systemPrompt = buildSystemPrompt(currentRoutePath)
 
       // 提取多轮上下文 (保留最近 8 轮历史，剔除尚未生成的空消息)
@@ -265,9 +278,23 @@ ${contextSnippet}`
         content: promptText.trim(),
       })
 
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      if (authStore.token) {
+        headers['Authorization'] = `Bearer ${authStore.token}`
+      }
+
+      if (abortController.value) {
+        abortController.value.abort()
+        abortController.value = null
+      }
+      abortController.value = new AbortController()
+
       const resp = await fetch('/api/v1/agent/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
+        signal: abortController.value.signal,
         body: JSON.stringify({
           messages: historyMessages,
           model: aiModel.value,
@@ -401,10 +428,36 @@ ${contextSnippet}`
         assistantMsg.codeBlock = codeBlock
       }
     } catch (err: any) {
-      assistantMsg.content += `\n\n> ⚠️ **调用异常**: ${err.message}`
+      if (err.name === 'AbortError') {
+        if (!assistantMsg.content) {
+          assistantMsg.content = '> ⏹️ *推演已由用户手动中断*'
+        } else {
+          assistantMsg.content += '\n\n> ⏹️ *已中断后续生成*'
+        }
+        if (assistantMsg.steps) {
+          for (const s of assistantMsg.steps) {
+            s.status = 'done'
+            for (const t of s.toolCalls) {
+              if (t.status === 'calling') t.status = 'done'
+            }
+          }
+        }
+      } else {
+        assistantMsg.content += `\n\n> ⚠️ **调用异常**: ${err.message}`
+      }
     } finally {
       isStreaming.value = false
+      abortController.value = null
     }
+  }
+
+  // 中断当前正在进行的流式生成
+  function stopStreaming() {
+    if (abortController.value) {
+      abortController.value.abort()
+      abortController.value = null
+    }
+    isStreaming.value = false
   }
 
   // 清空对话历史
@@ -435,6 +488,7 @@ ${contextSnippet}`
     updateGeometry,
     getQuickPromptsForRoute,
     sendAiMessage,
+    stopStreaming,
     clearMessages,
     extractPythonCode,
   }

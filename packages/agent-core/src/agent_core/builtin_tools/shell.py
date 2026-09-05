@@ -1,6 +1,6 @@
 import asyncio
 import shlex
-from typing import Optional
+from typing import Optional, Callable, List, Any
 from agent_core.tool import tool
 
 # 危险指令过滤黑名单
@@ -13,11 +13,15 @@ DANGEROUS_COMMAND_SUBSTRINGS = [
     "> /dev/sda",
 ]
 
-@tool(name="run_command", description="安全执行系统 Shell 命令行并获取标准输出与错误信息", category="shell")
-async def run_command(command: str, timeout: int = 30) -> str:
+@tool(name="run_command", description="安全执行系统 Shell 命令行并获取标准输出与错误信息，支持流式日志推送", category="shell")
+async def run_command(
+    command: str,
+    timeout: int = 60,
+    on_progress: Optional[Callable[[str], Any]] = None
+) -> str:
     """
     :param command: 待执行的终端命令字符串
-    :param timeout: 超时秒数 (默认 30 秒)
+    :param timeout: 超时秒数 (默认 60 秒)
     """
     for blocked in DANGEROUS_COMMAND_SUBSTRINGS:
         if blocked in command:
@@ -30,8 +34,33 @@ async def run_command(command: str, timeout: int = 30) -> str:
             stderr=asyncio.subprocess.PIPE
         )
         
+        stdout_lines: List[str] = []
+        stderr_lines: List[str] = []
+
+        async def read_stream(stream, lines_list):
+            if not stream:
+                return
+            while True:
+                line_bytes = await stream.readline()
+                if not line_bytes:
+                    break
+                line_str = line_bytes.decode("utf-8", errors="replace")
+                lines_list.append(line_str)
+                if on_progress:
+                    try:
+                        on_progress(line_str)
+                    except Exception:
+                        pass
+
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            await asyncio.wait_for(
+                asyncio.gather(
+                    read_stream(proc.stdout, stdout_lines),
+                    read_stream(proc.stderr, stderr_lines),
+                    proc.wait()
+                ),
+                timeout=timeout
+            )
         except asyncio.TimeoutError:
             try:
                 proc.kill()
@@ -39,8 +68,8 @@ async def run_command(command: str, timeout: int = 30) -> str:
                 pass
             return f"Timeout Error: 命令执行超过 {timeout} 秒限制被强制终止。"
 
-        stdout = stdout_bytes.decode("utf-8", errors="replace").strip()
-        stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
+        stdout = "".join(stdout_lines).strip()
+        stderr = "".join(stderr_lines).strip()
         exit_code = proc.returncode
 
         output_parts = [f"Exit Code: {exit_code}"]

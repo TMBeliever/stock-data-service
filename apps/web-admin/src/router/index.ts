@@ -14,9 +14,17 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '策略投研工作台' },
   },
   {
+    path: '/agent-settings',
+    name: 'AgentSettings',
+    component: () => import('@/views/AgentSettingsView.vue'),
+    meta: { title: 'Agent 管理与配置中心' },
+  },
+  {
     path: '/:pathMatch(.*)*',
     redirect: '/',
   },
+
+
 ]
 
 export const router = createRouter({

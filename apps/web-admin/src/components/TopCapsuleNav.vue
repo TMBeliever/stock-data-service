@@ -60,6 +60,8 @@ const serverStatus = ref('Quant Core v0.1.0')
         </button>
       </nav>
 
+
+
       <!-- 右侧：快捷键搜索、引擎徽标与用户系统菜单 -->
       <div class="flex items-center space-x-2.5">
         <!-- 引擎版本标签 -->

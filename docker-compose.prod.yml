@@ -1,0 +1,144 @@
+services:
+  # =========================================================================
+  # 1. 前端 Web 控制台与反向代理中枢 (Nginx + SPA + SSE 免缓冲直出)
+  # =========================================================================
+  web-admin:
+    build:
+      context: apps/web-admin
+      dockerfile: Dockerfile
+    container_name: quant-web-admin
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      - quant-agent
+      - ai-core
+      - quant-server
+      - common-server
+      - stock-data
+    networks:
+      - quant-net
+
+  # =========================================================================
+  # 2. 投研智能体与系统运维中枢 (赋予 Docker 治理特权与项目持久化)
+  # =========================================================================
+  quant-agent:
+    build:
+      context: .
+      dockerfile: services/quant-agent/Dockerfile
+    container_name: quant-agent
+    restart: unless-stopped
+    ports:
+      - "8060:8060"
+    environment:
+      - ENVIRONMENT=production
+      - AI_CORE_URL=http://ai-core:8070
+      - QUANT_SERVER_URL=http://quant-server:8080
+      - STOCK_DATA_API_URL=http://stock-data:8000
+      - COMMON_SERVER_URL=http://common-server:8090
+      - STOCK_DATA_DIR=/app/packages/stock-data
+      - WORKSPACE_ROOT=/app
+    volumes:
+      # 核心：挂载宿主机 Docker 套接字，允许 Agent 实时调度宿主机 Docker Daemon
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 会话历史树与挂载项目持久化卷
+      - agent_workspace_storage:/app/data
+      # 挂载宿主机家目录，支持免路径全自动探测各类量化与代码工程
+      - /home:/host_home:ro
+    depends_on:
+      - ai-core
+      - quant-server
+      - stock-data
+    networks:
+      - quant-net
+
+  # =========================================================================
+  # 3. AI 大模型推演底座与网关 (API Key 驱动)
+  # =========================================================================
+  ai-core:
+    build:
+      context: packages/ai-core
+      dockerfile: Dockerfile
+    container_name: quant-ai-core
+    restart: unless-stopped
+    ports:
+      - "8070:8070"
+    environment:
+      - AI_OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://43.155.186.45:3000/v1}
+      - AI_OPENAI_API_KEY=${OPENAI_API_KEY:-sk-W91gp63k2tmArgtL8wxIMoQaYj8CmFtumeF9T34xSpuIZj34}
+      - AI_DEFAULT_PROVIDER=key
+    networks:
+      - quant-net
+
+  # =========================================================================
+  # 4. 量化业务中枢与沙箱回测服务
+  # =========================================================================
+  quant-server:
+    build:
+      context: .
+      dockerfile: services/quant-server/Dockerfile
+    container_name: quant-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - QUANT_DATA_SERVICE_HTTP=http://stock-data:8000
+      - QUANT_DATA_SERVICE_WS=ws://stock-data:8000/ws/market
+      - QUANT_ENVIRONMENT=production
+    depends_on:
+      - stock-data
+    networks:
+      - quant-net
+
+  # =========================================================================
+  # 5. 通用业务中枢、用户中心与策略库
+  # =========================================================================
+  common-server:
+    build:
+      context: services/common-server
+      dockerfile: Dockerfile
+    container_name: quant-common-server
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    environment:
+      - COMMON_ENVIRONMENT=production
+    volumes:
+      - common_data_storage:/app/data
+    networks:
+      - quant-net
+
+  # =========================================================================
+  # 6. 金融行情中台 (实时快照 + K线历史缓存)
+  # =========================================================================
+  stock-data:
+    build:
+      context: packages/stock-data
+      dockerfile: Dockerfile
+    container_name: quant-stock-data
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - stock_data_storage:/app/data
+    networks:
+      - quant-net
+
+# =========================================================================
+# 存储卷定义 (生产数据持久化保障)
+# =========================================================================
+volumes:
+  stock_data_storage:
+    name: quant_stock_data_storage
+  common_data_storage:
+    name: quant_common_data_storage
+  agent_workspace_storage:
+    name: quant_agent_workspace_storage
+
+# =========================================================================
+# 独立内部隔离通信网络
+# =========================================================================
+networks:
+  quant-net:
+    name: quant_production_network
+    driver: bridge

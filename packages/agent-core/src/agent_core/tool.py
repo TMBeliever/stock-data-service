@@ -26,11 +26,16 @@ class BaseTool:
             raise NotImplementedError(f"Tool {self.name} has no executable implementation")
         return self._func(*args, **kwargs)
 
-    async def execute(self, **kwargs) -> Any:
-        """执行工具，兼容同步与异步函数"""
+    async def execute(self, on_progress: Optional[Callable[[str], Any]] = None, **kwargs) -> Any:
+        """执行工具，兼容同步与异步函数，并支持传入流式进度回调"""
         if self._func is None:
             raise NotImplementedError(f"Tool {self.name} has no executable implementation")
         
+        # 若工具实现函数声明了 on_progress 参数，则注入回调
+        sig = inspect.signature(self._func)
+        if "on_progress" in sig.parameters and on_progress is not None:
+            kwargs["on_progress"] = on_progress
+
         if inspect.iscoroutinefunction(self._func):
             return await self._func(**kwargs)
         else:
@@ -75,7 +80,7 @@ def tool(name: Optional[str] = None, description: Optional[str] = None, category
         required: List[str] = []
 
         for param_name, param in sig.parameters.items():
-            if param_name in ("self", "cls"):
+            if param_name in ("self", "cls", "on_progress"):
                 continue
             
             p_type = param.annotation if param.annotation != inspect.Parameter.empty else str
@@ -142,9 +147,25 @@ class ToolRegistry:
         """导出为用于大模型上下文绑定的 ToolDefinition 列表"""
         return [t.to_tool_definition() for t in self.list_tools(category)]
 
-    async def execute(self, name: str, arguments: Dict[str, Any]) -> Any:
-        """执行指定工具并返回原生结果"""
+    def copy(self) -> "ToolRegistry":
+        """创建当前注册表的浅拷贝副本"""
+        cloned = ToolRegistry()
+        cloned._tools = dict(self._tools)
+        return cloned
+
+    def merge(self, other: "ToolRegistry") -> "ToolRegistry":
+        """将另一个注册表的工具合并入当前注册表"""
+        self._tools.update(other._tools)
+        return self
+
+    async def execute(
+        self,
+        name: str,
+        arguments: Dict[str, Any],
+        on_progress: Optional[Callable[[str], Any]] = None
+    ) -> Any:
+        """执行指定工具并返回原生结果，支持传入流式进度回调"""
         tool_obj = self.get_tool(name)
         if not tool_obj:
             raise ValueError(f"Tool '{name}' not found in registry")
-        return await tool_obj.execute(**arguments)
+        return await tool_obj.execute(on_progress=on_progress, **arguments)

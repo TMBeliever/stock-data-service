@@ -1,14 +1,30 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
+import { useAiStore } from '@/stores/ai'
+
+const router = useRouter()
 const authStore = useAuthStore()
+const aiStore = useAiStore()
 const showDropdown = ref(false)
 const menuRef = ref<HTMLElement | null>(null)
 
 function toggleDropdown() {
   showDropdown.value = !showDropdown.value
 }
+
+function openCodexAssistant() {
+  showDropdown.value = false
+  aiStore.open()
+}
+
+function goToAgentSettings() {
+  showDropdown.value = false
+  router.push('/agent-settings')
+}
+
 
 function handleLogout() {
   showDropdown.value = false
@@ -36,17 +52,93 @@ onUnmounted(() => {
 
 <template>
   <div class="relative" ref="menuRef">
-    <!-- 1. 未登录状态：展示“登录 / 注册”胶囊按钮 -->
-    <button
-      v-if="!authStore.isLoggedIn"
-      @click="authStore.openLogin()"
-      class="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-red-500/10 to-orange-500/10 hover:from-red-500/20 hover:to-orange-500/20 border border-red-500/20 hover:border-red-500/35 transition-all text-xs font-semibold text-white cursor-pointer shadow-sm shadow-red-500/5 group"
-    >
-      <svg class="w-3.5 h-3.5 text-red-400 group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-      </svg>
-      <span>登录 / 注册</span>
-    </button>
+    <!-- 1. 未登录状态：带有下拉菜单的访客胶囊 -->
+    <div v-if="!authStore.isLoggedIn" class="flex items-center space-x-1.5">
+      <button
+        @click="authStore.openLogin()"
+        class="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-red-500/10 to-orange-500/10 hover:from-red-500/20 hover:to-orange-500/20 border border-red-500/20 hover:border-red-500/35 transition-all text-xs font-semibold text-white cursor-pointer shadow-sm shadow-red-500/5 group"
+      >
+        <svg class="w-3.5 h-3.5 text-red-400 group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+        </svg>
+        <span>登录 / 注册</span>
+      </button>
+
+      <button
+        @click.stop="toggleDropdown"
+        class="p-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] text-zinc-400 hover:text-white cursor-pointer"
+        title="用户下拉菜单"
+      >
+        <svg
+          :class="['w-3.5 h-3.5 transition-transform duration-200', showDropdown ? 'rotate-180 text-white' : '']"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      <!-- 访客下拉面板 -->
+      <transition name="dropdown-fade">
+        <div
+          v-if="showDropdown"
+          class="absolute right-0 mt-10 w-64 rounded-2xl bg-[#141418] border border-white/[0.12] shadow-2xl p-3 z-50 overflow-hidden"
+        >
+          <div class="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06] mb-2">
+            <div class="flex items-center space-x-2.5">
+              <div class="w-8 h-8 rounded-xl bg-zinc-700/60 border border-white/10 flex items-center justify-center text-xs font-bold text-zinc-300">
+                👤
+              </div>
+              <div>
+                <div class="text-xs font-bold text-white">访客用户 (Guest)</div>
+                <div class="text-[10px] text-zinc-500 mt-0.5">登录后可同步策略与云端数据</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="space-y-1 mb-2">
+            <button
+              @click="openCodexAssistant"
+              class="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs text-zinc-200 hover:text-white hover:bg-white/[0.08] border border-white/[0.06] hover:border-purple-500/30 transition-all cursor-pointer group shadow-xs"
+            >
+              <div class="flex items-center space-x-2.5">
+                <div class="w-6 h-6 rounded-lg bg-purple-500/20 text-purple-300 flex items-center justify-center text-xs group-hover:scale-110 transition-transform">
+                  🖥️
+                </div>
+                <div class="text-left">
+                  <div class="font-bold text-xs text-zinc-100 group-hover:text-purple-300 transition-colors">
+                    Codex 智能工作台
+                  </div>
+                  <div class="text-[10px] text-zinc-400">
+                    多项目工程 · 部署机联动
+                  </div>
+                </div>
+              </div>
+              <span class="text-zinc-500 group-hover:text-purple-300 transition-colors text-xs font-mono">➔</span>
+            </button>
+
+            <button
+              @click="goToAgentSettings"
+              class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs text-zinc-300 hover:text-white hover:bg-white/[0.08] border border-white/[0.06] hover:border-zinc-500/30 transition-all cursor-pointer group"
+            >
+              <div class="flex items-center space-x-2">
+                <span>⚙️</span>
+                <span>Agent 管理与 MCP 配置</span>
+              </div>
+              <span class="text-zinc-500 text-xs font-mono">➔</span>
+            </button>
+          </div>
+
+          <button
+            @click="showDropdown = false; authStore.openLogin()"
+            class="w-full py-2 rounded-xl bg-gradient-to-r from-red-500/20 to-orange-500/20 border border-red-500/30 text-white font-medium text-xs hover:from-red-500/30 hover:to-orange-500/30 transition-colors cursor-pointer"
+          >
+            🔑 立即登录 / 注册
+          </button>
+        </div>
+      </transition>
+    </div>
 
     <!-- 2. 已登录状态：展示用户身份胶囊与下拉菜单 -->
     <div v-else>
@@ -129,6 +221,40 @@ onUnmounted(() => {
                 普通免费版
               </span>
             </div>
+          </div>
+
+          <!-- 核心功能导航：🖥️ Codex 智能工作台 + ⚙️ Agent 管理与 MCP 配置 -->
+          <div class="space-y-1 mb-2">
+            <button
+              @click="openCodexAssistant"
+              class="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs text-zinc-200 hover:text-white hover:bg-white/[0.08] border border-white/[0.06] hover:border-purple-500/30 transition-all cursor-pointer group shadow-xs"
+            >
+              <div class="flex items-center space-x-2.5">
+                <div class="w-6 h-6 rounded-lg bg-purple-500/20 text-purple-300 flex items-center justify-center text-xs group-hover:scale-110 transition-transform">
+                  🖥️
+                </div>
+                <div class="text-left">
+                  <div class="font-bold text-xs text-zinc-100 group-hover:text-purple-300 transition-colors">
+                    Codex 智能工作台
+                  </div>
+                  <div class="text-[10px] text-zinc-400">
+                    多项目工程 · 部署机联动 · Canvas
+                  </div>
+                </div>
+              </div>
+              <span class="text-zinc-500 group-hover:text-purple-300 transition-colors text-xs font-mono">➔</span>
+            </button>
+
+            <button
+              @click="goToAgentSettings"
+              class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs text-zinc-300 hover:text-white hover:bg-white/[0.08] border border-white/[0.06] hover:border-zinc-500/30 transition-all cursor-pointer group"
+            >
+              <div class="flex items-center space-x-2">
+                <span>⚙️</span>
+                <span>Agent 管理与 MCP 配置</span>
+              </div>
+              <span class="text-zinc-500 text-xs font-mono">➔</span>
+            </button>
           </div>
 
           <!-- 快速测试/赋权 VIP 按钮 -->

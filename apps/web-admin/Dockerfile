@@ -1,9 +1,9 @@
 # Stage 1: Build Vite Production Assets
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10.11.0 --activate
 
 COPY package.json ./
 RUN pnpm install

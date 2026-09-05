@@ -250,11 +250,26 @@ ${contextSnippet}`
     try {
       const systemPrompt = buildSystemPrompt(currentRoutePath)
 
+      // 提取多轮上下文 (保留最近 8 轮历史，剔除尚未生成的空消息)
+      const historyMessages = messages.value
+        .filter((m) => m.content && m.content.trim() && m.id !== assistantMsgId)
+        .slice(-8)
+        .map((m) => ({
+          role: m.role,
+          content: m.content,
+        }))
+
+      // 将当前用户问题压入末尾
+      historyMessages.push({
+        role: 'user',
+        content: promptText.trim(),
+      })
+
       const resp = await fetch('/api/v1/agent/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: promptText,
+          messages: historyMessages,
           model: aiModel.value,
           page_context: currentRoutePath,
           system_prompt: systemPrompt,

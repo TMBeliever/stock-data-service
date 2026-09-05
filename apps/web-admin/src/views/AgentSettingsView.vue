@@ -403,21 +403,27 @@ onMounted(() => {
           <!-- 最大思考推演轮数 (Max Steps) -->
           <div class="space-y-1.5">
             <div class="flex items-center justify-between">
-              <label class="text-xs font-semibold text-zinc-300">最大推演步数 (Max Agent Steps):</label>
-              <span class="text-xs font-mono text-amber-300">{{ settingsStore.modelConfig.max_steps }} 步</span>
+              <label class="text-xs font-semibold text-zinc-300">推演步数上限 (Max Agent Steps):</label>
+              <span class="text-xs font-mono" :class="settingsStore.modelConfig.max_steps === 0 ? 'text-emerald-400 font-bold' : 'text-amber-300'">
+                {{ settingsStore.modelConfig.max_steps === 0 ? '无限制 · 自然终结 (对标 DSH)' : `${settingsStore.modelConfig.max_steps} 步` }}
+              </span>
             </div>
             <input
               type="range"
-              min="4"
-              max="15"
-              step="1"
+              min="0"
+              max="50"
+              step="5"
               v-model.number="settingsStore.modelConfig.max_steps"
-              class="w-full accent-amber-400"
+              class="w-full accent-emerald-400"
             />
             <div class="flex items-center justify-between text-[10px] text-zinc-500">
-              <span>4 步 (轻量查询)</span>
-              <span>15 步 (深度全栈运维)</span>
+              <span class="text-emerald-400 font-medium">0 步 (无限制 · 推荐)</span>
+              <span>25 步</span>
+              <span>50 步 (高位预算)</span>
             </div>
+            <p class="text-[10px] text-zinc-400 leading-relaxed">
+              💡 设为 0 表示解除人为硬性限制（对标 DSH 架构），由模型自主推演至完成并输出回复时自然结束；由内置的 RepeatToolGuard 守卫和上下文剪枝机制兜底。
+            </p>
           </div>
 
           <!-- TokenGovernor 截断字符上限 -->

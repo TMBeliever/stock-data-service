@@ -52,7 +52,7 @@ export const useAgentSettingsStore = defineStore('agentSettings', () => {
   const modelConfig = ref<ModelRuntimeConfig>({
     default_model: 'gemini-flash-lite-latest',
     temperature: 0.2,
-    max_steps: 8,
+    max_steps: 0,
     max_observation_chars: 3500,
   })
 
@@ -86,7 +86,7 @@ export const useAgentSettingsStore = defineStore('agentSettings', () => {
           modelConfig.value = {
             default_model: cfg.default_model || 'gemini-flash-lite-latest',
             temperature: cfg.temperature ?? 0.2,
-            max_steps: cfg.max_steps ?? 8,
+            max_steps: cfg.max_steps ?? 0,
             max_observation_chars: cfg.max_observation_chars ?? 3500,
           }
         }

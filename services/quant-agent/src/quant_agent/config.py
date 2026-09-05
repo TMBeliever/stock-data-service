@@ -29,8 +29,8 @@ class AgentConfig(BaseSettings):
     # 用户中心与策略库服务地址
     COMMON_SERVER_URL: str = os.getenv("COMMON_SERVER_URL", "http://localhost:8090")
     
-    # 智能体最大思考轮数 (防止 Dead Loop)
-    MAX_AGENT_STEPS: int = 8
+    # 智能体思考轮数 (0 为无限制，对标 DSH 自然终结模式；>0 为硬性限制)
+    MAX_AGENT_STEPS: int = int(os.getenv("QUANT_AGENT_MAX_STEPS", os.getenv("MAX_AGENT_STEPS", "0")))
 
     # JWT 鉴权密钥 (与 common-server 共享，用于验证超管身份)
     JWT_SECRET_KEY: str = os.getenv("COMMON_SECRET_KEY", "quant_system_common_secret_key_2026_super_secure")

@@ -35,7 +35,7 @@ class AgentRuntimeConfig(BaseModel):
     execution_mode: str = "confirm_sensitive"  # 'auto' | 'confirm_sensitive' | 'confirm_all'
     default_model: str = "gemini-flash-lite-latest"
     temperature: float = 0.2
-    max_steps: int = 8
+    max_steps: int = 0  # 0 为无限制 (对标 DSH)
     max_observation_chars: int = 3500
     sensitive_tools: List[str] = Field(default_factory=lambda: list(SENSITIVE_TOOLS))
     mcp_servers: List[McpServerConfig] = Field(default_factory=list)

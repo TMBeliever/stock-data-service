@@ -1,3 +1,4 @@
+import json
 import pytest
 import asyncio
 from agent_core.tool import tool, ToolRegistry, BaseTool
@@ -144,6 +145,10 @@ async def test_execution_mode_confirm_sensitive_interception():
     agent = BaseAgent(name="SecurityAgent", tool_registry=registry)
 
     async def mock_llm_generate(messages, tools, model=None, provider=None, temperature=None):
+        # 只要执行过工具，模型即完成任务并输出总结 (对标真实 LLM 行为)
+        has_tool_res = any(m.role == "tool" for m in messages)
+        if has_tool_res:
+            return {"content": "Docker 容器已处于运行状态", "tool_calls": []}
         return {
             "content": "",
             "tool_calls": [
@@ -170,7 +175,7 @@ async def test_execution_mode_confirm_sensitive_interception():
     assert "requires_approval" in event_names
     assert "done" in event_names
 
-    # 验证已授权调用：传入 approved_tool_calls 后应当顺利执行
+    # 验证已授权调用：传入 approved_tool_calls 后应当顺利执行并自然完成
     approved_events = []
     async for event in agent.stream_chat(
         prompt="查看 docker 容器",
@@ -184,6 +189,7 @@ async def test_execution_mode_confirm_sensitive_interception():
     assert "requires_approval" not in approved_event_names
     assert "tool_call" in approved_event_names
     assert "tool_result" in approved_event_names
+    assert "message" in approved_event_names
 
     # 验证直接携带 approved_tool_call 恢复执行 (杜绝死循环)
     resumed_events = []
@@ -204,5 +210,54 @@ async def test_execution_mode_confirm_sensitive_interception():
     assert "requires_approval" not in resumed_names
     assert "tool_call" in resumed_names
     assert "tool_result" in resumed_names
+    assert "message" in resumed_names
+
+
+@pytest.mark.asyncio
+async def test_unbounded_steps_natural_completion():
+    """测试对齐 DSH 的无限制步数模式 (max_steps=0): 模型可执行多步并在完成时自然终结"""
+    registry = ToolRegistry()
+
+    step_counter = 0
+
+    @tool(name="step_runner", description="推进子任务")
+    def step_runner(idx: int) -> str:
+        return f"Completed step {idx}"
+
+    registry.register(step_runner)
+    # max_steps=0 代表无限制模式
+    agent = BaseAgent(name="UnboundedAgent", tool_registry=registry, max_steps=0)
+
+    async def mock_multi_step_llm(messages, tools, model=None, provider=None, temperature=None):
+        nonlocal step_counter
+        step_counter += 1
+        if step_counter <= 3:
+            # 前 3 步连续调用不同参数的工具
+            return {
+                "content": "",
+                "tool_calls": [{
+                    "id": f"call_{step_counter}",
+                    "name": "step_runner",
+                    "arguments": {"idx": step_counter}
+                }]
+            }
+        # 第 4 步完成任务，输出纯文本
+        return {"content": "所有复杂任务步骤均已顺利执行完毕！", "tool_calls": []}
+
+    agent._call_llm_generate = mock_multi_step_llm
+
+    events = []
+    async for event in agent.stream_chat(prompt="执行跨多步的量化任务"):
+        events.append(event)
+
+    event_names = [e["event"] for e in events]
+    tool_results = [e for e in events if e["event"] == "tool_result"]
+    assert len(tool_results) == 3
+    assert "done" in event_names
+    # 确认没有触发"步数上限"警告
+    messages = [e for e in events if e["event"] == "message"]
+    full_msg = "".join(json.loads(m["data"]).get("delta", "") for m in messages)
+    assert "步数上限" not in full_msg
+    assert "所有复杂任务步骤均已顺利执行完毕！" in full_msg
 
 

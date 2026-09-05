@@ -74,6 +74,7 @@ class AgentChatRequest(BaseModel):
     execution_mode: Optional[str] = Field(None, description="执行安全模式 ('auto' | 'confirm_sensitive' | 'confirm_all')")
     approved_tool_calls: Optional[List[str]] = Field(default_factory=list, description="用户已显式授权的 tool_call_id 列表")
     approved_tool_call: Optional[Dict[str, Any]] = Field(None, description="用户已授权立即执行的工具调用对象 {'id': ..., 'name': ..., 'arguments': ...}")
+    max_steps: Optional[int] = Field(None, description="单次最大步数 (None 或 0 为无限制，对标 DSH)")
 
 
 
@@ -384,7 +385,8 @@ async def chat_stream(req: AgentChatRequest, auth: UserAuth = Depends(get_curren
         sensitive_tools=cfg.sensitive_tools,
         approved_tool_calls=req.approved_tool_calls or [],
         approved_tool_call=req.approved_tool_call,
-        thinking_level=thinking_lvl
+        thinking_level=thinking_lvl,
+        max_steps=req.max_steps if req.max_steps is not None else cfg.max_steps
     )
 
     return EventSourceResponse(stream)

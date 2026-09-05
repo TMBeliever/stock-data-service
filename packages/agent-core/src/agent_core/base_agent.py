@@ -57,17 +57,20 @@ class BaseAgent:
         system_prompt: str = "你是一个高效、严谨且具备自主工具调用能力的通用 AI 助手。",
         tool_registry: Optional[ToolRegistry] = None,
         token_governor: Optional[TokenGovernor] = None,
+        ai_core_url: Optional[str] = None,
+        max_steps: Optional[int] = 0,
+        max_error_budget: int = 3,
         repeat_guard: Optional[RepeatToolGuard] = None,
-        ai_core_url: str = "http://localhost:8070",
-        max_steps: int = 20
     ):
         self.name = name
         self.system_prompt = system_prompt
         self.tool_registry = tool_registry or ToolRegistry()
         self.token_governor = token_governor or TokenGovernor()
         self.repeat_guard = repeat_guard or RepeatToolGuard()
-        self.ai_core_url = ai_core_url.rstrip("/")
-        self.max_steps = max_steps
+        self.ai_core_url = (ai_core_url or "http://localhost:8070").rstrip("/")
+        # max_steps <= 0 或 None 表示无限制模式 (对标 DSH，由模型自然终结或由 RepeatGuard/中断拦截；内置 100 步防失控兜底)
+        self.max_steps = max_steps if max_steps is not None else 0
+        self.max_error_budget = max_error_budget
 
     async def _call_llm_generate(
         self,
@@ -224,14 +227,16 @@ class BaseAgent:
         execution_mode: str = "auto",
         sensitive_tools: Optional[List[str]] = None,
         approved_tool_calls: Optional[List[str]] = None,
-        approved_tool_call: Optional[Dict[str, Any]] = None
+        approved_tool_call: Optional[Dict[str, Any]] = None,
+        max_steps_override: Optional[int] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
-        ReAct 流式调度器 v2:
+        ReAct 流式调度器 v2 (对标 DSH 架构):
         - 工具轮次：非流式调用（需完整 tool_calls 结构）
         - 最终回答：分块流式推送（chunk_size=8，更流畅）
         - 并行工具执行（asyncio.create_task 并发）
         - 错误反思：失败预算耗尽先给模型一次反思机会，再失败才退出
+        - 无限制步数支持：max_steps <= 0 为无限制模式，由模型输出纯文本自然终结
         """
         active_sys_prompt = system_prompt_override or self.system_prompt
         active_registry = tool_registry_override or self.tool_registry
@@ -249,9 +254,16 @@ class BaseAgent:
         raw_tools = active_registry.to_definitions(category=tool_category)
         tools = self.token_governor.sort_tools_for_caching(raw_tools)
 
+        effective_max = max_steps_override if max_steps_override is not None else self.max_steps
+        is_unbounded = (effective_max <= 0)
+        # 极端防失控兜底熔断：无限制模式下默认 100 步作为安全网
+        runaway_ceiling = 100 if is_unbounded else effective_max
+
         logger.info(
-            "Agent '%s' starting: %d tools, max_steps=%d, mode=%s",
-            self.name, len(tools), self.max_steps, execution_mode
+            "Agent '%s' starting: %d tools, max_steps=%s, mode=%s",
+            self.name, len(tools),
+            f"unbounded (runaway_ceiling={runaway_ceiling})" if is_unbounded else f"{effective_max} steps",
+            execution_mode
         )
 
         approved_set = set(approved_tool_calls or [])
@@ -263,10 +275,11 @@ class BaseAgent:
                 return False
             return tc.id in approved_set or tc.name in approved_set or "all" in approved_set
 
+        # 3. 循环状态
         step = 0
-        error_budget = 3        # 连续全量失败预算
-        reflection_used = False  # 是否已使用过反思机会
-        self.repeat_guard.reset()  # 新会话轮次清空重复调用计数链
+        error_budget = 3
+        reflection_used = False
+        self.repeat_guard.reset()
 
         # ── 0. 优先恢复用户授权的工具调用 ──
         if approved_tool_call and approved_tool_call.get("name"):
@@ -282,7 +295,7 @@ class BaseAgent:
                 yield ev
 
         # ── 主 ReAct 循环 ──
-        while step < self.max_steps:
+        while step < runaway_ceiling:
             step += 1
 
             # Token 压缩检查
@@ -489,15 +502,24 @@ class BaseAgent:
             yield {"event": "done", "data": json.dumps({"status": "finished"})}
             return
 
-        # 达到 max_steps 上限
+        # 达到步数上限或极端防失控兜底
+        if is_unbounded:
+            warning_msg = (
+                f"\n\n> ⚠️ **触发极端防失控兜底 ({runaway_ceiling} 步)**\n\n"
+                "单次推演已达到系统极端安全上限（100 步）。为了保护您的计算资源与上下文，已自动暂停。\n"
+                "中间步骤已完整保存，您可以继续发送指令推进后续任务。"
+            )
+        else:
+            warning_msg = (
+                f"\n\n> ⚠️ **步数上限 ({effective_max} 步)**\n\n"
+                "任务规模超出设定的单次执行预算。已完成的中间步骤已保存。\n"
+                "你可以继续追问，我会基于已有结果继续推进。"
+            )
+
         yield {
             "event": "message",
             "data": json.dumps({
-                "delta": (
-                    f"\n\n> ⚠️ **步数上限 ({self.max_steps} 步)**\n\n"
-                    "任务规模超出单次执行预算。已完成的中间步骤已保存。\n"
-                    "你可以继续追问，我会基于已有结果继续推进。"
-                ),
+                "delta": warning_msg,
                 "role": "assistant"
             }, ensure_ascii=False)
         }

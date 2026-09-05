@@ -13,8 +13,8 @@ const authStore = useAuthStore()
 const activeMainTab = ref<'watchlists' | 'holdings'>('watchlists')
 const toastMsg = ref('')
 
-// 选中的组合 (真实用户的自选组合)
-const activeWatchlistName = ref<string>('')
+// 选中的组合 (真实用户的自选组合，持久化记忆最后选中的组合)
+const activeWatchlistName = ref<string>(localStorage.getItem('quant_active_watchlist_name') || '')
 const watchlistSymbolsQuotes = ref<Record<string, SymbolItem>>({})
 const isQuotesLoading = ref(false)
 
@@ -53,15 +53,20 @@ const currentWatchlist = computed(() => {
   return found || allWatchlists.value[0]
 })
 
-// 监听组合列表加载完成自动选中第一个
+// 监听组合列表加载完成自动选中
 watch(
   () => strategyStore.userWatchlists,
   (list) => {
-    if (list.length > 0 && !activeWatchlistName.value) {
-      activeWatchlistName.value = list[0].name
+    if (list.length > 0) {
+      const current = activeWatchlistName.value
+      if (!current || !list.some((w) => w.name === current)) {
+        activeWatchlistName.value = list[0].name
+      }
+    } else {
+      activeWatchlistName.value = ''
     }
   },
-  { immediate: true }
+  { immediate: true, deep: true }
 )
 
 // 批量加载当前组合内标的的实时行情
@@ -94,20 +99,32 @@ async function loadWatchlistQuotes() {
 
 watch(
   () => activeWatchlistName.value,
-  () => {
+  (name) => {
+    if (name) {
+      localStorage.setItem('quant_active_watchlist_name', name)
+    }
     loadWatchlistQuotes()
   }
 )
 
 onMounted(async () => {
-  if (authStore.isLoggedIn) {
-    await Promise.all([
-      strategyStore.fetchUserWatchlists(),
-      strategyStore.fetchUserHoldings(),
-    ])
-  }
+  await Promise.all([
+    strategyStore.fetchUserWatchlists(),
+    strategyStore.fetchUserHoldings(),
+  ])
   loadWatchlistQuotes()
 })
+
+// 监听登录态变化重新拉取
+watch(
+  () => authStore.isLoggedIn,
+  (loggedIn) => {
+    if (loggedIn) {
+      strategyStore.fetchUserWatchlists()
+      strategyStore.fetchUserHoldings()
+    }
+  }
+)
 
 // 切换组合
 function selectWatchlist(name: string) {
@@ -176,14 +193,17 @@ async function confirmCreateWatchlist() {
     rawSymbols.push('510300.SH.ETF')
   }
 
-  const ok = await strategyStore.saveUserWatchlist(createNameInput.value.trim(), createDescInput.value.trim(), rawSymbols)
+  const newName = createNameInput.value.trim()
+  const ok = await strategyStore.saveUserWatchlist(newName, createDescInput.value.trim(), rawSymbols)
   if (ok) {
-    activeWatchlistName.value = createNameInput.value.trim()
+    activeWatchlistName.value = newName
+    localStorage.setItem('quant_active_watchlist_name', newName)
     showCreateModal.value = false
     createNameInput.value = ''
     createDescInput.value = ''
     createSymbolsInput.value = ''
     showToast('⭐ 成功创建个人自选组合！')
+    loadWatchlistQuotes()
   }
 }
 

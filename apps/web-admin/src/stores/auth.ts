@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { useStrategyStore } from './strategy'
 
 export interface User {
   id: number
@@ -96,6 +97,14 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = data.user
       localStorage.setItem('access_token', data.access_token)
       closeAuthModal()
+      try {
+        const strategyStore = useStrategyStore()
+        strategyStore.fetchUserWatchlists()
+        strategyStore.fetchUserHoldings()
+        strategyStore.fetchUserStrategies()
+      } catch (e) {
+        console.warn('[AuthStore] login sync failed', e)
+      }
       return true
     } catch (err: any) {
       authError.value = err.message || '网络连接异常，无法连接鉴权服务'
@@ -145,6 +154,10 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = null
     user.value = null
     localStorage.removeItem('access_token')
+    try {
+      const strategyStore = useStrategyStore()
+      strategyStore.fetchUserWatchlists()
+    } catch {}
   }
 
   async function grantVip(days: number = 30): Promise<boolean> {
@@ -174,10 +187,20 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // 页面挂载初始化：自动复原会话
+  // 页面挂载初始化：自动复原会话并刷新用户云端数据
   async function initAuth() {
     if (token.value) {
-      await fetchMe()
+      const ok = await fetchMe()
+      if (ok) {
+        try {
+          const strategyStore = useStrategyStore()
+          strategyStore.fetchUserWatchlists()
+          strategyStore.fetchUserHoldings()
+          strategyStore.fetchUserStrategies()
+        } catch (e) {
+          console.warn('[AuthStore] initAuth sync failed', e)
+        }
+      }
     }
   }
 

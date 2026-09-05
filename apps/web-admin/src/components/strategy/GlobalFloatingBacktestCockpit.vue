@@ -340,6 +340,7 @@ function onWindowClick(e: MouseEvent) {
 onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('click', onWindowClick)
+  strategyStore.fetchUserWatchlists()
 })
 
 onUnmounted(() => {
@@ -368,15 +369,12 @@ async function confirmArchiveBacktest() {
 
 // 快捷保存当前标的池为新组合
 async function handleSaveCurrentSymbolsAsWatchlist() {
-  if (!authStore.isLoggedIn) {
-    authStore.openLogin()
-    return
-  }
-  const name = prompt('请输入新自选组合名称:', `我的策略组合 (${strategyStore.symbols.length}只标的)`)
+  const defaultName = `我的自选组合 (${strategyStore.symbols.length}只标的)`
+  const name = prompt('请输入新自选组合名称:', defaultName)
   if (!name || !name.trim()) return
   const ok = await strategyStore.saveUserWatchlist(name.trim())
   if (ok) {
-    showToast(`⭐ 已成功创建自选组合「${name.trim()}」！`)
+    showToast(`⭐ 已成功保存自选组合「${name.trim()}」！`)
   }
 }
 

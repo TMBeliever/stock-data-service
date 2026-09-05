@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useAuthStore } from './auth'
-import { useStrategyStore } from './strategy'
+import { useStrategyStore, saveWatchlistsToStorage } from './strategy'
 
 export interface SymbolItem {
   symbol: string
@@ -169,63 +169,87 @@ export const useMarketStore = defineStore('market', () => {
     return []
   }
 
-  // 将标的追加至用户的指定自选组合
+  // 将标的追加至用户的指定自选组合 (支持本地即时更新 + 服务端持久化)
   async function addSymbolToWatchlist(watchlistId: number, symbol: string): Promise<boolean> {
-    if (!authStore.isLoggedIn) {
-      authStore.openLogin()
-      return false
-    }
-    try {
-      const token = authStore.token
-      const resp = await fetch(`/api/v1/user/watchlists/${watchlistId}/symbols`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ symbols: [symbol] }),
-      })
-      if (resp.ok) {
-        const updated = await resp.json()
-        // 同步更新 strategyStore 里的组合数据
-        const idx = strategyStore.userWatchlists.findIndex((w) => w.id === watchlistId)
-        if (idx !== -1) {
-          strategyStore.userWatchlists[idx] = updated
+    const sym = symbol.trim().toUpperCase()
+    if (!sym) return false
+
+    // 1. 本地立即更新 strategyStore 并保存缓存
+    const idx = strategyStore.userWatchlists.findIndex((w) => w.id === watchlistId)
+    if (idx !== -1) {
+      const currentSyms = [...strategyStore.userWatchlists[idx].symbols]
+      if (!currentSyms.includes(sym)) {
+        currentSyms.push(sym)
+        strategyStore.userWatchlists[idx] = {
+          ...strategyStore.userWatchlists[idx],
+          symbols: currentSyms,
+          updated_at: new Date().toISOString(),
         }
-        return true
+        saveWatchlistsToStorage(strategyStore.userWatchlists)
       }
-    } catch (err) {
-      console.error('[MarketStore] addSymbolToWatchlist error:', err)
     }
-    return false
+
+    // 2. 若持有凭证且为服务端组合 (id > 0)，调用接口持久化
+    if (authStore.token && watchlistId > 0) {
+      try {
+        const resp = await fetch(`/api/v1/user/watchlists/${watchlistId}/symbols`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authStore.token}`,
+          },
+          body: JSON.stringify({ symbols: [sym] }),
+        })
+        if (resp.ok) {
+          const updated = await resp.json()
+          if (idx !== -1) {
+            strategyStore.userWatchlists[idx] = updated
+            saveWatchlistsToStorage(strategyStore.userWatchlists)
+          }
+        }
+      } catch (err) {
+        console.error('[MarketStore] addSymbolToWatchlist error:', err)
+      }
+    }
+    return true
   }
 
-  // 从指定自选组合中移除标的
+  // 从指定自选组合中移除标的 (支持本地即时更新 + 服务端持久化)
   async function removeSymbolFromWatchlist(watchlistId: number, symbol: string): Promise<boolean> {
-    if (!authStore.isLoggedIn) {
-      authStore.openLogin()
-      return false
-    }
-    try {
-      const token = authStore.token
-      const resp = await fetch(`/api/v1/user/watchlists/${watchlistId}/symbols/${encodeURIComponent(symbol)}`, {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
-      if (resp.ok) {
-        const updated = await resp.json()
-        const idx = strategyStore.userWatchlists.findIndex((w) => w.id === watchlistId)
-        if (idx !== -1) {
-          strategyStore.userWatchlists[idx] = updated
-        }
-        return true
+    const sym = symbol.trim().toUpperCase()
+    // 1. 本地立即更新 strategyStore 并保存缓存
+    const idx = strategyStore.userWatchlists.findIndex((w) => w.id === watchlistId)
+    if (idx !== -1) {
+      const currentSyms = strategyStore.userWatchlists[idx].symbols.filter((s) => s.toUpperCase() !== sym)
+      strategyStore.userWatchlists[idx] = {
+        ...strategyStore.userWatchlists[idx],
+        symbols: currentSyms,
+        updated_at: new Date().toISOString(),
       }
-    } catch (err) {
-      console.error('[MarketStore] removeSymbolFromWatchlist error:', err)
+      saveWatchlistsToStorage(strategyStore.userWatchlists)
     }
-    return false
+
+    // 2. 若持有凭证且为服务端组合 (id > 0)，调用接口持久化
+    if (authStore.token && watchlistId > 0) {
+      try {
+        const resp = await fetch(`/api/v1/user/watchlists/${watchlistId}/symbols/${encodeURIComponent(sym)}`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${authStore.token}`,
+          },
+        })
+        if (resp.ok) {
+          const updated = await resp.json()
+          if (idx !== -1) {
+            strategyStore.userWatchlists[idx] = updated
+            saveWatchlistsToStorage(strategyStore.userWatchlists)
+          }
+        }
+      } catch (err) {
+        console.error('[MarketStore] removeSymbolFromWatchlist error:', err)
+      }
+    }
+    return true
   }
 
   return {

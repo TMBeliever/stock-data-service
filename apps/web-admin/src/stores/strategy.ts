@@ -54,6 +54,29 @@ export interface UserHoldingItem {
   updated_at: string
 }
 
+const WATCHLISTS_STORAGE_KEY = 'quantscope_user_watchlists'
+
+export function loadWatchlistsFromStorage(): UserWatchlistItem[] {
+  try {
+    const raw = localStorage.getItem(WATCHLISTS_STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) return parsed
+    }
+  } catch (e) {
+    console.error('Failed to load watchlists from storage', e)
+  }
+  return []
+}
+
+export function saveWatchlistsToStorage(items: UserWatchlistItem[]) {
+  try {
+    localStorage.setItem(WATCHLISTS_STORAGE_KEY, JSON.stringify(items))
+  } catch (e) {
+    console.error('Failed to save watchlists to storage', e)
+  }
+}
+
 export const PRESET_HOLDINGS = [
   { symbol: '510300.SH.ETF', name: '沪深300 ETF', quantity: 10000, avg_cost: 3.75 },
   { symbol: '510880.SH.ETF', name: '红利 ETF', quantity: 15000, avg_cost: 2.92 },
@@ -613,8 +636,8 @@ export const useStrategyStore = defineStore('strategy', () => {
     }
   }
 
-  // 自选组合与持仓状态
-  const userWatchlists = ref<UserWatchlistItem[]>([])
+  // 自选组合与持仓状态 (首屏立即从本地缓存载入，避免网络或鉴权延迟导致界面空白)
+  const userWatchlists = ref<UserWatchlistItem[]>(loadWatchlistsFromStorage())
   const userHoldings = ref<UserHoldingItem[]>([])
   const watchlistsLoading = ref(false)
   const holdingsLoading = ref(false)
@@ -916,74 +939,108 @@ class MyCustomStrategy(BaseStrategy):
     }
   }
 
-  // 拉取用户自选组合列表 (纯真实用户自定义，不掺杂写死假预设)
+  // 拉取用户自选组合列表 (纯真实用户自定义，支持本地快速还原与云端优雅同步)
   async function fetchUserWatchlists() {
     const authStore = useAuthStore()
-    if (!authStore.token) {
-      userWatchlists.value = []
-      return
+    // 1. 始终确保首屏有本地缓存
+    if (userWatchlists.value.length === 0) {
+      userWatchlists.value = loadWatchlistsFromStorage()
     }
-    watchlistsLoading.value = true
-    try {
-      const res = await fetch('/api/v1/user/watchlists', {
-        headers: { Authorization: `Bearer ${authStore.token}` },
-      })
-      if (res.ok) {
-        userWatchlists.value = await res.json()
+
+    // 2. 若用户已登录或持有凭证，尝试同步服务端最新列表
+    if (authStore.token) {
+      watchlistsLoading.value = true
+      try {
+        const res = await fetch('/api/v1/user/watchlists', {
+          headers: { Authorization: `Bearer ${authStore.token}` },
+        })
+        if (res.ok) {
+          const cloudItems: UserWatchlistItem[] = await res.json()
+          // 合并策略：以服务端为基准，同时保留本地自建尚未同步的组合 (id < 0)
+          const localItems = loadWatchlistsFromStorage()
+          const unsynced = localItems.filter(
+            (loc) => loc.id < 0 && !cloudItems.some((c) => c.name === loc.name)
+          )
+          const merged = [...cloudItems, ...unsynced]
+          userWatchlists.value = merged
+          saveWatchlistsToStorage(merged)
+        }
+      } catch (err) {
+        console.warn('[StrategyStore] fetchUserWatchlists 失败，已降级使用本地存储', err)
+      } finally {
+        watchlistsLoading.value = false
       }
-    } finally {
-      watchlistsLoading.value = false
     }
   }
 
-  // 保存当前标的池为自定义自选组合
+  // 保存当前标的池为自定义自选组合 (支持云端持久化 + 本地实时持久化双保险)
   async function saveUserWatchlist(name: string, description?: string, customSymbols?: string[]): Promise<boolean> {
+    const cleanName = name.trim()
+    if (!cleanName) return false
+    const symList = customSymbols && customSymbols.length > 0 ? customSymbols : symbols.value
     const authStore = useAuthStore()
-    if (!authStore.isLoggedIn) {
-      authStore.openLogin()
-      return false
-    }
-    try {
-      const symList = customSymbols && customSymbols.length > 0 ? customSymbols : symbols.value
-      const res = await fetch('/api/v1/user/watchlists', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authStore.token}`,
-        },
-        body: JSON.stringify({
-          name: name.trim(),
-          description: description?.trim() || null,
-          symbols: symList,
-        }),
-      })
-      if (res.ok) {
-        await fetchUserWatchlists()
-        return true
+
+    let cloudItem: UserWatchlistItem | null = null
+    // 若已登录，尝试保存至服务端
+    if (authStore.token) {
+      try {
+        const res = await fetch('/api/v1/user/watchlists', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authStore.token}`,
+          },
+          body: JSON.stringify({
+            name: cleanName,
+            description: description?.trim() || null,
+            symbols: symList,
+          }),
+        })
+        if (res.ok) {
+          cloudItem = await res.json()
+        }
+      } catch (e) {
+        console.warn('[StrategyStore] saveUserWatchlist 云端请求异常，将回退保存至本地缓存', e)
       }
-      return false
-    } catch {
-      return false
     }
+
+    // 若未登录或云端失败，生成安全本地持久化对象
+    const finalItem: UserWatchlistItem = cloudItem || {
+      id: -(Date.now()),
+      user_id: authStore.user?.id || 0,
+      name: cleanName,
+      description: description?.trim() || null,
+      symbols: [...symList],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    const existingIdx = userWatchlists.value.findIndex((w) => w.name === cleanName)
+    if (existingIdx >= 0) {
+      userWatchlists.value[existingIdx] = finalItem
+    } else {
+      userWatchlists.value.unshift(finalItem)
+    }
+    saveWatchlistsToStorage(userWatchlists.value)
+    return true
   }
 
-  // 删除自选组合
+  // 删除自选组合 (支持云端与本地同步删除)
   async function deleteUserWatchlist(id: number): Promise<boolean> {
     const authStore = useAuthStore()
-    if (!authStore.token) return false
-    try {
-      const res = await fetch(`/api/v1/user/watchlists/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${authStore.token}` },
-      })
-      if (res.ok) {
-        userWatchlists.value = userWatchlists.value.filter((w) => w.id !== id)
-        return true
+    if (id > 0 && authStore.token) {
+      try {
+        await fetch(`/api/v1/user/watchlists/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${authStore.token}` },
+        })
+      } catch (e) {
+        console.warn('[StrategyStore] delete cloud watchlist failed', e)
       }
-      return false
-    } catch {
-      return false
     }
+    userWatchlists.value = userWatchlists.value.filter((w) => w.id !== id)
+    saveWatchlistsToStorage(userWatchlists.value)
+    return true
   }
 
   // 拉取用户持仓列表

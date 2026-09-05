@@ -68,6 +68,14 @@ class TokenGovernor:
         )
         return head_text + notice + tail_text
 
+    def prune_tool_result(self, raw_output: Any) -> str:
+        """
+        工具输出结果确定性剪枝 (对齐 DSH compaction-tool-result-pruner):
+        在存入会话日志与推演上下文前，对超大输出执行 Head/Tail 保护性剪枝，
+        从源头防止单次万字输出撑爆上下文窗口。
+        """
+        return self.truncate_observation(raw_output)
+
     def sort_tools_for_caching(self, tools: List[ToolDefinition]) -> List[ToolDefinition]:
         """
         稳定排序工具定义：

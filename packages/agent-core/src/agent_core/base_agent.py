@@ -6,6 +6,7 @@ from typing import AsyncGenerator, Dict, Any, List, Optional
 from ai_core.models import Message, ToolCall, ToolDefinition
 from agent_core.tool import ToolRegistry
 from agent_core.token_governor import TokenGovernor
+from agent_core.guards import RepeatToolGuard, GuardAlert
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +34,9 @@ def _check_tool_sensitivity(tc: ToolCall, sensitive_tools: Optional[List[str]] =
         if "docker" in cmd_lower or tc.name == "admin_docker_manage":
             return True, f"涉及 Docker 容器基础设施管理: {cmd[:60] or 'docker'}"
         if "brew" in cmd_lower:
-            return True, f"涉及 Homebrew 系统软件包变更: {cmd[:60]}"
-        for kw in ["rm ", "kill", "pkill", "apt", "yum", "systemctl", "service", "chmod", "git push", "git reset", "drop"]:
-            if kw in cmd_lower:
-                return True, f"涉及系统核心运维/变更指令: {cmd[:60]}"
+            return True, f"涉及系统包管理变更: {cmd[:60]}"
+        if any(w in cmd_lower for w in ["apt", "apk", "yum", "npm", "pnpm", "pip", "uv"]):
+            return True, f"涉及全局软件包/环境修改: {cmd[:60]}"
         return True, f"敏感系统运维/写操作工具: {tc.name}"
     return False, ""
 
@@ -45,6 +45,7 @@ class BaseAgent:
     """
     通用智能体运行基类 v2 (Universal Agent Harness):
     - 并行工具执行 (无依赖工具 asyncio.gather 并发)
+    - 循环卫生守卫 (对齐 DSH RepeatToolGuard，防止工具重复调用死循环)
     - 错误反思机制 (工具失败后让模型分析原因再决策，而不是盲目熔断)
     - max_steps=20 适应复杂任务
     - 智能历史压缩（保留工具观察摘要，防止模型失忆）
@@ -56,6 +57,7 @@ class BaseAgent:
         system_prompt: str = "你是一个高效、严谨且具备自主工具调用能力的通用 AI 助手。",
         tool_registry: Optional[ToolRegistry] = None,
         token_governor: Optional[TokenGovernor] = None,
+        repeat_guard: Optional[RepeatToolGuard] = None,
         ai_core_url: str = "http://localhost:8070",
         max_steps: int = 20
     ):
@@ -63,6 +65,7 @@ class BaseAgent:
         self.system_prompt = system_prompt
         self.tool_registry = tool_registry or ToolRegistry()
         self.token_governor = token_governor or TokenGovernor()
+        self.repeat_guard = repeat_guard or RepeatToolGuard()
         self.ai_core_url = ai_core_url.rstrip("/")
         self.max_steps = max_steps
 
@@ -263,6 +266,7 @@ class BaseAgent:
         step = 0
         error_budget = 3        # 连续全量失败预算
         reflection_used = False  # 是否已使用过反思机会
+        self.repeat_guard.reset()  # 新会话轮次清空重复调用计数链
 
         # ── 0. 优先恢复用户授权的工具调用 ──
         if approved_tool_call and approved_tool_call.get("name"):
@@ -374,6 +378,29 @@ class BaseAgent:
                 # ── 并行执行所有工具 ──
                 async for ev in self._execute_and_stream_tools(parsed_calls, step, active_registry, history):
                     yield ev
+
+                # ── 循环卫生与重复调用守卫 (RepeatToolGuard · 对齐 DSH) ──
+                for tc in parsed_calls:
+                    guard_alert = self.repeat_guard.observe(tc.name, tc.arguments)
+                    if guard_alert:
+                        yield {
+                            "event": "guard_alert",
+                            "data": json.dumps({
+                                "tool_name": guard_alert.tool_name,
+                                "count": guard_alert.count,
+                                "level": guard_alert.level,
+                                "message": guard_alert.message,
+                                "step": step
+                            }, ensure_ascii=False)
+                        }
+                        history.append(Message.user(guard_alert.message))
+                        yield {
+                            "event": "thought",
+                            "data": json.dumps({
+                                "step": step,
+                                "thought": f"🛡️ [循环卫生守卫拦截] 检测到重复调用 `{tc.name}`（连续 {guard_alert.count} 次），已注入防循环提示，正在调整推演策略..."
+                            }, ensure_ascii=False)
+                        }
 
                 # ── 错误检测 ──
                 recent_results = [m for m in history if m.role == "tool"][-len(parsed_calls):]

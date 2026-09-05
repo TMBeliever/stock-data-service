@@ -10,7 +10,7 @@ from quant_agent.config import agent_config
 from quant_agent.agent_engine import quant_agent
 from quant_agent.auth import UserAuth, get_current_auth
 from quant_agent.settings import settings_manager, AgentRuntimeConfig, McpServerConfig
-from quant_agent.admin_tools import current_active_project_dir
+from quant_agent.admin_tools import current_active_project_dir, current_sticky_cwd
 
 app = FastAPI(
     title="Quant Agent Service",
@@ -359,9 +359,11 @@ async def chat_stream(req: AgentChatRequest, auth: UserAuth = Depends(get_curren
     page_ctx = req.page_context or ""
     if req.project_path:
         current_active_project_dir.set(req.project_path)
+        current_sticky_cwd.set(req.project_path)
         page_ctx = f"当前激活工程: [{req.project_id or '未命名'}] | 运行主机: {req.host_type or 'local'} | 物理工作目录: {req.project_path}\n{page_ctx}"
     else:
         current_active_project_dir.set(None)
+        current_sticky_cwd.set(None)
 
     cfg = settings_manager.get_config()
     exec_mode = req.execution_mode or cfg.execution_mode or "auto"

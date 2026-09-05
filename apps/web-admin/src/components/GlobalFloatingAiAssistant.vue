@@ -277,17 +277,11 @@ function isToolchainExpandedById(msgId: string): boolean {
 }
 
 function isToolchainExpanded(msg: any): boolean {
-  // 用户手动操作过一次，以用户选择为准（防闪烁）
+  // 用户手动操作过一次，严格以用户选择为准（防闪烁）
   if (expandedToolchains.value[msg.id] !== undefined) {
     return expandedToolchains.value[msg.id]
   }
-  // 未手动操作时：有工具运行中 → 自动展开一次（并记录）
-  if (hasRunningTools(msg) && !autoExpandedToolchains.value.has(msg.id)) {
-    autoExpandedToolchains.value.add(msg.id)
-    expandedToolchains.value[msg.id] = true
-    return true
-  }
-  // 默认收起
+  // 默认精简收起，零闪烁与零跳动；用户点击顶栏即可流畅展开
   return false
 }
 
@@ -1429,6 +1423,20 @@ onUnmounted(() => {
                       <span>✓</span>
                       <span>授权并执行指令</span>
                     </button>
+                  </div>
+                </div>
+
+                <!-- 循环卫生守卫警示 (Guard Alert Banner · 借鉴 DSH) -->
+                <div
+                  v-if="msg.guardAlerts && msg.guardAlerts.length > 0"
+                  class="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-200 text-xs space-y-1 shadow-xs"
+                >
+                  <div class="flex items-center space-x-1.5 font-medium text-amber-300">
+                    <span>🛡️</span>
+                    <span>循环卫生守卫已介入 (Repeat Guard)</span>
+                  </div>
+                  <div class="text-[11px] text-amber-200/80 leading-relaxed">
+                    检测到模型发起重复工具调用，守卫已自动注入防死循环提示并引导模型调整策略。
                   </div>
                 </div>
 

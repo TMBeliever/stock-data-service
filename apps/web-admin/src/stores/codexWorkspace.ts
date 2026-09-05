@@ -815,6 +815,10 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
                   t.liveOutput = (t.liveOutput || '') + (prog.delta || '')
                   t.outputPreview = t.liveOutput
                 }
+              } else if (currentEventType === 'guard_alert') {
+                const guardData = JSON.parse(rawData)
+                if (!assistantMsg.guardAlerts) assistantMsg.guardAlerts = []
+                assistantMsg.guardAlerts.push(guardData)
               } else if (currentEventType === 'requires_approval') {
                 const reqApp = JSON.parse(rawData)
                 if (!assistantMsg.toolCalls) assistantMsg.toolCalls = []

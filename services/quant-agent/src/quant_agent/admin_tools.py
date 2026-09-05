@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 # 当前激活工程物理工作目录上下文 (协程隔离)
 current_active_project_dir: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("current_active_project_dir", default=None)
+# 会话级持久粘性工作目录 (Sticky Session CWD · 借鉴 DSH tool-bash-persistent)
+current_sticky_cwd: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("current_sticky_cwd", default=None)
 
 # 高危破坏性指令拦截黑名单 (杜绝清盘、清空文件系统、炸弹叉)
 DESTRUCTIVE_COMMAND_BLACKLIST = [
@@ -54,22 +56,26 @@ def map_host_path_to_container(path_str: str) -> str:
     return clean_p
 
 def _resolve_safe_path(rel_or_abs_path: str, project_dir: Optional[str] = None) -> Path:
-    """校验并转换安全工作区路径，防止路径遍历穿越攻击，优先查找当前激活工程及关联源码包"""
+    """校验并转换安全工作区路径，防止路径遍历穿越攻击，优先查找当前会话粘性目录、当前激活工程及关联源码包"""
     mapped = map_host_path_to_container(rel_or_abs_path)
     target = Path(mapped)
 
+    sticky_cwd = current_sticky_cwd.get()
     active_proj = project_dir or current_active_project_dir.get()
     mapped_proj = map_host_path_to_container(active_proj) if active_proj else None
     workspace = Path(agent_config.WORKSPACE_ROOT).resolve()
 
     if not target.is_absolute():
-        # 1. 优先在当前激活工程目录下查找（如果存在）
-        if mapped_proj and (Path(mapped_proj) / target).exists():
+        # 1. 优先在当前会话粘性工作目录下查找（模型当前所驻留的目录）
+        if sticky_cwd and (Path(sticky_cwd) / target).exists():
+            target = (Path(sticky_cwd) / target).resolve()
+        # 2. 优先在当前激活工程目录下查找（如果存在）
+        elif mapped_proj and (Path(mapped_proj) / target).exists():
             target = (Path(mapped_proj) / target).resolve()
-        # 2. 尝试在 agent_config.WORKSPACE_ROOT 下查找
+        # 3. 尝试在 agent_config.WORKSPACE_ROOT 下查找
         elif (workspace / target).exists():
             target = (workspace / target).resolve()
-        # 3. 尝试在常见挂载根目录下探测
+        # 4. 尝试在常见挂载根目录下探测
         else:
             found = False
             for cand_root in [
@@ -85,14 +91,15 @@ def _resolve_safe_path(rel_or_abs_path: str, project_dir: Optional[str] = None) 
                     found = True
                     break
             if not found:
-                base = Path(mapped_proj) if mapped_proj else workspace
+                base = Path(sticky_cwd) if sticky_cwd else (Path(mapped_proj) if mapped_proj else workspace)
                 target = (base / target).resolve()
     else:
         target = target.resolve()
 
-    # 安全目录白名单列表 (包括应用工作区、当前激活工程目录、数据持久卷、宿主机挂载点)
+    # 安全目录白名单列表 (包括应用工作区、当前粘性目录、当前激活工程目录、数据持久卷、宿主机挂载点)
     allowed_roots = [
         workspace,
+        Path(sticky_cwd).resolve() if sticky_cwd and Path(sticky_cwd).exists() else None,
         Path(mapped_proj).resolve() if mapped_proj and Path(mapped_proj).exists() else None,
         Path("/app/data").resolve() if Path("/app/data").exists() else None,
         Path("/host_home").resolve() if Path("/host_home").exists() else None,
@@ -339,8 +346,11 @@ async def admin_run_tests(target: str = "packages/agent-core/tests", timeout: in
     :param timeout: 超时时间秒数 (默认 45)
     """
     target_cwd = agent_config.WORKSPACE_ROOT
+    sticky_cwd = current_sticky_cwd.get()
     active_proj = current_active_project_dir.get()
-    if active_proj and active_proj.strip():
+    if sticky_cwd and sticky_cwd.strip() and Path(sticky_cwd.strip()).is_dir():
+        target_cwd = str(Path(sticky_cwd.strip()).resolve())
+    elif active_proj and active_proj.strip():
         mapped_proj = map_host_path_to_container(active_proj.strip())
         p = Path(mapped_proj)
         if p.exists() and p.is_dir():
@@ -499,8 +509,9 @@ async def admin_execute_shell(
         if blocked in cmd_lower:
             return f"Security Intercepted: 命中灾难级系统破坏黑名单指令 '{blocked}'，已被安全熔断拦截！"
 
-    # 解析与转换目标工作目录 (优先指定 cwd，其次当前激活工程，最后系统工作区)
+    # 解析与转换目标工作目录 (优先指定 cwd，其次会话粘性工作目录，再次当前激活工程，最后系统工作区)
     target_cwd = agent_config.WORKSPACE_ROOT
+    sticky_cwd = current_sticky_cwd.get()
     active_proj = current_active_project_dir.get()
     if cwd and cwd.strip():
         mapped_cwd = map_host_path_to_container(cwd.strip())
@@ -509,6 +520,8 @@ async def admin_execute_shell(
             target_cwd = str(p.resolve())
         else:
             logger.warning("Specified cwd '%s' (mapped: '%s') does not exist, falling back to %s", cwd, mapped_cwd, target_cwd)
+    elif sticky_cwd and sticky_cwd.strip() and Path(sticky_cwd.strip()).is_dir():
+        target_cwd = str(Path(sticky_cwd.strip()).resolve())
     elif active_proj and active_proj.strip():
         mapped_proj = map_host_path_to_container(active_proj.strip())
         p = Path(mapped_proj)
@@ -569,6 +582,22 @@ async def admin_execute_shell(
             output_parts.append(f"STDOUT:\n{stdout}")
         if stderr:
             output_parts.append(f"STDERR:\n{stderr}")
+
+        # 成功执行时更新会话级持久粘性工作目录 (Sticky Session CWD · 对齐 DSH tool-bash-persistent)
+        if exit_code == 0:
+            import re
+            cd_match = re.search(r'(?:^|[;&|])\s*cd\s+([^\s;&|]+)', command.strip())
+            if cd_match:
+                dest = cd_match.group(1).strip().strip("'\"")
+                mapped_dest = map_host_path_to_container(dest)
+                dest_path = Path(mapped_dest)
+                if not dest_path.is_absolute():
+                    dest_path = (Path(target_cwd) / dest_path).resolve()
+                if dest_path.exists() and dest_path.is_dir():
+                    current_sticky_cwd.set(str(dest_path))
+                    output_parts.append(f"📁 [Sticky CWD 粘性锁定]: 当前会话后续命令默认工作目录已更新至: {dest_path}")
+            elif cwd and cwd.strip() and Path(target_cwd).exists():
+                current_sticky_cwd.set(target_cwd)
 
         # 若为 Git 报错，附加针对性排查诊断，避免用户误解为缺少 git 命令
         if "fatal: not a git repository" in stderr.lower():

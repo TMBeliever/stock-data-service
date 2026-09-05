@@ -10,6 +10,8 @@ from agent_core.workspace import (
     get_default_preset_projects,
 )
 
+from agent_core.guards import RepeatToolGuard, GuardAlert
+
 __all__ = [
     "BaseAgent",
     "BaseTool",
@@ -22,5 +24,7 @@ __all__ = [
     "ProjectSession",
     "SessionMessage",
     "get_default_preset_projects",
+    "RepeatToolGuard",
+    "GuardAlert",
 ]
 

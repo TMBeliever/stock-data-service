@@ -77,6 +77,37 @@ class KlineResponse(BaseModel):
     latest: Optional[KlinePoint] = None
     data: List[KlinePoint]
 
+NAME_TO_SYMBOL_MAP = {
+    "招商": ("600036", "SH", "STK"),
+    "招商银行": ("600036", "SH", "STK"),
+    "招行": ("600036", "SH", "STK"),
+    "贵州茅台": ("600519", "SH", "STK"),
+    "茅台": ("600519", "SH", "STK"),
+    "比亚迪": ("002594", "SZ", "STK"),
+    "宁德时代": ("300750", "SZ", "STK"),
+    "平安银行": ("000001", "SZ", "STK"),
+    "中国平安": ("601318", "SH", "STK"),
+    "五粮液": ("000858", "SZ", "STK"),
+    "长江电力": ("600900", "SH", "STK"),
+    "紫金矿业": ("601899", "SH", "STK"),
+    "中信证券": ("600030", "SH", "STK"),
+    "腾讯": ("00700", "HK", "STK"),
+    "腾讯控股": ("00700", "HK", "STK"),
+    "阿里巴巴": ("09988", "HK", "STK"),
+    "美团": ("03690", "HK", "STK"),
+    "沪深300": ("000300", "SH", "IDX"),
+    "中证500": ("000905", "SH", "IDX"),
+    "中证1000": ("000852", "SH", "IDX"),
+    "上证指数": ("000001", "SH", "IDX"),
+    "上证50": ("000016", "SH", "IDX"),
+    "创业板指": ("399006", "SZ", "IDX"),
+    "深证成指": ("399001", "SZ", "IDX"),
+    "恒生指数": ("HSI", "HK", "IDX"),
+    "纳斯达克": ("NDX", "US", "IDX"),
+    "标普500": ("SPX", "US", "IDX"),
+    "道琼斯": ("DJI", "US", "IDX"),
+}
+
 def parse_symbol(symbol_str: str) -> tuple[str, str, str]:
     """
     智能解析标的代码。
@@ -84,19 +115,14 @@ def parse_symbol(symbol_str: str) -> tuple[str, str, str]:
       1. 标准三段式: AAPL.US.STK, 002594.SZ.STK
       2. 市场后缀简写: 002594.SZ, 600519.SH, AAPL.US, 00700.HK
       3. 交易所前缀简写: sz002594, sh600519
-      4. 纯代码全自动推断:
-         - 002594 (纯6位，00/30开头) -> ('002594', 'SZ', 'STK') (比亚迪)
-         - 600519 (纯6位，60/68开头) -> ('600519', 'SH', 'STK') (贵州茅台)
-         - 832000 (纯6位，8/4/9开头) -> ('832000', 'BJ', 'STK') (北交所)
-         - 510300 (纯6位，51/56/58开头) -> ('510300', 'SH', 'ETF')
-         - 159915 (纯6位，15/16开头) -> ('159915', 'SZ', 'ETF')
-         - 000300, 000905 -> ('000300', 'SH', 'IDX')
-         - 399001, 399006 -> ('399001', 'SZ', 'IDX')
-         - 00700 (纯5位) -> ('00700', 'HK', 'STK') (腾讯控股)
-         - AAPL, TSLA (纯字母) -> ('AAPL', 'US', 'STK')
-         - SPY, QQQ (核心ETF) -> ('SPY', 'US', 'ETF')
+      4. 常用股票/指数中文名称智能解析: '招商' / '招商银行' -> ('600036', 'SH', 'STK')
+      5. 纯代码全自动推断
     """
-    raw = symbol_str.upper().strip()
+    clean_sym = symbol_str.strip()
+    if clean_sym in NAME_TO_SYMBOL_MAP:
+        return NAME_TO_SYMBOL_MAP[clean_sym]
+
+    raw = clean_sym.upper()
 
     # 处理形如 SH600519 / SZ002594 前缀格式
     if (raw.startswith("SH") or raw.startswith("SZ") or raw.startswith("BJ")) and len(raw) == 8 and raw[2:].isdigit():

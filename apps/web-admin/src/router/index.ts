@@ -20,6 +20,18 @@ const routes: RouteRecordRaw[] = [
     meta: { title: 'Agent 管理与配置中心' },
   },
   {
+    path: '/symbol/:symbol',
+    name: 'SymbolDetail',
+    component: () => import('@/views/SymbolDetailView.vue'),
+    meta: { title: '标的行情与K线' },
+  },
+  {
+    path: '/portfolio',
+    name: 'Portfolio',
+    component: () => import('@/views/PortfolioView.vue'),
+    meta: { title: '我的组合与持仓' },
+  },
+  {
     path: '/:pathMatch(.*)*',
     redirect: '/',
   },

@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import EChartWrapper from '@/components/EChartWrapper.vue'
-import { useStrategyStore, type UserBacktestItem } from '@/stores/strategy'
+import { useStrategyStore, type UserBacktestItem, PRESET_WATCHLISTS } from '@/stores/strategy'
 import { useAuthStore } from '@/stores/auth'
 
+const router = useRouter()
 const strategyStore = useStrategyStore()
 const authStore = useAuthStore()
 
@@ -12,12 +14,33 @@ const toastMsg = ref('')
 const showArchiveModal = ref(false)
 const archiveNameInput = ref('')
 
-// 快速标的预设
-const symbolPresets = [
+// 自选组合与持仓弹窗控制
+const showSaveWatchlistModal = ref(false)
+const watchlistNameInput = ref('')
+const watchlistDescInput = ref('')
+const showManageHoldingsModal = ref(false)
+const editingHoldings = ref<{ symbol: string; name: string; quantity: number; avg_cost: number }[]>([])
+
+// 快捷输入控制
+const singleSymbolInput = ref(strategyStore.symbol)
+const inputSymbolToAdd = ref('')
+
+// 监听当前 store.symbol 变化同步到单标的输入框
+watch(
+  () => strategyStore.symbol,
+  (newVal) => {
+    singleSymbolInput.value = newVal
+  }
+)
+
+// 快速单标的预设推荐
+const singleQuickPresets = [
   { label: '沪深300 ETF', value: '510300.SH.ETF' },
   { label: '红利 ETF', value: '510880.SH.ETF' },
   { label: '中证500 ETF', value: '510500.SH.ETF' },
   { label: '黄金 ETF', value: '518880.SH.ETF' },
+  { label: '贵州茅台', value: '600519.SH' },
+  { label: '宁德时代', value: '300750.SZ' },
 ]
 
 function showToast(msg: string) {
@@ -26,6 +49,129 @@ function showToast(msg: string) {
     toastMsg.value = ''
   }, 3000)
 }
+
+function handleSingleSymbolChange() {
+  const val = singleSymbolInput.value.trim().toUpperCase()
+  if (!val) return
+  let formatted = val
+  if (/^\d{6}$/.test(formatted)) {
+    if (formatted.startsWith('6') || formatted.startsWith('5')) {
+      formatted += formatted.startsWith('5') ? '.SH.ETF' : '.SH'
+    } else if (formatted.startsWith('0') || formatted.startsWith('3') || formatted.startsWith('1')) {
+      formatted += formatted.startsWith('1') ? '.SZ.ETF' : '.SZ'
+    }
+  }
+  singleSymbolInput.value = formatted
+  strategyStore.symbol = formatted
+  strategyStore.symbols = [formatted]
+  showToast(`🎯 已切换回测标的：${formatted}`)
+}
+
+function selectSinglePreset(item: { label: string; value: string }) {
+  singleSymbolInput.value = item.value
+  strategyStore.symbol = item.value
+  strategyStore.symbols = [item.value]
+  showToast(`🎯 已应用标的：${item.label}`)
+}
+
+// 批量解析与添加组合代码
+function handleAddSymbol() {
+  if (!inputSymbolToAdd.value.trim()) return
+  const tokens = inputSymbolToAdd.value
+    .split(/[,，\s]+/)
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean)
+  tokens.forEach((t) => {
+    let formatted = t
+    if (/^\d{6}$/.test(formatted)) {
+      if (formatted.startsWith('6') || formatted.startsWith('5')) {
+        formatted += formatted.startsWith('5') ? '.SH.ETF' : '.SH'
+      } else if (formatted.startsWith('0') || formatted.startsWith('3') || formatted.startsWith('1')) {
+        formatted += formatted.startsWith('1') ? '.SZ.ETF' : '.SZ'
+      }
+    }
+    strategyStore.addSymbolTag(formatted)
+  })
+  inputSymbolToAdd.value = ''
+  showToast(`✅ 已更新标的池 (共 ${strategyStore.symbols.length} 只标的)`)
+}
+
+// 打开保存自选组合弹窗
+function openSaveWatchlistModal() {
+  watchlistNameInput.value = `我的自选组合 (${strategyStore.symbols.length}只标的)`
+  watchlistDescInput.value = ''
+  showSaveWatchlistModal.value = true
+}
+
+async function confirmSaveWatchlist() {
+  if (!watchlistNameInput.value.trim()) {
+    showToast('⚠️ 组合名称不能为空')
+    return
+  }
+  const ok = await strategyStore.saveUserWatchlist(watchlistNameInput.value, watchlistDescInput.value)
+  if (ok) {
+    showSaveWatchlistModal.value = false
+    showToast('💾 已成功保存自选股票池组合！')
+  } else {
+    showToast('⚠️ 保存失败，请检查网络或登录状态')
+  }
+}
+
+// 打开管理持仓弹窗
+function openManageHoldingsModal() {
+  editingHoldings.value = strategyStore.userHoldings.map((h) => ({
+    symbol: h.symbol,
+    name: h.name,
+    quantity: h.quantity,
+    avg_cost: h.avg_cost,
+  }))
+  if (editingHoldings.value.length === 0) {
+    editingHoldings.value = [
+      { symbol: '510300.SH.ETF', name: '沪深300 ETF', quantity: 10000, avg_cost: 3.75 },
+      { symbol: '510880.SH.ETF', name: '红利 ETF', quantity: 15000, avg_cost: 2.92 },
+    ]
+  }
+  showManageHoldingsModal.value = true
+}
+
+function addHoldingRow() {
+  editingHoldings.value.push({
+    symbol: '',
+    name: '',
+    quantity: 1000,
+    avg_cost: 10.0,
+  })
+}
+
+function removeHoldingRow(idx: number) {
+  editingHoldings.value.splice(idx, 1)
+}
+
+async function confirmSaveHoldings() {
+  const valid = editingHoldings.value.filter((h) => h.symbol.trim().length > 0)
+  if (valid.length === 0) {
+    showToast('⚠️ 请至少录入一条有效持仓数据')
+    return
+  }
+  const ok = await strategyStore.saveUserHoldings(valid)
+  if (ok) {
+    showManageHoldingsModal.value = false
+    strategyStore.applyHoldingsToBacktest()
+    showToast('💼 持仓底仓已同步更新并注入回测池！')
+  } else {
+    showToast('⚠️ 持仓更新失败，请稍后重试')
+  }
+}
+
+// 计算持仓估算总市值成本
+const holdingTotalCost = computed(() => {
+  return strategyStore.userHoldings.reduce((sum, h) => sum + h.quantity * h.avg_cost, 0)
+})
+
+// 多标的判定
+const isMultiSymbol = computed(() => {
+  return strategyStore.backtestMode !== 'single' || strategyStore.symbols.length > 1
+})
 
 // 净值走势图 ECharts 配置
 const chartOption = computed(() => {
@@ -65,7 +211,7 @@ const chartOption = computed(() => {
       },
     },
     legend: {
-      data: ['策略累计收益', '标的基准收益'],
+      data: [isMultiSymbol.value ? '策略组合总收益' : '策略累计收益', isMultiSymbol.value ? '沪深300基准收益' : '标的基准收益'],
       textStyle: { color: '#a1a1aa', fontSize: 11 },
       top: 0,
       right: 10,
@@ -89,7 +235,7 @@ const chartOption = computed(() => {
     },
     series: [
       {
-        name: '策略累计收益',
+        name: isMultiSymbol.value ? '策略组合总收益' : '策略累计收益',
         type: 'line',
         smooth: true,
         data: strategyReturns,
@@ -109,7 +255,7 @@ const chartOption = computed(() => {
         },
       },
       {
-        name: '标的基准收益',
+        name: isMultiSymbol.value ? '沪深300基准收益' : '标的基准收益',
         type: 'line',
         smooth: true,
         data: benchmarkReturns,
@@ -129,7 +275,10 @@ function openArchiveModal() {
     showToast('⚠️ 当前没有可归档的回测结果，请先运行回测')
     return
   }
-  archiveNameInput.value = `${strategyStore.activeStrategyName || '自定策略'} (${strategyStore.symbol.split('.')[0]})`
+  const symbolDesc = isMultiSymbol.value
+    ? `组合(${strategyStore.symbols.length}标的)`
+    : strategyStore.symbol.split('.')[0]
+  archiveNameInput.value = `${strategyStore.activeStrategyName || '自定策略'} (${symbolDesc})`
   showArchiveModal.value = true
 }
 
@@ -151,6 +300,13 @@ async function confirmArchiveBacktest() {
 // 载入历史回测参数配置
 function loadHistoryParams(item: UserBacktestItem) {
   strategyStore.symbol = item.symbol
+  if (item.symbol.includes(',')) {
+    strategyStore.setSymbols(item.symbol.split(','))
+    strategyStore.backtestMode = 'basket'
+  } else {
+    strategyStore.symbols = [item.symbol]
+    strategyStore.backtestMode = 'single'
+  }
   strategyStore.startDate = item.start_date
   if (item.end_date) {
     strategyStore.endDate = item.end_date
@@ -181,6 +337,8 @@ async function deleteHistoryRecord(item: UserBacktestItem, e: Event) {
 }
 
 onMounted(() => {
+  strategyStore.fetchUserWatchlists()
+  strategyStore.fetchUserHoldings()
   if (authStore.isLoggedIn && strategyStore.userBacktests.length === 0) {
     strategyStore.fetchUserBacktests()
   }
@@ -197,37 +355,252 @@ onMounted(() => {
       {{ toastMsg }}
     </div>
 
-    <!-- 1. 顶部回测环境参数配置条 -->
-    <div class="px-4 py-3 border-b border-white/[0.08] bg-white/[0.02] flex flex-wrap items-center justify-between gap-3 shrink-0">
-      <!-- 标的选择 -->
-      <div class="flex items-center space-x-2">
-        <span class="text-xs text-zinc-400 font-medium">回测标的:</span>
-        <select
-          v-model="strategyStore.symbol"
-          class="bg-black/50 border border-white/[0.1] rounded-lg px-2.5 py-1 text-xs text-white focus:outline-none focus:border-amber-500/50 cursor-pointer"
-        >
-          <option v-for="item in symbolPresets" :key="item.value" :value="item.value">
-            {{ item.label }} ({{ item.value.split('.')[0] }})
-          </option>
-        </select>
+    <!-- 1. 顶部标的与组合全能控制舱 (Raycast Command Center) -->
+    <div class="p-3 border-b border-white/[0.08] bg-white/[0.02] space-y-2.5 shrink-0">
+      <!-- 第一行：模式分段切换器 & 起止时间与资金 -->
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <!-- 模式切换胶囊 Pills -->
+        <div class="inline-flex p-0.5 rounded-xl bg-black/40 border border-white/[0.08] text-xs">
+          <button
+            @click="strategyStore.backtestMode = 'single'"
+            :class="strategyStore.backtestMode === 'single' ? 'bg-amber-500/20 text-amber-300 border-amber-500/30 font-bold shadow-sm' : 'text-zinc-400 hover:text-zinc-200 border-transparent'"
+            class="px-3 py-1 rounded-lg border transition-all cursor-pointer flex items-center space-x-1.5"
+          >
+            <span>🎯</span>
+            <span>自由单标的</span>
+          </button>
+          <button
+            @click="strategyStore.backtestMode = 'basket'"
+            :class="strategyStore.backtestMode === 'basket' ? 'bg-amber-500/20 text-amber-300 border-amber-500/30 font-bold shadow-sm' : 'text-zinc-400 hover:text-zinc-200 border-transparent'"
+            class="px-3 py-1 rounded-lg border transition-all cursor-pointer flex items-center space-x-1.5"
+          >
+            <span>🧺</span>
+            <span>自选组合</span>
+            <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-white/[0.08] text-zinc-300 font-mono">
+              {{ strategyStore.symbols.length }}
+            </span>
+          </button>
+          <button
+            @click="strategyStore.backtestMode = 'holdings'; strategyStore.applyHoldingsToBacktest()"
+            :class="strategyStore.backtestMode === 'holdings' ? 'bg-amber-500/20 text-amber-300 border-amber-500/30 font-bold shadow-sm' : 'text-zinc-400 hover:text-zinc-200 border-transparent'"
+            class="px-3 py-1 rounded-lg border transition-all cursor-pointer flex items-center space-x-1.5"
+          >
+            <span>💼</span>
+            <span>我的持仓回测</span>
+            <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-white/[0.08] text-zinc-300 font-mono">
+              {{ strategyStore.userHoldings.length }}
+            </span>
+          </button>
+        </div>
+
+        <!-- 起止时间与本金 -->
+        <div class="flex items-center space-x-3 text-xs text-zinc-400">
+          <div class="flex items-center space-x-1.5">
+            <span>起始:</span>
+            <input
+              v-model="strategyStore.startDate"
+              type="date"
+              class="bg-black/50 border border-white/[0.1] rounded-lg px-2 py-0.5 text-xs text-white focus:outline-none focus:border-amber-500/50 font-mono"
+            />
+          </div>
+          <div class="flex items-center space-x-1.5">
+            <span>本金:</span>
+            <div class="relative flex items-center">
+              <span class="absolute left-2 text-zinc-500 font-mono text-[11px]">¥</span>
+              <input
+                v-model.number="strategyStore.initialCash"
+                type="number"
+                step="10000"
+                class="w-24 pl-5 pr-1.5 py-0.5 bg-black/50 border border-white/[0.1] rounded-lg text-xs font-mono font-semibold text-white focus:outline-none focus:border-amber-500/50"
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
-      <!-- 起止时间与资金 -->
-      <div class="flex items-center space-x-3 text-xs text-zinc-400">
-        <div class="flex items-center space-x-1">
-          <span>起始:</span>
-          <input
-            v-model="strategyStore.startDate"
-            type="date"
-            class="bg-black/50 border border-white/[0.1] rounded-lg px-2 py-0.5 text-xs text-white focus:outline-none focus:border-amber-500/50 font-mono"
-          />
+      <!-- 第二行：子模式交互面板 (针对三种模式深度定制) -->
+      <!-- A. 单标的模式 -->
+      <div v-if="strategyStore.backtestMode === 'single'" class="flex flex-wrap items-center justify-between gap-2 pt-1">
+        <div class="flex items-center space-x-2 flex-1 max-w-md">
+          <span class="text-xs text-zinc-400 shrink-0 font-medium">输入代码:</span>
+          <div class="relative flex-1">
+            <input
+              v-model="singleSymbolInput"
+              @change="handleSingleSymbolChange"
+              @keydown.enter.prevent="handleSingleSymbolChange"
+              type="text"
+              placeholder="如 600519.SH / 510300.SH.ETF / 000858"
+              class="w-full bg-black/50 border border-white/[0.12] rounded-lg px-3 py-1 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500/60 font-mono"
+            />
+          </div>
+          <button
+            @click="handleSingleSymbolChange"
+            class="px-2.5 py-1 rounded-lg bg-white/[0.08] hover:bg-white/[0.14] text-xs text-white transition-colors cursor-pointer shrink-0 font-medium"
+          >
+            确认应用
+          </button>
+          <button
+            @click="router.push(`/symbol/${encodeURIComponent(strategyStore.symbol)}`)"
+            class="px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-xs text-zinc-300 hover:text-white border border-white/[0.08] transition-colors cursor-pointer shrink-0 flex items-center space-x-1"
+            title="查看该标的实时行情与K线"
+          >
+            <span>👁️</span>
+            <span>查看K线</span>
+          </button>
         </div>
-        <div class="hidden sm:flex items-center space-x-1">
-          <span>本金:</span>
-          <span class="font-mono text-white font-semibold">¥{{ strategyStore.initialCash.toLocaleString() }}</span>
+
+        <!-- 快捷热门推荐 -->
+        <div class="flex items-center space-x-1.5 overflow-x-auto text-[11px]">
+          <span class="text-zinc-500 text-[10px] shrink-0">快捷推荐:</span>
+          <button
+            v-for="item in singleQuickPresets"
+            :key="item.value"
+            @click="selectSinglePreset(item)"
+            :class="strategyStore.symbol === item.value ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-white/[0.03] hover:bg-white/[0.08] text-zinc-400 hover:text-zinc-200 border-white/[0.06]'"
+            class="px-2 py-0.5 rounded-md border transition-all cursor-pointer shrink-0"
+          >
+            {{ item.label }}
+          </button>
+        </div>
+      </div>
+
+      <!-- B. 自选组合/股票池模式 -->
+      <div v-else-if="strategyStore.backtestMode === 'basket'" class="space-y-2 pt-1">
+        <!-- 组合标的标签池 + 快速添加输入框 -->
+        <div class="flex flex-wrap items-center gap-1.5 p-2 rounded-xl bg-black/40 border border-white/[0.08] min-h-[38px]">
+          <!-- 标的 Capsule 胶囊 -->
+          <div
+            v-for="sym in strategyStore.symbols"
+            :key="sym"
+            class="inline-flex items-center space-x-1 px-2 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono group hover:bg-amber-500/20 transition-all"
+          >
+            <span
+              @click="router.push(`/symbol/${encodeURIComponent(sym)}`)"
+              class="cursor-pointer hover:underline"
+              title="点击查看标的行情详情与K线"
+            >
+              {{ sym }}
+            </span>
+            <button
+              @click="strategyStore.removeSymbolTag(sym)"
+              class="text-amber-500 hover:text-red-400 transition-colors cursor-pointer text-xs ml-0.5"
+              title="移除标的"
+            >
+              ×
+            </button>
+          </div>
+
+          <!-- 快速输入 / 批量粘贴框 -->
+          <div class="flex-1 min-w-[220px] flex items-center space-x-1">
+            <input
+              v-model="inputSymbolToAdd"
+              @keydown.enter.prevent="handleAddSymbol"
+              type="text"
+              placeholder="+ 粘贴或输入代码 (支持多只逗号隔开，回车添加)..."
+              class="w-full bg-transparent border-none text-xs text-white placeholder-zinc-500 focus:outline-none font-mono py-0.5 px-1"
+            />
+            <button
+              v-if="inputSymbolToAdd.trim()"
+              @click="handleAddSymbol"
+              class="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-600 text-[10px] font-bold text-white transition-colors cursor-pointer shrink-0"
+            >
+              添加
+            </button>
+          </div>
+        </div>
+
+        <!-- 组合快捷操作条：经典组合模板 & 存为自选 & 清空 -->
+        <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+          <!-- 模板组合与我的组合选择下拉 -->
+          <div class="flex items-center space-x-2">
+            <span class="text-zinc-500 text-[11px]">组合模板:</span>
+            <select
+              @change="(e: any) => {
+                const val = e.target.value
+                if (!val) return
+                const all = [...PRESET_WATCHLISTS, ...strategyStore.userWatchlists]
+                const target = all.find((w) => w.name === val)
+                if (target) {
+                  strategyStore.loadPresetWatchlist(target)
+                  showToast(`✅ 已应用组合：${target.name}`)
+                }
+              }"
+              class="bg-black/50 border border-white/[0.1] rounded-lg px-2 py-0.5 text-xs text-zinc-200 focus:outline-none focus:border-amber-500/50 cursor-pointer"
+            >
+              <option value="">快速载入组合模板...</option>
+              <optgroup label="🏛️ 机构经典配置池">
+                <option v-for="w in PRESET_WATCHLISTS" :key="w.name" :value="w.name">
+                  {{ w.name }} ({{ w.symbols.length }}标的)
+                </option>
+              </optgroup>
+              <optgroup v-if="strategyStore.userWatchlists.length > 0" label="⭐ 我的自选组合">
+                <option v-for="w in strategyStore.userWatchlists" :key="w.id" :value="w.name">
+                  {{ w.name }} ({{ w.symbols.length }}标的)
+                </option>
+              </optgroup>
+            </select>
+          </div>
+
+          <!-- 组合管理快捷按钮 -->
+          <div class="flex items-center space-x-2">
+            <button
+              @click="openSaveWatchlistModal"
+              class="px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 text-xs border border-white/[0.08] transition-all cursor-pointer flex items-center space-x-1"
+            >
+              <span>💾</span>
+              <span>存为我的组合</span>
+            </button>
+            <button
+              @click="strategyStore.symbols = ['510300.SH.ETF']; showToast('已重置标的池为沪深300')"
+              class="px-2 py-1 rounded-lg text-zinc-500 hover:text-red-400 text-xs transition-colors cursor-pointer"
+            >
+              重置
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- C. 我的持仓回测模式 -->
+      <div v-else-if="strategyStore.backtestMode === 'holdings'" class="pt-1">
+        <div class="p-2.5 rounded-xl bg-gradient-to-r from-emerald-500/10 to-teal-500/5 border border-emerald-500/20 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div class="flex items-center space-x-2.5">
+            <span class="text-lg">💼</span>
+            <div>
+              <div class="font-bold text-emerald-300 flex items-center space-x-1.5">
+                <span>已关联当前资产底仓 (共 {{ strategyStore.userHoldings.length }} 只品种)</span>
+                <span class="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-mono">
+                  成本约 ¥{{ holdingTotalCost.toLocaleString() }}
+                </span>
+              </div>
+              <div class="text-[11px] text-zinc-400 mt-0.5 flex items-center space-x-1 font-mono">
+                <span>标的池:</span>
+                <span class="text-zinc-200 truncate max-w-md">
+                  {{ strategyStore.userHoldings.map((h) => `${h.name}(${h.symbol.split('.')[0]})`).join('、') }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex items-center space-x-2">
+            <button
+              @click="strategyStore.applyHoldingsToBacktest(); showToast('⚡ 已自动将底仓标的与总市值同步至回测环境！')"
+              class="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 transition-all cursor-pointer flex items-center space-x-1"
+            >
+              <span>⚡</span>
+              <span>重新同步持仓</span>
+            </button>
+            <button
+              @click="openManageHoldingsModal"
+              class="px-2.5 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 text-xs border border-white/[0.08] transition-all cursor-pointer flex items-center space-x-1"
+            >
+              <span>📝</span>
+              <span>编辑底仓</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
+
 
     <!-- 2. 错误告警区 -->
     <div
@@ -578,7 +951,15 @@ onMounted(() => {
                   class="hover:bg-white/[0.02] transition-colors"
                 >
                   <td class="p-2.5 text-zinc-300">{{ t.datetime_str }}</td>
-                  <td class="p-2.5 text-zinc-200 font-semibold">{{ t.symbol }}</td>
+                  <td class="p-2.5">
+                    <span
+                      @click="router.push(`/symbol/${encodeURIComponent(t.symbol)}`)"
+                      class="px-1.5 py-0.5 rounded bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 font-mono font-bold text-[10px] border border-amber-500/20 cursor-pointer transition-colors"
+                      title="点击查看标的行情与K线详情"
+                    >
+                      {{ t.symbol }}
+                    </span>
+                  </td>
                   <td class="p-2.5">
                     <span
                       :class="t.side.toUpperCase() === 'BUY' ? 'bg-red-500/15 text-red-400 border border-red-500/20' : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20'"
@@ -670,6 +1051,197 @@ onMounted(() => {
             class="px-4 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-50 text-white font-bold text-xs shadow-lg shadow-orange-500/20 transition-all cursor-pointer flex items-center space-x-1.5"
           >
             <span>{{ strategyStore.isSavingBacktest ? '正在保存...' : '确认归档' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6. 保存自选组合弹窗 Modal -->
+    <div
+      v-if="showSaveWatchlistModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn"
+    >
+      <div class="w-full max-w-md bg-[#18191e] border border-white/[0.12] rounded-2xl shadow-2xl overflow-hidden p-5 space-y-4">
+        <div class="flex items-center justify-between pb-3 border-b border-white/[0.08]">
+          <div class="flex items-center space-x-2">
+            <span class="text-blue-400 text-base">💾</span>
+            <h3 class="text-sm font-bold text-white">保存为我的自选组合</h3>
+          </div>
+          <button
+            @click="showSaveWatchlistModal = false"
+            class="text-zinc-400 hover:text-white transition-colors cursor-pointer text-sm"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="block text-zinc-400 mb-1 font-medium">组合名称 <span class="text-red-400">*</span></label>
+            <input
+              v-model="watchlistNameInput"
+              type="text"
+              placeholder="如: 高股息核心组合 / 科技成长先锋"
+              class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50"
+            />
+          </div>
+
+          <div>
+            <label class="block text-zinc-400 mb-1 font-medium">投资逻辑 / 备注说明</label>
+            <textarea
+              v-model="watchlistDescInput"
+              rows="2"
+              placeholder="简要记录组合选股逻辑或回测策略说明 (选填)"
+              class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 resize-none"
+            ></textarea>
+          </div>
+
+          <!-- 组合内标的清单 -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5 text-zinc-400 font-medium">
+              <span>包含标的</span>
+              <span class="text-blue-300 font-mono">共 {{ strategyStore.symbols.length }} 只标的</span>
+            </div>
+            <div class="p-2.5 rounded-xl bg-black/30 border border-white/[0.06] flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+              <span
+                v-for="sym in strategyStore.symbols"
+                :key="sym"
+                class="px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-300 font-mono text-[11px] border border-blue-500/20"
+              >
+                {{ sym }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end space-x-2 pt-2 border-t border-white/[0.08]">
+          <button
+            @click="showSaveWatchlistModal = false"
+            class="px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 text-xs transition-colors cursor-pointer"
+          >
+            取消
+          </button>
+          <button
+            @click="confirmSaveWatchlist"
+            class="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg shadow-blue-500/20 transition-all cursor-pointer flex items-center space-x-1.5"
+          >
+            <span>确认保存组合</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 7. 编辑我的持仓底仓弹窗 Modal -->
+    <div
+      v-if="showManageHoldingsModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn"
+    >
+      <div class="w-full max-w-xl bg-[#18191e] border border-white/[0.12] rounded-2xl shadow-2xl overflow-hidden p-5 space-y-4">
+        <div class="flex items-center justify-between pb-3 border-b border-white/[0.08]">
+          <div class="flex items-center space-x-2">
+            <span class="text-emerald-400 text-base">💼</span>
+            <div>
+              <h3 class="text-sm font-bold text-white">管理我的持仓底仓</h3>
+              <p class="text-[11px] text-zinc-400">录入实盘持仓或模拟底仓，保存后将自动同步并注入回测环境</p>
+            </div>
+          </div>
+          <button
+            @click="showManageHoldingsModal = false"
+            class="text-zinc-400 hover:text-white transition-colors cursor-pointer text-sm"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div class="space-y-3 text-xs">
+          <!-- 持仓列表滚动区 -->
+          <div class="max-h-64 overflow-y-auto rounded-xl border border-white/[0.08] overflow-hidden">
+            <table class="w-full text-left font-mono text-[11px]">
+              <thead class="bg-white/[0.04] text-zinc-400 border-b border-white/[0.08]">
+                <tr>
+                  <th class="p-2">标的代码 (如 600519.SH)</th>
+                  <th class="p-2">标的名称 (选填)</th>
+                  <th class="p-2">持仓股数</th>
+                  <th class="p-2">成本均价(元)</th>
+                  <th class="p-2 text-center">操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-white/[0.04]">
+                <tr v-for="(h, idx) in editingHoldings" :key="idx" class="hover:bg-white/[0.02]">
+                  <td class="p-1.5">
+                    <input
+                      v-model="h.symbol"
+                      type="text"
+                      placeholder="600519.SH"
+                      class="w-full bg-black/40 border border-white/[0.1] rounded px-2 py-1 text-white font-mono text-xs focus:outline-none focus:border-emerald-500/50 uppercase"
+                    />
+                  </td>
+                  <td class="p-1.5">
+                    <input
+                      v-model="h.name"
+                      type="text"
+                      placeholder="贵州茅台"
+                      class="w-full bg-black/40 border border-white/[0.1] rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500/50"
+                    />
+                  </td>
+                  <td class="p-1.5">
+                    <input
+                      v-model.number="h.quantity"
+                      type="number"
+                      step="100"
+                      min="0"
+                      class="w-full bg-black/40 border border-white/[0.1] rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500/50 font-mono"
+                    />
+                  </td>
+                  <td class="p-1.5">
+                    <input
+                      v-model.number="h.avg_cost"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      class="w-full bg-black/40 border border-white/[0.1] rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500/50 font-mono"
+                    />
+                  </td>
+                  <td class="p-1.5 text-center">
+                    <button
+                      @click="removeHoldingRow(idx)"
+                      class="text-zinc-500 hover:text-red-400 transition-colors p-1 cursor-pointer"
+                      title="删除该条记录"
+                    >
+                      🗑️
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 添加按钮与底仓总成本统计 -->
+          <div class="flex items-center justify-between pt-1">
+            <button
+              @click="addHoldingRow"
+              class="px-2.5 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 hover:text-white border border-white/[0.08] transition-all text-xs flex items-center space-x-1 cursor-pointer"
+            >
+              <span>➕ 添加持仓标的</span>
+            </button>
+            <div class="text-[11px] text-zinc-400 font-mono">
+              持仓估算总成本: <strong class="text-emerald-400 text-xs">¥{{ editingHoldings.reduce((s, h) => s + (h.quantity || 0) * (h.avg_cost || 0), 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) }}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end space-x-2 pt-3 border-t border-white/[0.08]">
+          <button
+            @click="showManageHoldingsModal = false"
+            class="px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 text-xs transition-colors cursor-pointer"
+          >
+            取消
+          </button>
+          <button
+            @click="confirmSaveHoldings"
+            class="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 transition-all cursor-pointer flex items-center space-x-1.5"
+          >
+            <span>保存并同步注入回测</span>
           </button>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { useAiStore } from '@/stores/ai'
 
 export interface UserStrategyItem {
   id: number
@@ -31,6 +32,57 @@ export interface UserBacktestItem {
   total_trades: number
   created_at: string
 }
+
+export interface UserWatchlistItem {
+  id: number
+  user_id: number
+  name: string
+  description?: string | null
+  symbols: string[]
+  created_at: string
+  updated_at: string
+}
+
+export interface UserHoldingItem {
+  id: number
+  user_id: number
+  symbol: string
+  name: string
+  quantity: number
+  avg_cost: number
+  created_at: string
+  updated_at: string
+}
+
+export const PRESET_WATCHLISTS = [
+  {
+    name: '🛡️ 达利欧全天候大类资产配置',
+    description: '核心权益 + 长期国债 + 黄金 + 豆粕商品宏观对冲',
+    symbols: ['510300.SH.ETF', '511010.SH.BOND', '518880.SH.ETF', '159981.SZ.ETF'],
+  },
+  {
+    name: '💰 高息央企红利低波现金流',
+    description: '红利 ETF + 红利低波 + 银行高股息主题池',
+    symbols: ['510880.SH.ETF', '515100.SH.ETF', '512800.SH.ETF'],
+  },
+  {
+    name: '🚀 核心宽基与科技成长池',
+    description: '沪深300 + 中证500 + 创业板 + 科创50核心宽基',
+    symbols: ['510300.SH.ETF', '510500.SH.ETF', '159915.SZ.ETF', '588000.SH.ETF'],
+  },
+  {
+    name: '🍷 消费白酒与新能源白马池',
+    description: '贵州茅台 + 五粮液 + 宁德时代 + 比亚迪龙头精选',
+    symbols: ['600519.SH', '000858.SZ', '300750.SZ', '002594.SZ'],
+  },
+]
+
+export const PRESET_HOLDINGS = [
+  { symbol: '510300.SH.ETF', name: '沪深300 ETF', quantity: 10000, avg_cost: 3.75 },
+  { symbol: '510880.SH.ETF', name: '红利 ETF', quantity: 15000, avg_cost: 2.92 },
+  { symbol: '511010.SH.BOND', name: '国债 ETF', quantity: 500, avg_cost: 105.2 },
+  { symbol: '518880.SH.ETF', name: '黄金 ETF', quantity: 6000, avg_cost: 5.4 },
+]
 
 export interface BacktestSummary {
   initial_cash: number
@@ -361,10 +413,210 @@ export const useStrategyStore = defineStore('strategy', () => {
   const code = ref(savedCode || DEFAULT_INITIAL_STRATEGIES[0].code)
 
   // 3. 回测参数状态
+  const backtestMode = ref<'single' | 'basket' | 'holdings'>('single')
   const symbol = ref(DEFAULT_INITIAL_STRATEGIES[0].symbol)
+  const symbols = ref<string[]>([DEFAULT_INITIAL_STRATEGIES[0].symbol])
+  const benchmark = ref('510300.SH.ETF')
   const startDate = ref('2023-01-01')
   const endDate = ref('')
   const initialCash = ref(100000)
+
+  // 悬浮回测工作舱 (Floating Backtest Cockpit) 几何尺寸与状态
+  const POS_KEY = 'quantscope_backtest_window_pos'
+  const SIZE_KEY = 'quantscope_backtest_window_size'
+  const TRIGGER_POS_KEY = 'quantscope_backtest_trigger_pos'
+  const isBacktestCockpitOpen = ref(false)
+
+  function loadSavedTriggerPosition() {
+    try {
+      const raw = localStorage.getItem(TRIGGER_POS_KEY)
+      if (raw) return JSON.parse(raw)
+    } catch {}
+    return {
+      x: typeof window !== 'undefined' ? Math.max(20, window.innerWidth - 440) : 880,
+      y: typeof window !== 'undefined' ? Math.max(20, window.innerHeight - 70) : 720,
+    }
+  }
+
+  const cockpitTriggerPosition = ref(loadSavedTriggerPosition())
+
+  function updateCockpitTriggerPosition(x: number, y: number) {
+    if (typeof window === 'undefined') return
+    const maxX = Math.max(10, window.innerWidth - 180)
+    const maxY = Math.max(10, window.innerHeight - 56)
+    const clampedX = Math.min(Math.max(10, x), maxX)
+    const clampedY = Math.min(Math.max(10, y), maxY)
+    cockpitTriggerPosition.value = { x: clampedX, y: clampedY }
+    try {
+      localStorage.setItem(TRIGGER_POS_KEY, JSON.stringify(cockpitTriggerPosition.value))
+    } catch {}
+  }
+
+  function loadSavedPosition() {
+    try {
+      const raw = localStorage.getItem(POS_KEY)
+      if (raw) return JSON.parse(raw)
+    } catch {}
+    // 默认初始位置靠左偏中，留出右侧空间给全局 AI 助手，彻底避免重叠
+    return {
+      x: typeof window !== 'undefined' ? Math.max(24, Math.round((window.innerWidth - 940) / 2) - 180) : 40,
+      y: 70,
+    }
+  }
+
+  function loadSavedSize() {
+    try {
+      const raw = localStorage.getItem(SIZE_KEY)
+      if (raw) return JSON.parse(raw)
+    } catch {}
+    return {
+      width: typeof window !== 'undefined' ? Math.min(920, window.innerWidth - 40) : 920,
+      height: typeof window !== 'undefined' ? Math.min(680, window.innerHeight - 80) : 680,
+    }
+  }
+
+  const cockpitPosition = ref(loadSavedPosition())
+  const cockpitSize = ref(loadSavedSize())
+
+  function updateCockpitPosition(x: number, y: number) {
+    if (typeof window === 'undefined') return
+    const maxX = Math.max(0, window.innerWidth - 180)
+    const maxY = Math.max(0, window.innerHeight - 80)
+    const clampedX = Math.max(0, Math.min(maxX, x))
+    const clampedY = Math.max(0, Math.min(maxY, y))
+    cockpitPosition.value = { x: clampedX, y: clampedY }
+    try {
+      localStorage.setItem(POS_KEY, JSON.stringify(cockpitPosition.value))
+    } catch {}
+  }
+
+  function updateCockpitSize(w: number, h: number) {
+    if (typeof window === 'undefined') return
+    const minW = 540
+    const minH = 440
+    const maxW = window.innerWidth
+    const maxH = window.innerHeight
+    const clampedW = Math.max(minW, Math.min(maxW, w))
+    const clampedH = Math.max(minH, Math.min(maxH, h))
+    cockpitSize.value = { width: clampedW, height: clampedH }
+    try {
+      localStorage.setItem(SIZE_KEY, JSON.stringify(cockpitSize.value))
+    } catch {}
+  }
+
+  // 智能靠放逻辑：与 AI 助手无缝并列或基于悬浮胶囊展开
+  function alignBesideAiOrAnchor(anchorPos?: { x: number; y: number }) {
+    if (typeof window === 'undefined') return
+    const screenW = window.innerWidth
+    const screenH = window.innerHeight
+    const cockpitW = cockpitSize.value.width
+    const cockpitH = cockpitSize.value.height
+
+    try {
+      const aiStore = useAiStore()
+      if (aiStore.isOpen) {
+        // AI 悬浮窗正开着：让回测工作舱紧贴 AI 悬浮窗旁边展开 (并列不遮挡)
+        let targetX = 20
+        let targetY = Math.max(20, Math.min(screenH - cockpitH - 20, aiStore.position.y))
+        if (aiStore.position.x > screenW / 2) {
+          // AI 在屏幕右半侧 -> 回测工作舱靠在 AI 左侧 (留 16px 优雅缝隙)
+          targetX = Math.max(16, aiStore.position.x - cockpitW - 16)
+        } else {
+          // AI 在屏幕左半侧 -> 回测工作舱靠在 AI 右侧
+          targetX = Math.min(screenW - cockpitW - 16, aiStore.position.x + aiStore.size.width + 16)
+        }
+        cockpitPosition.value = { x: targetX, y: targetY }
+        return
+      }
+    } catch {}
+
+    // AI 助手未打开：若传入胶囊坐标，在胶囊旁边/上方优雅展开
+    if (anchorPos) {
+      let x = anchorPos.x + 190 - cockpitW
+      let y = anchorPos.y - cockpitH - 12
+      if (anchorPos.x <= screenW / 2) {
+        x = anchorPos.x
+      }
+      if (anchorPos.y <= screenH / 2) {
+        y = anchorPos.y + 52
+      }
+      const clampedX = Math.max(16, Math.min(screenW - cockpitW - 16, x))
+      const clampedY = Math.max(24, Math.min(screenH - cockpitH - 20, y))
+      cockpitPosition.value = { x: clampedX, y: clampedY }
+    }
+  }
+
+  function toggleBacktestCockpit(anchorPos?: { x: number; y: number }) {
+    if (isBacktestCockpitOpen.value) {
+      isBacktestCockpitOpen.value = false
+    } else {
+      openBacktestCockpit({ anchorPos })
+    }
+  }
+
+  function openBacktestCockpit(opts?: {
+    symbol?: string
+    symbols?: string[]
+    mode?: 'single' | 'basket' | 'holdings'
+    autoRun?: boolean
+    anchorPos?: { x: number; y: number }
+  }) {
+    if (opts?.mode) {
+      backtestMode.value = opts.mode
+    }
+    if (opts?.symbol) {
+      symbol.value = opts.symbol
+      if (backtestMode.value === 'single') {
+        symbols.value = [opts.symbol]
+      }
+    }
+    if (opts?.symbols && opts.symbols.length > 0) {
+      symbols.value = [...opts.symbols]
+      symbol.value = opts.symbols[0]
+    }
+    if (opts?.mode === 'holdings') {
+      applyHoldingsToBacktest()
+    }
+    alignBesideAiOrAnchor(opts?.anchorPos)
+    isBacktestCockpitOpen.value = true
+    if (opts?.autoRun) {
+      runBacktest()
+    }
+  }
+
+  function setQuickDateRange(rangeType: 'half_year' | '1y' | '2y' | '3y' | '2023' | 'all') {
+    const now = new Date()
+    const todayStr = now.toISOString().split('T')[0]
+    endDate.value = todayStr
+
+    if (rangeType === 'half_year') {
+      const d = new Date()
+      d.setMonth(d.getMonth() - 6)
+      startDate.value = d.toISOString().split('T')[0]
+    } else if (rangeType === '1y') {
+      const d = new Date()
+      d.setFullYear(d.getFullYear() - 1)
+      startDate.value = d.toISOString().split('T')[0]
+    } else if (rangeType === '2y') {
+      const d = new Date()
+      d.setFullYear(d.getFullYear() - 2)
+      startDate.value = d.toISOString().split('T')[0]
+    } else if (rangeType === '3y') {
+      const d = new Date()
+      d.setFullYear(d.getFullYear() - 3)
+      startDate.value = d.toISOString().split('T')[0]
+    } else if (rangeType === '2023') {
+      startDate.value = '2023-01-01'
+    } else if (rangeType === 'all') {
+      startDate.value = '2020-01-01'
+    }
+  }
+
+  // 自选组合与持仓状态
+  const userWatchlists = ref<UserWatchlistItem[]>([])
+  const userHoldings = ref<UserHoldingItem[]>([])
+  const watchlistsLoading = ref(false)
+  const holdingsLoading = ref(false)
 
   // 4. 回测运行状态与结果
   const isBacktesting = ref(false)
@@ -567,18 +819,76 @@ class MyCustomStrategy(BaseStrategy):
     }
   }
 
-  // 发起回测请求
+  // 标的与组合管理辅助方法
+  function addSymbolTag(newSym: string) {
+    const trimmed = newSym.trim().toUpperCase()
+    if (!trimmed) return
+    if (!symbols.value.includes(trimmed)) {
+      symbols.value.push(trimmed)
+    }
+    symbol.value = symbols.value[0]
+  }
+
+  function removeSymbolTag(targetSym: string) {
+    symbols.value = symbols.value.filter((s) => s !== targetSym)
+    if (symbols.value.length === 0) {
+      symbols.value.push('510300.SH.ETF')
+    }
+    symbol.value = symbols.value[0]
+  }
+
+  function setSymbols(newSymbols: string[]) {
+    const unique = Array.from(new Set(newSymbols.map((s) => s.trim().toUpperCase()).filter(Boolean)))
+    if (unique.length > 0) {
+      symbols.value = unique
+      symbol.value = unique[0]
+    }
+  }
+
+  function loadPresetWatchlist(preset: { name: string; symbols: string[] }) {
+    setSymbols(preset.symbols)
+  }
+
+  function applyHoldingsToBacktest() {
+    if (userHoldings.value.length === 0) {
+      setSymbols(PRESET_HOLDINGS.map((h) => h.symbol))
+      const estCash = PRESET_HOLDINGS.reduce((sum, h) => sum + h.quantity * h.avg_cost, 0)
+      if (estCash > 0) {
+        initialCash.value = Math.round(estCash)
+      }
+      return
+    }
+    const holdingSymbols = userHoldings.value.map((h) => h.symbol)
+    setSymbols(holdingSymbols)
+    const totalCost = userHoldings.value.reduce((sum, h) => sum + h.quantity * h.avg_cost, 0)
+    if (totalCost > 0) {
+      initialCash.value = Math.round(totalCost)
+    }
+  }
+
+  // 发起回测请求 (支持单标的、自选组合与持仓多标的)
   async function runBacktest() {
+    isBacktestCockpitOpen.value = true
     if (isBacktesting.value) return
     isBacktesting.value = true
     backtestError.value = null
 
     try {
+      const targetSymbols = backtestMode.value === 'single'
+        ? [symbol.value.trim().toUpperCase()]
+        : symbols.value.map((s) => s.trim().toUpperCase()).filter(Boolean)
+
+      if (targetSymbols.length === 0) {
+        throw new Error('请至少输入或选择一个有效回测标的代码')
+      }
+
       const resp = await fetch('/api/v1/backtest/run-custom', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          symbol: symbol.value,
+          symbol: targetSymbols[0],
+          symbols: targetSymbols,
+          benchmark: benchmark.value || '510300.SH.ETF',
           code: code.value,
           start: startDate.value,
           end: endDate.value || null,
@@ -598,6 +908,138 @@ class MyCustomStrategy(BaseStrategy):
       backtestResult.value = null
     } finally {
       isBacktesting.value = false
+    }
+  }
+
+  // 拉取用户自选组合列表
+  async function fetchUserWatchlists() {
+    const authStore = useAuthStore()
+    if (!authStore.token) {
+      userWatchlists.value = PRESET_WATCHLISTS.map((w, idx) => ({
+        id: -(idx + 1),
+        user_id: 0,
+        name: w.name,
+        description: w.description,
+        symbols: w.symbols,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }))
+      return
+    }
+    watchlistsLoading.value = true
+    try {
+      const res = await fetch('/api/v1/user/watchlists', {
+        headers: { Authorization: `Bearer ${authStore.token}` },
+      })
+      if (res.ok) {
+        userWatchlists.value = await res.json()
+      }
+    } finally {
+      watchlistsLoading.value = false
+    }
+  }
+
+  // 保存当前标的池为自定义自选组合
+  async function saveUserWatchlist(name: string, description?: string): Promise<boolean> {
+    const authStore = useAuthStore()
+    if (!authStore.isLoggedIn) {
+      authStore.openLogin()
+      return false
+    }
+    try {
+      const res = await fetch('/api/v1/user/watchlists', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authStore.token}`,
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          description: description?.trim() || null,
+          symbols: symbols.value,
+        }),
+      })
+      if (res.ok) {
+        await fetchUserWatchlists()
+        return true
+      }
+      return false
+    } catch {
+      return false
+    }
+  }
+
+  // 删除自选组合
+  async function deleteUserWatchlist(id: number): Promise<boolean> {
+    const authStore = useAuthStore()
+    if (!authStore.token) return false
+    try {
+      const res = await fetch(`/api/v1/user/watchlists/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${authStore.token}` },
+      })
+      if (res.ok) {
+        userWatchlists.value = userWatchlists.value.filter((w) => w.id !== id)
+        return true
+      }
+      return false
+    } catch {
+      return false
+    }
+  }
+
+  // 拉取用户持仓列表
+  async function fetchUserHoldings() {
+    const authStore = useAuthStore()
+    if (!authStore.token) {
+      userHoldings.value = PRESET_HOLDINGS.map((h, idx) => ({
+        id: -(idx + 1),
+        user_id: 0,
+        symbol: h.symbol,
+        name: h.name,
+        quantity: h.quantity,
+        avg_cost: h.avg_cost,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }))
+      return
+    }
+    holdingsLoading.value = true
+    try {
+      const res = await fetch('/api/v1/user/holdings', {
+        headers: { Authorization: `Bearer ${authStore.token}` },
+      })
+      if (res.ok) {
+        userHoldings.value = await res.json()
+      }
+    } finally {
+      holdingsLoading.value = false
+    }
+  }
+
+  // 保存/更新用户持仓列表
+  async function saveUserHoldings(newHoldings: { symbol: string; name: string; quantity: number; avg_cost: number }[]): Promise<boolean> {
+    const authStore = useAuthStore()
+    if (!authStore.isLoggedIn) {
+      authStore.openLogin()
+      return false
+    }
+    try {
+      const res = await fetch('/api/v1/user/holdings', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authStore.token}`,
+        },
+        body: JSON.stringify({ holdings: newHoldings }),
+      })
+      if (res.ok) {
+        userHoldings.value = await res.json()
+        return true
+      }
+      return false
+    } catch {
+      return false
     }
   }
 
@@ -831,6 +1273,9 @@ class MyStrategy(BaseStrategy):
   return {
     code,
     symbol,
+    symbols,
+    benchmark,
+    backtestMode,
     startDate,
     endDate,
     initialCash,
@@ -842,6 +1287,10 @@ class MyStrategy(BaseStrategy):
     aiMessages,
     userStrategies,
     userBacktests,
+    userWatchlists,
+    userHoldings,
+    watchlistsLoading,
+    holdingsLoading,
     activeStrategyId,
     activeStrategyName,
     isSavingStrategy,
@@ -851,6 +1300,11 @@ class MyStrategy(BaseStrategy):
     updateCode,
     applyCodeToEditor,
     createBlankStrategy,
+    addSymbolTag,
+    removeSymbolTag,
+    setSymbols,
+    loadPresetWatchlist,
+    applyHoldingsToBacktest,
     runBacktest,
     sendAiMessage,
     extractPythonCode,
@@ -861,5 +1315,20 @@ class MyStrategy(BaseStrategy):
     fetchUserBacktests,
     saveBacktestRecord,
     deleteUserBacktest,
+    fetchUserWatchlists,
+    saveUserWatchlist,
+    deleteUserWatchlist,
+    fetchUserHoldings,
+    saveUserHoldings,
+    isBacktestCockpitOpen,
+    cockpitPosition,
+    cockpitSize,
+    cockpitTriggerPosition,
+    updateCockpitTriggerPosition,
+    updateCockpitPosition,
+    updateCockpitSize,
+    toggleBacktestCockpit,
+    openBacktestCockpit,
+    setQuickDateRange,
   }
 })

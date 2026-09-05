@@ -1,4 +1,5 @@
 import datetime
+import json
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, ConfigDict
@@ -6,7 +7,7 @@ from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common_server.database import get_db
-from common_server.models import User, UserStrategy, BacktestRecord
+from common_server.models import User, UserStrategy, BacktestRecord, UserWatchlist, UserHolding
 from common_server.dependencies import get_current_user
 
 router = APIRouter()
@@ -520,3 +521,329 @@ async def delete_user_backtest(
     await db.delete(record)
     await db.commit()
     return {"message": "回测记录已成功删除", "id": record_id}
+
+
+# -------------------------------------------------------------
+# 3. 用户自选股票池/组合 API (User Watchlists)
+# -------------------------------------------------------------
+DEFAULT_PRESET_WATCHLISTS = [
+    {
+        "name": "🛡️ 达利欧全天候大类资产篮子",
+        "description": "全球经典风险平价资产配置：核心权益、长短端国债与黄金商品宏观对冲",
+        "symbols": ["510300.SH.ETF", "511010.SH.BOND", "518880.SH.ETF", "159981.SZ.ETF"]
+    },
+    {
+        "name": "💰 高股息红利现金流组合",
+        "description": "精选高分红、低波动央国企与红利主题基金",
+        "symbols": ["510880.SH.ETF", "515100.SH.ETF", "512800.SH.ETF"]
+    },
+    {
+        "name": "🚀 核心宽基与科技成长池",
+        "description": "大盘蓝筹+成长动量组合：沪深300、中证500与创业板核心",
+        "symbols": ["510300.SH.ETF", "510500.SH.ETF", "159915.SZ.ETF", "588000.SH.ETF"]
+    },
+    {
+        "name": "🍷 消费与新能源龙头白马池",
+        "description": "白酒与新质生产力核心资产精选",
+        "symbols": ["600519.SH", "000858.SZ", "300750.SZ", "002594.SZ"]
+    }
+]
+
+DEFAULT_PRESET_HOLDINGS = [
+    {"symbol": "510300.SH.ETF", "name": "沪深300 ETF", "quantity": 10000.0, "avg_cost": 3.750},
+    {"symbol": "510880.SH.ETF", "name": "红利 ETF", "quantity": 15000.0, "avg_cost": 2.920},
+    {"symbol": "511010.SH.BOND", "name": "国债 ETF", "quantity": 500.0, "avg_cost": 105.20},
+    {"symbol": "518880.SH.ETF", "name": "黄金 ETF", "quantity": 6000.0, "avg_cost": 5.40},
+]
+
+
+class WatchlistCreate(BaseModel):
+    name: str = Field(..., max_length=128, description="组合名称")
+    description: Optional[str] = Field(None, max_length=512, description="组合描述")
+    symbols: List[str] = Field(..., min_length=1, description="标的代码列表")
+
+
+class WatchlistOut(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    description: Optional[str] = None
+    symbols: List[str]
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+
+
+class WatchlistAddSymbolsReq(BaseModel):
+    symbols: List[str] = Field(..., min_length=1, description="要追加的标的代码列表")
+
+
+@router.get("/watchlists", response_model=List[WatchlistOut])
+async def list_user_watchlists(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取用户自选组合列表，若为空自动初始化预置经典组合"""
+    stmt = (
+        select(UserWatchlist)
+        .where(UserWatchlist.user_id == current_user.id)
+        .order_by(UserWatchlist.created_at.asc())
+    )
+    result = await db.execute(stmt)
+    items = result.scalars().all()
+
+    if not items:
+        # 首次访问自动初始化预置自选组合
+        created_items = []
+        for preset in DEFAULT_PRESET_WATCHLISTS:
+            new_item = UserWatchlist(
+                user_id=current_user.id,
+                name=preset["name"],
+                description=preset["description"],
+                symbols=json.dumps(preset["symbols"], ensure_ascii=False)
+            )
+            db.add(new_item)
+            created_items.append(new_item)
+        await db.commit()
+        for item in created_items:
+            await db.refresh(item)
+        items = created_items
+
+    # 反序列化 symbols 为 List[str]
+    response = []
+    for w in items:
+        try:
+            syms = json.loads(w.symbols) if isinstance(w.symbols, str) else w.symbols
+        except Exception:
+            syms = []
+        response.append(WatchlistOut(
+            id=w.id,
+            user_id=w.user_id,
+            name=w.name,
+            description=w.description,
+            symbols=syms,
+            created_at=w.created_at,
+            updated_at=w.updated_at
+        ))
+    return response
+
+
+@router.post("/watchlists", response_model=WatchlistOut, status_code=status.HTTP_201_CREATED)
+async def create_user_watchlist(
+    req: WatchlistCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """创建新的自选组合/股票池"""
+    symbols_cleaned = [s.strip() for s in req.symbols if s.strip()]
+    if not symbols_cleaned:
+        raise HTTPException(status_code=400, detail="自选组合中至少包含一个有效标的代码")
+
+    item = UserWatchlist(
+        user_id=current_user.id,
+        name=req.name.strip(),
+        description=req.description.strip() if req.description else None,
+        symbols=json.dumps(symbols_cleaned, ensure_ascii=False)
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+
+    return WatchlistOut(
+        id=item.id,
+        user_id=item.user_id,
+        name=item.name,
+        description=item.description,
+        symbols=symbols_cleaned,
+        created_at=item.created_at,
+        updated_at=item.updated_at
+    )
+
+
+@router.delete("/watchlists/{watchlist_id}")
+async def delete_user_watchlist(
+    watchlist_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """删除指定的自选组合"""
+    stmt = select(UserWatchlist).where(
+        UserWatchlist.id == watchlist_id,
+        UserWatchlist.user_id == current_user.id
+    )
+    result = await db.execute(stmt)
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="自选组合未找到或已删除")
+
+    await db.delete(item)
+    await db.commit()
+    return {"message": "自选组合已成功删除", "id": watchlist_id}
+
+
+@router.post("/watchlists/{watchlist_id}/symbols", response_model=WatchlistOut)
+async def add_symbols_to_watchlist(
+    watchlist_id: int,
+    req: WatchlistAddSymbolsReq,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """向用户的指定自选组合追加标的代码 (自动去重)"""
+    stmt = select(UserWatchlist).where(
+        UserWatchlist.id == watchlist_id,
+        UserWatchlist.user_id == current_user.id
+    )
+    result = await db.execute(stmt)
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="自选组合未找到")
+
+    current_symbols: List[str] = json.loads(item.symbols) if item.symbols else []
+    for s in req.symbols:
+        cleaned = s.strip()
+        if cleaned and cleaned not in current_symbols:
+            current_symbols.append(cleaned)
+
+    item.symbols = json.dumps(current_symbols, ensure_ascii=False)
+    item.updated_at = datetime.datetime.now(datetime.timezone.utc)
+    await db.commit()
+    await db.refresh(item)
+
+    return WatchlistOut(
+        id=item.id,
+        user_id=item.user_id,
+        name=item.name,
+        description=item.description,
+        symbols=current_symbols,
+        created_at=item.created_at,
+        updated_at=item.updated_at
+    )
+
+
+@router.delete("/watchlists/{watchlist_id}/symbols/{symbol}", response_model=WatchlistOut)
+async def remove_symbol_from_watchlist(
+    watchlist_id: int,
+    symbol: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """从用户的指定自选组合中移除标的代码"""
+    stmt = select(UserWatchlist).where(
+        UserWatchlist.id == watchlist_id,
+        UserWatchlist.user_id == current_user.id
+    )
+    result = await db.execute(stmt)
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="自选组合未找到")
+
+    current_symbols: List[str] = json.loads(item.symbols) if item.symbols else []
+    sym_target = symbol.strip().upper()
+    current_symbols = [s for s in current_symbols if s.strip().upper() != sym_target]
+
+    item.symbols = json.dumps(current_symbols, ensure_ascii=False)
+    item.updated_at = datetime.datetime.now(datetime.timezone.utc)
+    await db.commit()
+    await db.refresh(item)
+
+    return WatchlistOut(
+        id=item.id,
+        user_id=item.user_id,
+        name=item.name,
+        description=item.description,
+        symbols=current_symbols,
+        created_at=item.created_at,
+        updated_at=item.updated_at
+    )
+
+
+# -------------------------------------------------------------
+# 4. 用户资产持仓 API (User Holdings)
+# -------------------------------------------------------------
+class HoldingItem(BaseModel):
+    symbol: str = Field(..., max_length=32, description="标的代码 (如 510300.SH.ETF)")
+    name: str = Field(..., max_length=64, description="标的名称")
+    quantity: float = Field(default=100.0, ge=0, description="持仓股数")
+    avg_cost: float = Field(default=0.0, ge=0, description="持仓成本均价 (CNY)")
+
+
+class HoldingListUpdate(BaseModel):
+    holdings: List[HoldingItem]
+
+
+class HoldingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    symbol: str
+    name: str
+    quantity: float
+    avg_cost: float
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+
+
+@router.get("/holdings", response_model=List[HoldingOut])
+async def list_user_holdings(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取当前用户的持仓列表，若为空自动载入默认模拟持仓"""
+    stmt = (
+        select(UserHolding)
+        .where(UserHolding.user_id == current_user.id)
+        .order_by(UserHolding.created_at.asc())
+    )
+    result = await db.execute(stmt)
+    items = result.scalars().all()
+
+    if not items:
+        created_items = []
+        for h in DEFAULT_PRESET_HOLDINGS:
+            item = UserHolding(
+                user_id=current_user.id,
+                symbol=h["symbol"],
+                name=h["name"],
+                quantity=h["quantity"],
+                avg_cost=h["avg_cost"]
+            )
+            db.add(item)
+            created_items.append(item)
+        await db.commit()
+        for item in created_items:
+            await db.refresh(item)
+        items = created_items
+
+    return items
+
+
+@router.put("/holdings", response_model=List[HoldingOut])
+async def update_user_holdings(
+    req: HoldingListUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """全量更新用户持仓列表"""
+    # 1. 清空旧有持仓
+    await db.execute(delete(UserHolding).where(UserHolding.user_id == current_user.id))
+
+    # 2. 插入新持仓
+    created_items = []
+    for h in req.holdings:
+        if not h.symbol.strip():
+            continue
+        new_holding = UserHolding(
+            user_id=current_user.id,
+            symbol=h.symbol.strip(),
+            name=h.name.strip() or h.symbol.strip(),
+            quantity=h.quantity,
+            avg_cost=h.avg_cost
+        )
+        db.add(new_holding)
+        created_items.append(new_holding)
+
+    await db.commit()
+    for item in created_items:
+        await db.refresh(item)
+    return created_items
+

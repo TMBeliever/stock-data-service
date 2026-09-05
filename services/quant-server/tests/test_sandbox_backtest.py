@@ -163,3 +163,36 @@ class StreamStrategy(BaseStrategy):
     assert data["summary"]["initial_cash"] == 100000.0
     assert len(data["daily_records"]) > 0
 
+
+def test_custom_backtest_multi_symbols():
+    code = """
+from quant_core.core.base_strategy import BaseStrategy
+from quant_core.core.models import Bar
+
+class MultiSymbolTestStrategy(BaseStrategy):
+    def on_bar(self, bar: Bar):
+        # 针对不同标的进行等权重调仓
+        pos = self.positions.get(bar.symbol)
+        if not pos or pos.quantity == 0:
+            self.order_target_percent(bar.symbol, 0.45, reason=f"分配标的{bar.symbol}")
+"""
+    payload = {
+        "symbols": ["510300.SH.ETF", "510880.SH.ETF"],
+        "benchmark": "510300.SH.ETF",
+        "code": code,
+        "start": "2024-01-01",
+        "end": "2024-03-01",
+        "initial_cash": 200000.0
+    }
+    response = client.post("/api/v1/backtest/run-custom", json=payload)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["summary"]["initial_cash"] == 200000.0
+    assert len(data["daily_records"]) > 0
+    assert "symbols" in data
+    assert "510300.SH.ETF" in data["symbols"]
+    assert "510880.SH.ETF" in data["symbols"]
+    assert data["benchmark_symbol"] == "510300.SH.ETF"
+    assert len(data["benchmark_records"]) > 0
+
+

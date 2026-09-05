@@ -49,6 +49,18 @@ class DataClient:
                 valid_factors = df["factor"].drop_nulls()
                 if len(valid_factors) > 0:
                     latest_factor = float(valid_factors[-1]) if valid_factors[-1] is not None and valid_factors[-1] > 0 else 1.0
+                    
+                    # 异常因子防御校验：防止历史因子未拉取 (全部为 1.0) 导致前复权历史价格失真断崖
+                    is_corrupted = False
+                    if len(valid_factors) > 20 and abs(latest_factor - 1.0) > 0.1:
+                        ones_ratio = (valid_factors == 1.0).sum() / len(valid_factors)
+                        if ones_ratio > 0.90:
+                            is_corrupted = True
+
+                    if is_corrupted:
+                        # 本地因子历史存在严重缺陷，降级放弃本地缓存，触发从远程/适配器重拉
+                        return None
+
                     filled_factor = pl.col("factor").forward_fill().backward_fill()
                     if adjust.lower() == "qfq":
                         ratio = filled_factor / latest_factor

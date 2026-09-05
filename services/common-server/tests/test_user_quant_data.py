@@ -117,3 +117,79 @@ async def test_user_strategies_and_backtest_records():
         # 8. 删除策略
         del_strat_resp = await client.delete(f"/api/v1/user/strategies/{strat_id}", headers=headers)
         assert del_strat_resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_user_watchlists_and_holdings():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. 注册并登录测试账号
+        await client.post("/api/v1/auth/register", json={
+            "username": "trader_joe",
+            "password": "Password123!"
+        })
+        login_resp = await client.post("/api/v1/auth/login", json={
+            "username": "trader_joe",
+            "password": "Password123!"
+        })
+        token = login_resp.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # 2. 获取自选组合 (初次拉取自动生成预置自选组合)
+        wl_resp = await client.get("/api/v1/user/watchlists", headers=headers)
+        assert wl_resp.status_code == 200
+        watchlists = wl_resp.json()
+        assert len(watchlists) >= 4
+        assert isinstance(watchlists[0]["symbols"], list)
+        assert len(watchlists[0]["symbols"]) > 0
+
+        # 3. 创建自选组合
+        create_wl_resp = await client.post("/api/v1/user/watchlists", headers=headers, json={
+            "name": "我的消费科技组合",
+            "description": "茅台+宁王",
+            "symbols": ["600519.SH", "300750.SZ"]
+        })
+        assert create_wl_resp.status_code == 201
+        custom_wl = create_wl_resp.json()
+        assert custom_wl["name"] == "我的消费科技组合"
+        assert custom_wl["symbols"] == ["600519.SH", "300750.SZ"]
+        custom_wl_id = custom_wl["id"]
+
+        # 3.1 向组合追加新标的 (支持去重)
+        add_sym_resp = await client.post(f"/api/v1/user/watchlists/{custom_wl_id}/symbols", headers=headers, json={
+            "symbols": ["000858.SZ", "600519.SH"]  # 000858 为新加入，600519 已存在
+        })
+        assert add_sym_resp.status_code == 200
+        updated_wl = add_sym_resp.json()
+        assert "000858.SZ" in updated_wl["symbols"]
+        assert len(updated_wl["symbols"]) == 3  # 不重复添加 600519
+
+        # 3.2 从组合移除标的
+        del_sym_resp = await client.delete(f"/api/v1/user/watchlists/{custom_wl_id}/symbols/300750.SZ", headers=headers)
+        assert del_sym_resp.status_code == 200
+        assert "300750.SZ" not in del_sym_resp.json()["symbols"]
+        assert len(del_sym_resp.json()["symbols"]) == 2
+
+        # 4. 删除自选组合
+        del_wl_resp = await client.delete(f"/api/v1/user/watchlists/{custom_wl_id}", headers=headers)
+        assert del_wl_resp.status_code == 200
+
+        # 5. 获取持仓底仓 (初次拉取自动初始化默认持仓)
+        holdings_resp = await client.get("/api/v1/user/holdings", headers=headers)
+        assert holdings_resp.status_code == 200
+        holdings = holdings_resp.json()
+        assert len(holdings) >= 4
+        assert any(h["symbol"] == "510300.SH.ETF" for h in holdings)
+
+        # 6. 更新持仓底仓
+        update_holdings_resp = await client.put("/api/v1/user/holdings", headers=headers, json={
+            "holdings": [
+                {"symbol": "600519.SH", "name": "贵州茅台", "quantity": 300.0, "avg_cost": 1680.0},
+                {"symbol": "300750.SZ", "name": "宁德时代", "quantity": 500.0, "avg_cost": 210.0}
+            ]
+        })
+        assert update_holdings_resp.status_code == 200
+        new_holdings = update_holdings_resp.json()
+        assert len(new_holdings) == 2
+        assert new_holdings[0]["symbol"] == "600519.SH"
+

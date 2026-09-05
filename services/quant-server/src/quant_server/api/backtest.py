@@ -1,5 +1,5 @@
 import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -116,7 +116,9 @@ def run_backtest_endpoint(req: BacktestRequest):
 
 
 class CustomBacktestRequest(BaseModel):
-    symbol: str = Field(default="510300.SH.ETF", description="回测标的代码")
+    symbol: Optional[str] = Field(default=None, description="回测标的代码 (单标的模式兼容)")
+    symbols: Optional[List[str]] = Field(default=None, description="回测标的列表 (多标的/自选组合模式)")
+    benchmark: Optional[str] = Field(default=None, description="基准对比标的 (默认沪深300: 510300.SH.ETF)")
     code: str = Field(..., description="用户自定义 Python 策略源码")
     start: str = Field(default="2021-01-01", description="开始日期 YYYY-MM-DD")
     end: Optional[str] = Field(default=None, description="结束日期 YYYY-MM-DD (留空为最新日)")
@@ -125,7 +127,7 @@ class CustomBacktestRequest(BaseModel):
 
 @router.post("/backtest/run-custom")
 def run_custom_backtest_endpoint(req: CustomBacktestRequest):
-    """通过安全 AST 沙箱执行用户自定义 Python 策略源码并返回回测绩效与净值数据"""
+    """通过安全 AST 沙箱执行用户自定义 Python 策略源码并返回回测绩效与净值数据 (原生支持单标的与多标的自选组合)"""
     from quant_server.api.sandbox import StrategyCodeSandbox, SecurityCheckError
 
     # 1. 语法树审计与策略类动态加载
@@ -139,12 +141,37 @@ def run_custom_backtest_endpoint(req: CustomBacktestRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"策略编译/初始化失败: {str(e)}")
 
-    # 2. 获取行情数据
-    bars = data_client.get_bars(symbol=req.symbol, period="1d", start=req.start, end=req.end, adjust="qfq")
-    if not bars:
-        raise HTTPException(status_code=404, detail=f"未找到标的 {req.symbol} 在指定时间区间的行情数据")
+    # 2. 解析目标标的列表 (兼容 symbols 列表与单值 symbol)
+    target_symbols: List[str] = []
+    if req.symbols and len(req.symbols) > 0:
+        seen = set()
+        for s in req.symbols:
+            s_clean = s.strip()
+            if s_clean and s_clean not in seen:
+                target_symbols.append(s_clean)
+                seen.add(s_clean)
+    elif req.symbol and req.symbol.strip():
+        target_symbols = [req.symbol.strip()]
+    else:
+        target_symbols = ["510300.SH.ETF"]
 
-    # 3. 构造撮合器并运行
+    # 3. 批量获取标的行情切片
+    bars_map: Dict[str, List[Bar]] = {}
+    missing_symbols: List[str] = []
+    for sym in target_symbols:
+        bars = data_client.get_bars(symbol=sym, period="1d", start=req.start, end=req.end, adjust="qfq")
+        if bars and len(bars) > 0:
+            bars_map[sym] = bars
+        else:
+            missing_symbols.append(sym)
+
+    if not bars_map:
+        raise HTTPException(
+            status_code=404,
+            detail=f"未能获取到标的列表在指定区间的行情数据 (缺失: {', '.join(target_symbols)})"
+        )
+
+    # 4. 构造撮合器并运行
     broker = SimulatedBroker(
         slippage_pct=0.0005,
         commission_rate=0.00008,
@@ -155,19 +182,34 @@ def run_custom_backtest_endpoint(req: CustomBacktestRequest):
     engine = BacktestEngine(strategy=strat, broker=broker, initial_cash=req.initial_cash)
 
     try:
-        result = engine.run({req.symbol: bars})
+        result = engine.run(bars_map)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"回测运行时异常: {str(e)}")
 
-    benchmark_records = [
-        {
-            "date": b.date_str,
-            "timestamp": b.timestamp,
-            "close": b.close,
-            "return_pct": round((b.close - bars[0].close) / bars[0].close, 6) if bars[0].close > 0 else 0.0
-        }
-        for b in bars
-    ]
+    # 5. 基准走势对齐 (单标的默认以该标的自身为基准，多标的默认以沪深300 ETF为基准或指定基准)
+    is_multi = len(target_symbols) > 1
+    benchmark_sym = req.benchmark.strip() if req.benchmark else (target_symbols[0] if not is_multi else "510300.SH.ETF")
+
+    benchmark_bars: List[Bar] = []
+    if benchmark_sym in bars_map:
+        benchmark_bars = bars_map[benchmark_sym]
+    else:
+        benchmark_bars = data_client.get_bars(symbol=benchmark_sym, period="1d", start=req.start, end=req.end, adjust="qfq")
+
+    if not benchmark_bars and bars_map:
+        benchmark_bars = next(iter(bars_map.values()))
+
+    benchmark_records = []
+    if benchmark_bars:
+        base_close = benchmark_bars[0].close
+        for b in benchmark_bars:
+            ret = round((b.close - base_close) / base_close, 6) if base_close > 0 else 0.0
+            benchmark_records.append({
+                "date": b.date_str,
+                "timestamp": b.timestamp,
+                "close": b.close,
+                "return_pct": ret
+            })
 
     return {
         "summary": {
@@ -197,6 +239,9 @@ def run_custom_backtest_endpoint(req: CustomBacktestRequest):
                 "datetime_str": datetime.datetime.fromtimestamp(t.timestamp / 1000).strftime("%Y-%m-%d %H:%M:%S") if t.timestamp else "",
             }
             for t in engine.portfolio.trades
-        ]
+        ],
+        "symbols": list(bars_map.keys()),
+        "missing_symbols": missing_symbols,
+        "benchmark_symbol": benchmark_sym,
     }
 

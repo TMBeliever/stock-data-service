@@ -4,6 +4,7 @@ import TopCapsuleNav from '@/components/TopCapsuleNav.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
 import AuthModal from '@/components/AuthModal.vue'
 import GlobalFloatingAiAssistant from '@/components/GlobalFloatingAiAssistant.vue'
+import GlobalFloatingBacktestCockpit from '@/components/strategy/GlobalFloatingBacktestCockpit.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
@@ -36,12 +37,12 @@ onUnmounted(() => {
     </div>
 
     <!-- 2. 顶部悬浮磨砂玻璃胶囊导航栏 -->
-    <TopCapsuleNav @open-palette="showPalette = true" />
+    <TopCapsuleNav />
 
-    <!-- 3. 主工作区视口 (工作台自适应超宽屏与首页优雅容器) -->
+    <!-- 3. 主工作区视口 (工作台与组合持仓自适应超宽屏与优雅容器) -->
     <router-view v-slot="{ Component, route }">
       <main
-        :class="route.path.startsWith('/strategy') ? 'max-w-[1780px] mx-auto px-4 pt-3 pb-3 relative z-10' : 'max-w-6xl mx-auto px-4 pt-4 pb-20 relative z-10'"
+        :class="route.path.startsWith('/strategy') || route.path.startsWith('/portfolio') ? 'max-w-[1780px] mx-auto px-4 pt-3 pb-6 relative z-10' : 'max-w-6xl mx-auto px-4 pt-4 pb-20 relative z-10'"
       >
         <transition name="fade" mode="out-in">
           <component :is="Component" :key="route.fullPath" />
@@ -57,6 +58,9 @@ onUnmounted(() => {
 
     <!-- 6. 全局悬浮可拖拽与缩放 AI 助手 (⌘+J) -->
     <GlobalFloatingAiAssistant />
+
+    <!-- 7. 全局极客悬浮量化回测工作舱 (⌘+B) -->
+    <GlobalFloatingBacktestCockpit />
   </div>
 </template>
 

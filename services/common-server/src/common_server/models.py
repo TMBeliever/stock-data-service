@@ -97,3 +97,51 @@ class BacktestRecord(Base):
         nullable=False
     )
 
+
+class UserWatchlist(Base):
+    """用户自选股票池/投资组合"""
+    __tablename__ = "user_watchlists"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    symbols: Mapped[str] = mapped_column(String, nullable=False)  # JSON 字符串格式: ["510300.SH.ETF", "511010.SH.BOND"]
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False
+    )
+
+
+class UserHolding(Base):
+    """用户当前资产持仓 (真实或模拟)"""
+    __tablename__ = "user_holdings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    quantity: Mapped[float] = mapped_column(nullable=False, default=100.0)
+    avg_cost: Mapped[float] = mapped_column(nullable=False, default=0.0)
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False
+    )
+
+

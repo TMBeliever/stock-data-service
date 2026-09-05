@@ -466,11 +466,11 @@ async function handleDeleteUserStrategy(strat: UserStrategyItem, e: Event) {
   }
 }
 
-// 键盘快捷键监听 (⌘+Enter 运行回测, ⌘+S 保存策略)
+// 键盘快捷键监听 (⌘+Enter 运行回测并唤起工作舱, ⌘+S 保存策略)
 function handleKeyDown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
     e.preventDefault()
-    strategyStore.runBacktest()
+    strategyStore.openBacktestCockpit({ autoRun: true })
   } else if ((e.metaKey || e.ctrlKey) && e.key === 's') {
     e.preventDefault()
     openSaveModal()
@@ -650,6 +650,18 @@ onUnmounted(() => {
           <span class="hidden sm:inline">API 速查</span>
         </button>
 
+        <!-- 悬浮量化回测工作舱快捷开关 -->
+        <button
+          @click="strategyStore.toggleBacktestCockpit()"
+          :class="strategyStore.isBacktestCockpitOpen ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm' : 'bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border-white/[0.08]'"
+          class="px-2.5 py-1 rounded-lg border text-xs transition-all flex items-center space-x-1.5 cursor-pointer"
+          title="呼出/收起全站悬浮量化回测工作舱 (⌘+B)"
+        >
+          <span class="text-amber-400 animate-pulse">⚡</span>
+          <span>回测工作舱</span>
+          <span class="text-[10px] text-zinc-500 font-mono hidden md:inline">⌘B</span>
+        </button>
+
         <!-- 复制代码 -->
         <button
           @click="copyCode"
@@ -661,7 +673,7 @@ onUnmounted(() => {
 
         <!-- 运行回测主按钮 -->
         <button
-          @click="strategyStore.runBacktest"
+          @click="strategyStore.openBacktestCockpit({ autoRun: true })"
           :disabled="strategyStore.isBacktesting"
           class="px-3.5 py-1 rounded-lg bg-gradient-to-r from-red-500 to-amber-500 hover:from-red-600 hover:to-amber-600 disabled:opacity-50 text-white font-semibold text-xs flex items-center space-x-1.5 shadow-md shadow-red-500/20 transition-all cursor-pointer"
         >

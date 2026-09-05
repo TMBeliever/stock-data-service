@@ -99,3 +99,19 @@ def test_kline_point_and_response():
     )
     assert resp.count == 1
     assert resp.symbol == "AAPL.US.STK"
+
+def test_parse_symbol_chinese_and_llm_fallback():
+    """测试中文名称与大模型兜底实体翻译"""
+    # 1. 字典快速解析
+    t1, m1, a1 = parse_symbol("招商银行")
+    assert t1 == "600036"
+    assert m1 == "SH"
+
+    t2, m2, a2 = parse_symbol("茅台")
+    assert t2 == "600519"
+    assert m2 == "SH"
+
+    # 2. 未在硬编码字典中的标的走大模型/缓存兜底
+    t3, m3, a3 = parse_symbol("北方华创")
+    assert t3 == "002371"
+    assert m3 == "SZ"

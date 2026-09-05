@@ -115,12 +115,16 @@ def parse_symbol(symbol_str: str) -> tuple[str, str, str]:
       1. 标准三段式: AAPL.US.STK, 002594.SZ.STK
       2. 市场后缀简写: 002594.SZ, 600519.SH, AAPL.US, 00700.HK
       3. 交易所前缀简写: sz002594, sh600519
-      4. 常用股票/指数中文名称智能解析: '招商' / '招商银行' -> ('600036', 'SH', 'STK')
+      4. 常用股票/指数中文名称智能解析与大模型兜底翻译
       5. 纯代码全自动推断
     """
     clean_sym = symbol_str.strip()
-    if clean_sym in NAME_TO_SYMBOL_MAP:
-        return NAME_TO_SYMBOL_MAP[clean_sym]
+
+    # 1. 尝试多级智能解析 (内存字典 -> 本地 SQLite 缓存 -> 大模型语义翻译)
+    from core.symbol_resolver import resolve_symbol_smart
+    smart_res = resolve_symbol_smart(clean_sym)
+    if smart_res:
+        return smart_res
 
     raw = clean_sym.upper()
 

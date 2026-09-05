@@ -97,6 +97,18 @@ class MetadataDB:
                 cursor.execute("ALTER TABLE symbol_no_data_records ADD COLUMN updated_at TEXT;")
                 cursor.execute("UPDATE symbol_no_data_records SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL;")
 
+            # 6. 标的别名与大模型解析缓存表 (支持任意非结构化中文别名持久化映射)
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS symbol_aliases (
+                alias TEXT PRIMARY KEY,
+                ticker TEXT NOT NULL,
+                market TEXT NOT NULL,
+                asset_type TEXT NOT NULL,
+                resolved_by TEXT DEFAULT 'llm',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
+
             # 创建索引加速检索
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbols_market ON symbols(market, asset_type);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_calendar_date ON trading_calendars(market, trade_date);")
@@ -145,6 +157,26 @@ class MetadataDB:
         with self._get_conn() as conn:
             rows = conn.execute(query, params).fetchall()
             return [dict(r) for r in rows]
+
+    def get_alias(self, alias: str) -> Optional[Dict[str, Any]]:
+        """查询中文/特殊别名映射"""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT * FROM symbol_aliases WHERE alias = ?", (alias,)).fetchone()
+            return dict(row) if row else None
+
+    def upsert_alias(self, alias: str, ticker: str, market: str, asset_type: str, resolved_by: str = "llm"):
+        """持久化保存别名解析缓存"""
+        with self._get_conn() as conn:
+            conn.execute("""
+            INSERT INTO symbol_aliases (alias, ticker, market, asset_type, resolved_by)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(alias) DO UPDATE SET
+                ticker=excluded.ticker,
+                market=excluded.market,
+                asset_type=excluded.asset_type,
+                resolved_by=excluded.resolved_by;
+            """, (alias, ticker, market, asset_type, resolved_by))
+            conn.commit()
 
     # --- 缓存追踪与 LRU 支撑 ---
     def record_cache_access(

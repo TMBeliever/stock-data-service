@@ -1085,9 +1085,33 @@ onUnmounted(() => {
               <span>{{ codexStore.activeProject?.name || '项目' }}</span>
             </span>
             <span class="text-zinc-500">/</span>
-            <span class="text-zinc-300 font-medium truncate max-w-[280px]">
+            <span class="text-zinc-300 font-medium truncate max-w-[240px]">
               {{ codexStore.activeSession?.title || '新对话' }}
             </span>
+
+            <!-- 权限角色标识 -->
+            <span
+              v-if="authStore.isAdmin"
+              class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 font-mono"
+              title="当前已激活宿主机终端与系统源码修改等全部超级管理员特权"
+            >
+              ⚡ Super Admin
+            </span>
+            <span
+              v-else-if="authStore.isLoggedIn"
+              class="px-1.5 py-0.2 rounded text-[9px] font-medium bg-blue-500/15 text-blue-300 border border-blue-500/25 font-mono"
+              title="标准量化投研模式"
+            >
+              标准用户
+            </span>
+            <button
+              v-else
+              @click="authStore.openLogin()"
+              class="px-1.5 py-0.2 rounded text-[9px] font-medium bg-white/[0.06] text-zinc-400 border border-white/[0.1] hover:text-white hover:bg-white/[0.1] cursor-pointer transition-colors"
+              title="点击登录以解锁超级管理员特权"
+            >
+              未登录 (访客)
+            </button>
           </div>
         </div>
 

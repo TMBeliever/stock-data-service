@@ -29,6 +29,11 @@ function showToast(msg: string) {
 }
 
 async function handleSelectMode(mode: ExecutionMode) {
+  if (!authStore.isAdmin) {
+    showToast('⚠️ 权限不足：修改执行安全模式需要超级管理员权限，请先登录')
+    authStore.openLogin()
+    return
+  }
   const ok = await settingsStore.setExecutionMode(mode)
   if (ok) {
     showToast(`✓ 执行安全模式已切换为：${mode === 'auto' ? '全自动自主执行' : mode === 'confirm_sensitive' ? '敏感写操作人工确认 (推荐)' : '全量工具人工审批'}`)
@@ -36,6 +41,11 @@ async function handleSelectMode(mode: ExecutionMode) {
 }
 
 async function handleSaveRuntime() {
+  if (!authStore.isAdmin) {
+    showToast('⚠️ 权限不足：修改基座模型与运行时需要超级管理员权限，请先登录')
+    authStore.openLogin()
+    return
+  }
   const ok = await settingsStore.updateModelConfig(settingsStore.modelConfig)
   if (ok) {
     showToast('✓ 模型与运行时配置已保存并实时生效')
@@ -45,6 +55,11 @@ async function handleSaveRuntime() {
 }
 
 async function handleCreateMcp() {
+  if (!authStore.isAdmin) {
+    alert('权限不足：添加 MCP 服务需要超级管理员权限，请先登录')
+    authStore.openLogin()
+    return
+  }
   if (!newMcp.value.name.trim() || !newMcp.value.command.trim()) {
     alert('请填写完整的 MCP 服务器名称与可执行命令')
     return
@@ -136,6 +151,25 @@ onMounted(() => {
           <span>模型与运行调优</span>
         </button>
       </div>
+    </div>
+
+    <!-- 非管理员身份警告横幅 -->
+    <div
+      v-if="!authStore.isAdmin"
+      class="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs text-amber-200 shadow-sm"
+    >
+      <div class="flex items-center space-x-2.5">
+        <span class="text-base">🔒</span>
+        <span>
+          <strong>访客/只读预览模式</strong>：当前未登录超级管理员账号，配置仅供查阅。保存与热插拔等管控操作已被系统锁定。
+        </span>
+      </div>
+      <button
+        @click="authStore.openLogin()"
+        class="px-3 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs transition-colors shrink-0 ml-3 cursor-pointer"
+      >
+        登录管理员
+      </button>
     </div>
 
     <!-- ============================================================== -->

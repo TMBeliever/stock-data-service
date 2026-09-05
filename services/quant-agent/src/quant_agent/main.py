@@ -113,6 +113,8 @@ async def get_agent_config(auth: UserAuth = Depends(get_current_auth)):
 @app.post("/api/v1/agent/config", tags=["Configuration"])
 async def update_agent_config(req: UpdateConfigRequest, auth: UserAuth = Depends(get_current_auth)):
     """更新 Agent 全局安全与运行配置"""
+    if not auth.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="修改智能体全局安全配置需要超级管理员权限 (Super Admin required)")
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     cfg = settings_manager.update_config(updates)
     return {
@@ -162,6 +164,8 @@ async def list_mcp_servers(auth: UserAuth = Depends(get_current_auth)):
 @app.post("/api/v1/agent/mcp/servers", tags=["MCP Management"])
 async def save_mcp_server(server: McpServerConfig, auth: UserAuth = Depends(get_current_auth)):
     """添加或更新自定义 MCP Server"""
+    if not auth.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="配置与挂载 MCP 服务需要超级管理员权限 (Super Admin required)")
     cfg = settings_manager.get_config()
     existing = [s for s in cfg.mcp_servers if s.name != server.name]
     existing.append(server)
@@ -178,6 +182,8 @@ class ToggleMcpRequest(BaseModel):
 @app.post("/api/v1/agent/mcp/servers/{server_name}/toggle", tags=["MCP Management"])
 async def toggle_mcp_server(server_name: str, req: ToggleMcpRequest, auth: UserAuth = Depends(get_current_auth)):
     """动态热插拔 MCP 服务器 (启用或挂起断开)"""
+    if not auth.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="启停 MCP 服务需要超级管理员权限 (Super Admin required)")
     cfg = settings_manager.get_config()
     target = None
     for s in cfg.mcp_servers:
@@ -240,6 +246,8 @@ async def create_project(req: CreateProjectRequest, auth: UserAuth = Depends(get
 @app.delete("/api/v1/agent/projects/{project_id}", tags=["Codex Workspace"])
 async def delete_project(project_id: str, auth: UserAuth = Depends(get_current_auth)):
     """移除挂载的工程项目"""
+    if not auth.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="移除挂载工程需要超级管理员权限 (Super Admin required)")
     ok = project_manager.delete_project(project_id)
     if not ok:
         raise HTTPException(status_code=404, detail="项目不存在")

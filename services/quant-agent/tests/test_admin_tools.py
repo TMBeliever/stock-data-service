@@ -27,9 +27,8 @@ def create_test_token(role: str = "user", username: str = "tester") -> str:
     return jwt.encode(payload, agent_config.JWT_SECRET_KEY, algorithm=agent_config.JWT_ALGORITHM)
 
 @pytest.mark.asyncio
-async def test_auth_extraction(monkeypatch):
+async def test_auth_extraction():
     """测试 JWT 提取与权限判定"""
-    monkeypatch.setenv("ENVIRONMENT", "production")
     # 1. 匿名用户 / 无 Header
     req_anonymous = MagicMock()
     req_anonymous.headers = Headers({})

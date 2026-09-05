@@ -31,23 +31,26 @@ def decode_token(token: str) -> Optional[dict]:
 async def get_current_auth(request: Request) -> UserAuth:
     """
     FastAPI 依赖注入：解析 Authorization 请求头中的 Bearer Token
-    若未提供或 Token 非法，平滑降级为普通访客权限 (is_admin=False)
+    若未提供或 Token 非法，严格降级为普通访客权限 (is_admin=False)
     """
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
-        import os
-        is_dev = os.getenv("ENVIRONMENT", "development").lower() != "production"
         return UserAuth(
-            user_id="local_dev_admin" if is_dev else None,
-            username="admin" if is_dev else "guest",
-            role="admin" if is_dev else "guest",
-            is_admin=is_dev
+            user_id=None,
+            username="guest",
+            role="guest",
+            is_admin=False
         )
 
     token = auth_header.split(" ", 1)[1].strip()
     payload = decode_token(token)
     if not payload:
-        return UserAuth()
+        return UserAuth(
+            user_id=None,
+            username="guest",
+            role="guest",
+            is_admin=False
+        )
 
     user_id = str(payload.get("sub", ""))
     username = str(payload.get("username", "unknown"))

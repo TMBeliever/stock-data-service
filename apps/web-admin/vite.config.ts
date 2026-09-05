@@ -8,15 +8,16 @@ export default defineConfig(({ mode }) => {
   const isOnline = mode === 'online' || env.VITE_TARGET_ENV === 'online'
   const onlineHost = env.VITE_ONLINE_HOST || '43.155.186.45'
 
-  const stockTarget = isOnline ? `http://${onlineHost}:8000` : 'http://localhost:8000'
-  const quantTarget = isOnline && env.VITE_ONLINE_QUANT === 'true' ? `http://${onlineHost}:8080` : 'http://localhost:8080'
-  const authTarget = isOnline && env.VITE_ONLINE_AUTH === 'true' ? `http://${onlineHost}:8090` : 'http://localhost:8090'
-  const aiTarget = env.VITE_AI_TARGET || 'http://localhost:8070'
-  const agentTarget = env.VITE_AGENT_TARGET || 'http://localhost:8060'
+  // 线上环境统一经由腾讯云 Nginx 80 网关代理，不可直连未对外开放的内部端口 (8000/8080/8090)
+  const stockTarget = isOnline ? `http://${onlineHost}` : 'http://localhost:8000'
+  const quantTarget = isOnline && env.VITE_ONLINE_QUANT === 'true' ? `http://${onlineHost}` : 'http://localhost:8080'
+  const authTarget = isOnline && env.VITE_ONLINE_AUTH === 'true' ? `http://${onlineHost}` : 'http://localhost:8090'
+  const aiTarget = isOnline && env.VITE_ONLINE_AI === 'true' ? `http://${onlineHost}` : (env.VITE_AI_TARGET || 'http://localhost:8070')
+  const agentTarget = isOnline && env.VITE_ONLINE_AGENT === 'true' ? `http://${onlineHost}` : (env.VITE_AGENT_TARGET || 'http://localhost:8060')
 
   console.log(`\n==================================================`)
   console.log(isOnline
-    ? `  🌐 Web-Admin 环境模式: 【线上部署环境】 -> 行情中台: http://${onlineHost}:8000`
+    ? `  🌐 Web-Admin 环境模式: 【线上部署环境】 -> 数据中台: http://${onlineHost}/stock | 业务中台: ${quantTarget}`
     : `  💻 Web-Admin 环境模式: 【本地全闭环环境】 -> 基础服务: http://localhost:8000/8080/8090/8070/8060`
   )
   console.log(`==================================================\n`)
@@ -79,9 +80,16 @@ export default defineConfig(({ mode }) => {
           target: quantTarget,
           changeOrigin: true,
         },
-        // 3. 行情数据中台 (支持本地 8000 或线上 43.155.186.45:8000)
+        // 3. 行情数据中台 (支持本地 8000 或线上 43.155.186.45/stock)
         '/stock': {
           target: stockTarget,
+          changeOrigin: true,
+          rewrite: isOnline ? undefined : (p) => p.replace(/^\/stock/, ''),
+        },
+        // 3.1 WebSocket 实时行情与广播通道
+        '/ws': {
+          target: isOnline ? `ws://${onlineHost}` : 'ws://localhost:8000',
+          ws: true,
           changeOrigin: true,
         },
         // 4. 通用 API 代理兜底

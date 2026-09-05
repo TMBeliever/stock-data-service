@@ -36,6 +36,22 @@ BUILTIN_SYMBOLS: List[Dict[str, Any]] = [
         "name": "红利 ETF", "pinyin": "HLETF", "category": "etf", "tags": ["价值", "高股息"]
     },
     {
+        "symbol": "512800.SH.ETF", "ticker": "512800", "market": "SH", "asset_type": "ETF",
+        "name": "银行 ETF", "pinyin": "YSETF", "category": "etf", "tags": ["行业", "大金融", "银行"]
+    },
+    {
+        "symbol": "515100.SH.ETF", "ticker": "515100", "market": "SH", "asset_type": "ETF",
+        "name": "红利低波 ETF", "pinyin": "HLDB", "category": "etf", "tags": ["价值", "高股息"]
+    },
+    {
+        "symbol": "511010.SH.ETF", "ticker": "511010", "market": "SH", "asset_type": "ETF",
+        "name": "国债 ETF", "pinyin": "GZETF", "category": "etf", "tags": ["债券", "国债对冲"]
+    },
+    {
+        "symbol": "159981.SZ.ETF", "ticker": "159981", "market": "SZ", "asset_type": "ETF",
+        "name": "能源化工 ETF", "pinyin": "NYHG", "category": "etf", "tags": ["商品", "化工对冲"]
+    },
+    {
         "symbol": "512880.SH.ETF", "ticker": "512880", "market": "SH", "asset_type": "ETF",
         "name": "证券 ETF", "pinyin": "ZQETF", "category": "etf", "tags": ["行业", "大金融"]
     },
@@ -192,43 +208,109 @@ def _load_meta_db_symbols() -> List[Dict[str, Any]]:
     except Exception:
         return []
 
+def normalize_symbol_key(sym: str) -> str:
+    """将输入的标的代码归一化为标准的 6位.市场.类型 代码 (如 512800 -> 512800.SH.ETF)"""
+    s = sym.strip().upper()
+    if not s:
+        return s
+    # 1. 优先查 BUILTIN_SYMBOLS
+    meta = next((item for item in BUILTIN_SYMBOLS if item["symbol"] == s or item.get("ticker") == s), None)
+    if meta:
+        return meta["symbol"]
+    # 2. 若已有包含市场的后缀直接返回
+    if "." in s:
+        return s
+    # 3. 6位纯数字根据号段智能推断
+    if s.isdigit() and len(s) == 6:
+        if s.startswith(("60", "68")):
+            return f"{s}.SH.STK"
+        elif s.startswith(("00", "30")):
+            return f"{s}.SZ.STK"
+        elif s.startswith(("51", "58")):
+            return f"{s}.SH.ETF"
+        elif s.startswith(("15", "16")):
+            return f"{s}.SZ.ETF"
+        else:
+            return f"{s}.SH.STK"
+    return s
+
 def _fetch_live_snapshots(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     """从基础数据服务或本地存储获取标的的实时/最新行情快照"""
     if not symbols:
         return {}
     results: Dict[str, Dict[str, Any]] = {}
     
+    # 归一化标的列表，同时保留原始入参映射
+    norm_map: Dict[str, str] = {}
+    query_symbols: List[str] = []
+    for s in symbols:
+        norm = normalize_symbol_key(s)
+        norm_map[s] = norm
+        if norm not in query_symbols:
+            query_symbols.append(norm)
+        ticker = s.split(".")[0]
+        if ticker not in query_symbols:
+            query_symbols.append(ticker)
+
     # 1. 尝试调用基础数据服务
     base_url = quant_config.DATA_SERVICE_HTTP.rstrip("/")
     url = f"{base_url}/api/v1/snapshot"
     try:
-        # 支持以逗号分隔批量拉取快照
-        sym_str = ",".join(symbols[:25])
-        with httpx.Client(timeout=3.0) as client:
+        sym_str = ",".join(query_symbols[:30])
+        with httpx.Client(timeout=4.0) as client:
             resp = client.get(url, params={"symbols": sym_str})
             if resp.status_code == 200:
                 items = resp.json().get("data", [])
                 for item in items:
                     sym = item.get("symbol")
+                    ticker = item.get("ticker")
                     if sym:
                         results[sym] = item
+                    if ticker and ticker not in results:
+                        results[ticker] = item
     except Exception:
         pass
 
     # 2. 对缺失快照的标的，尝试从本地 Parquet 文件的最后几条 Bar 提取最新收盘价和涨跌幅
-    for sym in symbols:
-        if sym not in results:
+    for orig_sym in symbols:
+        norm_sym = norm_map.get(orig_sym, orig_sym)
+        ticker = orig_sym.split(".")[0]
+        # 如果 orig_sym 或 norm_sym 或 ticker 已有快照，建立别名
+        existing = results.get(orig_sym) or results.get(norm_sym) or results.get(ticker)
+        if existing:
+            results[orig_sym] = existing
+            results[norm_sym] = existing
+            continue
+
+        for query_target in (norm_sym, orig_sym):
             try:
-                bars = data_client.get_bars(sym, period="1d", adjust="raw")
+                bars = data_client.get_bars(query_target, period="1d", adjust="raw")
                 if bars and len(bars) >= 1:
                     last = bars[-1]
-                    prev = bars[-2] if len(bars) >= 2 else last
+                    last_date = datetime.datetime.fromtimestamp(
+                        last.timestamp / 1000, tz=datetime.timezone(datetime.timedelta(hours=8))
+                    ).strftime("%Y-%m-%d")
+                    prev = None
+                    for b in reversed(bars[:-1]):
+                        b_date = datetime.datetime.fromtimestamp(
+                            b.timestamp / 1000, tz=datetime.timezone(datetime.timedelta(hours=8))
+                        ).strftime("%Y-%m-%d")
+                        if b_date != last_date:
+                            prev = b
+                            break
+                    if prev is None:
+                        prev = bars[-2] if len(bars) >= 2 else last
+
                     chg = last.close - prev.close
                     pct = round((chg / prev.close) * 100, 2) if prev.close > 0 else 0.0
-                    results[sym] = {
-                        "symbol": sym,
-                        "ticker": sym.split(".")[0],
-                        "name": sym.split(".")[0],
+
+                    meta_match = next((s for s in BUILTIN_SYMBOLS if s["symbol"] == norm_sym or s.get("ticker") == ticker), None)
+                    sym_name = meta_match["name"] if meta_match else ticker
+
+                    snap_obj = {
+                        "symbol": norm_sym,
+                        "ticker": ticker,
+                        "name": sym_name,
                         "latest_price": round(last.close, 3),
                         "change": round(chg, 3),
                         "pct_change": pct,
@@ -239,6 +321,9 @@ def _fetch_live_snapshots(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                         "volume": last.volume,
                         "amount": last.amount,
                     }
+                    results[orig_sym] = snap_obj
+                    results[norm_sym] = snap_obj
+                    break
             except Exception:
                 pass
 
@@ -392,17 +477,19 @@ def get_symbol_detail(symbol: str):
     """
     获取单个标的的详细行情快照与基本面数据
     """
-    sym = symbol.strip().upper()
+    orig_sym = symbol.strip().upper()
+    norm_sym = normalize_symbol_key(orig_sym)
+    
     # 查找内置或构造
-    meta = next((s for s in BUILTIN_SYMBOLS if s["symbol"] == sym or s["ticker"] == sym), None)
+    meta = next((s for s in BUILTIN_SYMBOLS if s["symbol"] in (orig_sym, norm_sym) or s.get("ticker") in (orig_sym, norm_sym)), None)
     if not meta:
         # 尝试拆解
-        parts = sym.split(".")
+        parts = norm_sym.split(".")
         ticker = parts[0]
         market = parts[1] if len(parts) > 1 else "SH"
         asset_type = parts[2] if len(parts) > 2 else ("ETF" if ticker.startswith(("51", "15")) else "STK")
         meta = {
-            "symbol": sym,
+            "symbol": norm_sym,
             "ticker": ticker,
             "market": market,
             "asset_type": asset_type,
@@ -411,17 +498,20 @@ def get_symbol_detail(symbol: str):
             "tags": [market, asset_type],
         }
 
-    snaps = _fetch_live_snapshots([sym])
-    snap = snaps.get(sym, {})
+    snaps = _fetch_live_snapshots([norm_sym, orig_sym])
+    snap = snaps.get(norm_sym) or snaps.get(orig_sym) or {}
 
     res = dict(meta)
-    res.update(snap)
+    for k, v in snap.items():
+        if k == "name" and res.get("name") and res["name"] != res.get("ticker"):
+            continue
+        res[k] = v
     if not res.get("name") or res["name"] == res.get("ticker"):
         if snap.get("name"):
             res["name"] = snap["name"]
 
     return {
-        "symbol": sym,
+        "symbol": norm_sym,
         "detail": res
     }
 
@@ -436,15 +526,22 @@ def get_symbol_kline(
     获取单个标的的日 K 线数据，自动计算 MA5, MA10, MA20 均线与成交量，
     专供 ECharts Candlestick 烛台图渲染
     """
-    sym = symbol.strip().upper()
-    bars = data_client.get_bars(sym, period=period, adjust=adjust)
+    orig_sym = symbol.strip().upper()
+    norm_sym = normalize_symbol_key(orig_sym)
+
+    # 优先使用归一化标准代码获取
+    bars = data_client.get_bars(norm_sym, period=period, adjust=adjust)
+    if not bars and norm_sym != orig_sym:
+        bars = data_client.get_bars(orig_sym, period=period, adjust=adjust)
     if not bars:
         # 降级尝试 raw
-        bars = data_client.get_bars(sym, period=period, adjust="raw")
+        bars = data_client.get_bars(norm_sym, period=period, adjust="raw")
+    if not bars and norm_sym != orig_sym:
+        bars = data_client.get_bars(orig_sym, period=period, adjust="raw")
 
     if not bars:
         return {
-            "symbol": sym,
+            "symbol": norm_sym,
             "period": period,
             "count": 0,
             "data": []
@@ -479,7 +576,7 @@ def get_symbol_kline(
         })
 
     return {
-        "symbol": sym,
+        "symbol": norm_sym,
         "period": period,
         "count": len(kline_list),
         "data": kline_list

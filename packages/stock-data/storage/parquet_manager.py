@@ -242,6 +242,20 @@ class ParquetManager:
                 # 若有任何新区间被增量拉取，合并、去重并原子写入
                 if len(new_dfs) > 1:
                     merged_df = pl.concat(new_dfs).unique(subset=["timestamp"]).sort("timestamp")
+                    if period == KlinePeriod.D1:
+                        tz_key = market_timezone(info.market).key
+                        merged_df = (
+                            merged_df.with_columns(
+                                pl.col("timestamp")
+                                .cast(pl.Datetime("ms", "UTC"))
+                                .dt.convert_time_zone(tz_key)
+                                .dt.strftime("%Y-%m-%d")
+                                .alias("_trading_date")
+                            )
+                            .unique(subset=["_trading_date"], keep="last")
+                            .drop("_trading_date")
+                            .sort("timestamp")
+                        )
                     self.write_parquet(path, merged_df)
                     updated_df = merged_df
                 else:

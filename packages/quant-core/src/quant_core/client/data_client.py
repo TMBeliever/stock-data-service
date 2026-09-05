@@ -127,7 +127,21 @@ class DataClient:
                     data = resp.json().get("data", [])
                     if not data:
                         return pl.DataFrame()
-                    return pl.DataFrame(data)
+                    df = pl.DataFrame(data)
+                    # 自动落盘本地 Parquet 缓存以加速未来回测与查询
+                    if not start and not end and not limit and period == "1d":
+                        if adjust == "raw":
+                            self._save_to_local_cache(symbol, df)
+                        else:
+                            try:
+                                raw_resp = client.get(url, params={"symbol": symbol, "period": "1d", "adjust": "raw"})
+                                if raw_resp.status_code == 200:
+                                    raw_data = raw_resp.json().get("data", [])
+                                    if raw_data:
+                                        self._save_to_local_cache(symbol, pl.DataFrame(raw_data))
+                            except Exception:
+                                pass
+                    return df
                 elif resp.status_code == 400 and adjust != "raw":
                     # 若资产无除权因子 (如 ETF / 指数)，自动降级请求 raw 原始行情
                     params["adjust"] = "raw"
@@ -136,7 +150,10 @@ class DataClient:
                         data = retry_resp.json().get("data", [])
                         if not data:
                             return pl.DataFrame()
-                        return pl.DataFrame(data)
+                        df = pl.DataFrame(data)
+                        if not start and not end and not limit and period == "1d":
+                            self._save_to_local_cache(symbol, df)
+                        return df
                 else:
                     print(f"[DataClient] HTTP Error {resp.status_code}: {resp.text}")
         except Exception as e:
@@ -174,18 +191,58 @@ class DataClient:
             bars.append(b)
         return bars
 
+    def _save_to_local_cache(self, symbol: str, df: pl.DataFrame):
+        """将远程拉取到的完整 K 线自动写入本地 Parquet 缓存 (按需缓存，加速未来回测与查询)"""
+        if df is None or df.is_empty():
+            return
+        possible_dirs = [
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../stock-data/data")),
+            os.path.abspath("packages/stock-data/data"),
+            os.path.abspath("../stock-data/data"),
+        ]
+        base_dir = next((d for d in possible_dirs if os.path.exists(d)), None)
+        if not base_dir:
+            return
+
+        parts = symbol.strip().upper().split(".")
+        code = parts[0]
+        market = parts[1] if len(parts) > 1 else ("SH" if code.startswith(("6", "5")) else "SZ")
+        asset_type = parts[2] if len(parts) > 2 else ("ETF" if code.startswith(("5", "1")) else "STK")
+
+        target_dir = os.path.join(base_dir, "cache_kline", "daily", market)
+        os.makedirs(target_dir, exist_ok=True)
+        target_file = os.path.join(target_dir, f"{code}_{asset_type}.parquet")
+        try:
+            df.write_parquet(target_file)
+        except Exception:
+            pass
+
     def get_snapshots(self, symbols: List[str]) -> Dict[str, Snapshot]:
         """批量获取股票实时行情快照"""
         if not symbols:
             return {}
 
-        url = f"{self.base_url}/api/v1/snapshots"
+        url = f"{self.base_url}/api/v1/snapshot/batch"
         try:
             with httpx.Client(timeout=10.0) as client:
                 resp = client.post(url, json={"symbols": symbols})
                 if resp.status_code == 200:
                     items = resp.json().get("data", [])
-                    return {item["symbol"]: Snapshot(**item) for item in items}
+                    res = {}
+                    for item in items:
+                        price = item.get("latest_price") or item.get("price") or 0.0
+                        res[item["symbol"]] = Snapshot(
+                            symbol=item["symbol"],
+                            timestamp=item.get("timestamp", 0),
+                            price=price,
+                            open=item.get("open", 0.0) or 0.0,
+                            high=item.get("high", 0.0) or 0.0,
+                            low=item.get("low", 0.0) or 0.0,
+                            prev_close=item.get("pre_close", 0.0) or item.get("prev_close", 0.0) or 0.0,
+                            volume=item.get("volume", 0.0) or 0.0,
+                            turnover=item.get("amount", 0.0) or item.get("turnover", 0.0) or 0.0,
+                        )
+                    return res
         except Exception as e:
             print(f"[DataClient] Snapshot request failed: {e}")
         return {}

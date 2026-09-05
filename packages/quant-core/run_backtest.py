@@ -47,9 +47,9 @@ def main():
     from quant_core.config import quant_config
     if args.env == "online":
         quant_config.FORCE_REMOTE = True
-        quant_config.DATA_SERVICE_HTTP = "http://43.155.186.45:8000"
-        data_client.base_url = "http://43.155.186.45:8000"
-        print(f"[*] 环境模式: 🌐 线上环境 (直连腾讯云数据中台: http://43.155.186.45:8000)")
+        quant_config.DATA_SERVICE_HTTP = "http://43.155.186.45/stock"
+        data_client.base_url = "http://43.155.186.45/stock"
+        print(f"[*] 环境模式: 🌐 线上环境 (直连腾讯云数据中台: http://43.155.186.45/stock)")
     else:
         print(f"[*] 环境模式: 💻 本地环境 (零拷贝 Parquet 本地极速直通)")
 

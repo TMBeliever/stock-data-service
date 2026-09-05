@@ -521,7 +521,7 @@ function syncHoldingsToBacktest() {
                       v-if="watchlistSymbolsQuotes[sym]?.pct_change !== undefined"
                       :class="(watchlistSymbolsQuotes[sym]?.pct_change || 0) >= 0 ? 'text-red-400' : 'text-emerald-400'"
                     >
-                      {{ (watchlistSymbolsQuotes[sym]?.pct_change || 0) >= 0 ? '+' : '' }}{{ ((watchlistSymbolsQuotes[sym]?.pct_change || 0) * 100).toFixed(2) }}%
+                      {{ (watchlistSymbolsQuotes[sym]?.pct_change || 0) >= 0 ? '+' : '' }}{{ (watchlistSymbolsQuotes[sym]?.pct_change || 0).toFixed(2) }}%
                     </span>
                     <span v-else class="text-zinc-500">--</span>
                   </td>

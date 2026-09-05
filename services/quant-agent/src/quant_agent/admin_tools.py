@@ -108,7 +108,7 @@ async def admin_inspect_system_and_services() -> str:
                     "error": str(e).split(":")[-1].strip()
                 }
 
-    # 4. Docker 运行状态检查
+    # 4. Docker 运行状态检查（捕获 stderr 以便 Agent 精确诊断失败原因，避免无效重试）
     docker_status = {"available": False, "running_containers": 0}
     try:
         proc = await asyncio.create_subprocess_shell(
@@ -116,17 +116,36 @@ async def admin_inspect_system_and_services() -> str:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+        stdout_str = stdout.decode("utf-8", errors="replace").strip()
+        stderr_str = stderr.decode("utf-8", errors="replace").strip()
         if proc.returncode == 0:
-            lines = stdout.decode().strip().splitlines()
+            lines = stdout_str.splitlines()
             docker_status = {
                 "available": True,
                 "running_containers": len([l for l in lines if l.strip()])
             }
         else:
-            docker_status = {"available": False, "reason": "Docker daemon not running or access denied"}
+            # 精确区分失败原因，帮助 Agent 直接给出结论
+            reason = "未知原因"
+            if "permission denied" in stderr_str.lower():
+                reason = (
+                    "权限拒绝 (permission denied): docker socket 权限不足。"
+                    "修复方法: 在 docker-compose 中加 entrypoint chmod 666 /var/run/docker.sock，"
+                    "或在宿主机执行 sudo chmod 666 /var/run/docker.sock"
+                )
+            elif "no such file" in stderr_str.lower() or "cannot connect" in stderr_str.lower():
+                reason = "找不到 docker socket (no such file): /var/run/docker.sock 未挂载或宿主机 docker daemon 未运行"
+            elif stderr_str:
+                reason = stderr_str[:300]
+            docker_status = {
+                "available": False,
+                "reason": reason,
+                "raw_error": stderr_str[:200] if stderr_str else "exit_code=" + str(proc.returncode)
+            }
     except Exception as e:
         docker_status = {"available": False, "reason": str(e)}
+
 
     report = {
         "os": os_info,

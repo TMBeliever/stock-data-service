@@ -218,8 +218,13 @@ export const THINKING_LEVEL_OPTIONS: ThinkingLevelOption[] = [
 
 export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
   const projects = ref<CodexProject[]>([])
-  const activeProjectId = ref<string>('proj_quant_system')
-  const activeSessionId = ref<string>('sess_arch_eval')
+
+  // 从 localStorage 恢复上次打开的 project/session
+  const _savedProjectId = (() => { try { return localStorage.getItem('codex_active_project_id') || 'proj_quant_system' } catch { return 'proj_quant_system' } })()
+  const _savedSessionId = (() => { try { return localStorage.getItem('codex_active_session_id') || 'sess_arch_eval' } catch { return 'sess_arch_eval' } })()
+
+  const activeProjectId = ref<string>(_savedProjectId)
+  const activeSessionId = ref<string>(_savedSessionId)
   const isStreaming = ref<boolean>(false)
   const getInitialExecutionMode = (): ExecutionMode => {
     try {
@@ -308,13 +313,22 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
           }
         }
         projects.value = rawProjects
-        // 如果当前没有激活的 project，默认选中第一个
+        // 恢复上次打开的 project/session；若已删除则兜底选第一个
         if (projects.value.length > 0) {
-          const exists = projects.value.some((p) => p.id === activeProjectId.value)
-          if (!exists) {
+          const savedProjExists = projects.value.some((p) => p.id === activeProjectId.value)
+          if (!savedProjExists) {
+            // 上次的 project 已不存在，降级到第一个
             activeProjectId.value = projects.value[0].id
-            if (projects.value[0].sessions?.length > 0) {
-              activeSessionId.value = projects.value[0].sessions[0].id
+            const firstSess = projects.value[0].sessions?.[0]
+            if (firstSess) activeSessionId.value = firstSess.id
+            _persistActiveIds()
+          } else {
+            // project 存在，但检查 session 是否还在
+            const proj = projects.value.find((p) => p.id === activeProjectId.value)!
+            const savedSessExists = proj.sessions?.some((s) => s.id === activeSessionId.value)
+            if (!savedSessExists && proj.sessions?.length > 0) {
+              activeSessionId.value = proj.sessions[0].id
+              _persistActiveIds()
             }
           }
         }
@@ -326,9 +340,17 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
     }
   }
 
+  function _persistActiveIds() {
+    try {
+      localStorage.setItem('codex_active_project_id', activeProjectId.value)
+      localStorage.setItem('codex_active_session_id', activeSessionId.value)
+    } catch {}
+  }
+
   function selectSession(projectId: string, sessionId: string) {
     activeProjectId.value = projectId
     activeSessionId.value = sessionId
+    _persistActiveIds()
   }
 
   async function createProject(payload: {
@@ -357,6 +379,7 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
         if (newProj.sessions?.length > 0) {
           activeSessionId.value = newProj.sessions[0].id
         }
+        _persistActiveIds()
         return true
       }
       return false
@@ -427,6 +450,7 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
         if (newProj.sessions?.length > 0) {
           activeSessionId.value = newProj.sessions[0].id
         }
+        _persistActiveIds()
         return newProj
       }
       return null
@@ -469,6 +493,7 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
         if (activeProjectId.value === projectId && projects.value.length > 0) {
           activeProjectId.value = projects.value[0].id
           activeSessionId.value = projects.value[0].sessions[0]?.id || ''
+          _persistActiveIds()
         }
         return true
       }
@@ -502,6 +527,7 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
         }
         activeProjectId.value = targetProjId
         activeSessionId.value = newSess.id
+        _persistActiveIds()
         return newSess.id
       }
       return null
@@ -526,6 +552,7 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
           targetProj.sessions = targetProj.sessions.filter((s) => s.id !== sessionId)
           if (activeSessionId.value === sessionId && targetProj.sessions.length > 0) {
             activeSessionId.value = targetProj.sessions[0].id
+            _persistActiveIds()
           }
         }
         return true

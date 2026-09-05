@@ -28,6 +28,12 @@ services:
       dockerfile: services/quant-agent/Dockerfile
     container_name: quant-agent
     restart: unless-stopped
+    # 使用启动脚本修复 docker socket 权限（解决 GID 不匹配导致 permission denied）
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        chmod 666 /var/run/docker.sock 2>/dev/null || true
+        exec uvicorn quant_agent.main:app --host 0.0.0.0 --port 8060 --workers 1
     ports:
       - "8060:8060"
     environment:
@@ -40,6 +46,8 @@ services:
       - WORKSPACE_ROOT=/app
       # 宿主机项目根路径（docker compose 命令需要用到）
       - HOST_PROJECT_ROOT=${HOST_PROJECT_ROOT:-/root/quant-system}
+      # 明确指定 docker socket 路径，确保 CLI 连接宿主机 daemon
+      - DOCKER_HOST=unix:///var/run/docker.sock
     volumes:
       # 核心：挂载宿主机 Docker 套接字，允许 Agent 实时调度宿主机 Docker Daemon
       - /var/run/docker.sock:/var/run/docker.sock
@@ -55,6 +63,7 @@ services:
       - stock-data
     networks:
       - quant-net
+
 
   # =========================================================================
   # 3. AI 大模型推演底座与网关 (API Key 驱动)

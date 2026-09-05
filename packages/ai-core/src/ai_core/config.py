@@ -9,7 +9,7 @@ class AIConfig(BaseSettings):
     # API Key 驱动配置 (默认使用用户搭建在 43.155.186.45:3000 的大模型中台网关)
     OPENAI_BASE_URL: str = "http://43.155.186.45:3000/v1"
     OPENAI_API_KEY: str = "sk-W91gp63k2tmArgtL8wxIMoQaYj8CmFtumeF9T34xSpuIZj34"
-    OPENAI_MODEL: str = "gemini-flash-lite-latest"
+    OPENAI_MODEL: str = "minimax/minimax-m3:free"
     HTTP_TIMEOUT: float = 90.0
     HTTP_MAX_RETRIES: int = 2
 

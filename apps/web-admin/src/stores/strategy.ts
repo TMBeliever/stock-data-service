@@ -320,7 +320,7 @@ export const useStrategyStore = defineStore('strategy', () => {
   const userBacktestsLoading = ref(false)
 
   // 5. AI Copilot 对话状态
-  const aiModel = ref<'gemini-flash-lite-latest' | 'claude'>('gemini-flash-lite-latest')
+  const aiModel = ref<'minimax/minimax-m3:free' | 'gemini-flash-lite-latest' | 'claude'>('minimax/minimax-m3:free')
   const isAiStreaming = ref(false)
   const aiMessages = ref<AiChatMessage[]>([
     {

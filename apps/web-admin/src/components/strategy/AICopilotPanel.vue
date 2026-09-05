@@ -82,7 +82,7 @@ function renderMarkdown(content: string) {
 }
 
 // 切换模型处理：VIP 权益鉴权
-function handleSelectModel(modelKey: 'gemini-flash-lite-latest' | 'claude') {
+function handleSelectModel(modelKey: 'minimax/minimax-m3:free' | 'gemini-flash-lite-latest' | 'claude') {
   if (modelKey === 'claude') {
     if (!authStore.isLoggedIn) {
       authStore.openLogin()
@@ -144,7 +144,17 @@ async function handleActivateVip() {
 
       <!-- 模型下拉/切换胶囊 -->
       <div class="flex items-center space-x-1 bg-black/40 p-1 rounded-xl border border-white/[0.08]">
-        <!-- 默认轻量模型 Gemini -->
+        <!-- 推荐 MiniMax 模型 -->
+        <button
+          @click="handleSelectModel('minimax/minimax-m3:free')"
+          :class="strategyStore.aiModel === 'minimax/minimax-m3:free' ? 'bg-white/10 text-emerald-300 font-semibold shadow-sm' : 'text-zinc-400 hover:text-zinc-200'"
+          class="px-2 py-0.5 rounded-lg text-[10px] transition-all flex items-center space-x-1 cursor-pointer"
+        >
+          <span>🚀</span>
+          <span>MiniMax</span>
+        </button>
+
+        <!-- 轻量模型 Gemini -->
         <button
           @click="handleSelectModel('gemini-flash-lite-latest')"
           :class="strategyStore.aiModel === 'gemini-flash-lite-latest' ? 'bg-white/10 text-amber-300 font-semibold shadow-sm' : 'text-zinc-400 hover:text-zinc-200'"

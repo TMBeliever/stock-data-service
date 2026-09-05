@@ -130,12 +130,19 @@ export interface AvailableModelItem {
 // 严格从用户网关渠道筛选的真实可用模型列表
 export const AVAILABLE_MODELS: AvailableModelItem[] = [
   {
+    id: 'minimax/minimax-m3:free',
+    name: 'MiniMax M3 (Free)',
+    series: 'MiniMax',
+    tag: '推荐默认',
+    description: 'MiniMax 官方高推理大模型，代码编写与工具推演能力极强，免受安全误杀 (推荐默认)',
+    isDefault: true,
+  },
+  {
     id: 'gemini-flash-lite-latest',
     name: 'Gemini Flash Lite',
     series: 'Lite',
-    tag: '默认极速',
-    description: '系统默认轻量极速模型，毫秒级响应与超低延迟 (推荐默认)',
-    isDefault: true,
+    tag: '极速低延',
+    description: '轻量极速模型，毫秒级响应与超低延迟',
   },
   {
     id: 'gemini-3.7-flash',
@@ -243,7 +250,7 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
         return val
       }
     } catch {}
-    return 'gemini-flash-lite-latest'
+    return 'minimax/minimax-m3:free'
   }
 
   const getInitialThinkingLevel = (): ThinkingLevel => {

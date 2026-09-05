@@ -50,7 +50,7 @@ export const useAgentSettingsStore = defineStore('agentSettings', () => {
 
   const mcpServers = ref<McpServerItem[]>([])
   const modelConfig = ref<ModelRuntimeConfig>({
-    default_model: 'gemini-flash-lite-latest',
+    default_model: 'minimax/minimax-m3:free',
     temperature: 0.2,
     max_steps: 0,
     max_observation_chars: 3500,
@@ -84,7 +84,7 @@ export const useAgentSettingsStore = defineStore('agentSettings', () => {
           localStorage.setItem('agent_execution_mode', executionMode.value)
           if (cfg.sensitive_tools) sensitiveTools.value = cfg.sensitive_tools
           modelConfig.value = {
-            default_model: cfg.default_model || 'gemini-flash-lite-latest',
+            default_model: cfg.default_model || 'minimax/minimax-m3:free',
             temperature: cfg.temperature ?? 0.2,
             max_steps: cfg.max_steps ?? 0,
             max_observation_chars: cfg.max_observation_chars ?? 3500,

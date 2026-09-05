@@ -478,7 +478,57 @@ class BaseAgent:
 
                 continue
 
-            # ── 5B. 模型输出最终回答 ──
+            # ── 5B. 检查异常空回复或上游内容拦截 ──
+            if not raw_tool_calls and not resp_content:
+                finish_reason = ai_resp.get("finish_reason")
+                if finish_reason == "content_filter":
+                    error_budget -= 1
+                    logger.warning("Upstream model content_filter triggered at step %d", step)
+                    yield {
+                        "event": "thought",
+                        "data": json.dumps({
+                            "step": step,
+                            "thought": "⚠️ 上游网关触发内容安全审查拦截 (content_filter)，正在净化上下文并自动调整策略重试..."
+                        }, ensure_ascii=False)
+                    }
+                    if error_budget > 0:
+                        history.append(Message.user(
+                            "【系统安全重试提示】上一步输出触发了上游网关的内容安全过滤 (finish_reason: content_filter)。"
+                            "请注意：不要读取或输出任何可能被安全分类器拦截的路径（例如 .git/* 或敏感配置），请直接基于当前已有上下文分析并给出明确答复或调用更精准的工具。"
+                        ))
+                        continue
+                    else:
+                        yield {
+                            "event": "message",
+                            "data": json.dumps({
+                                "delta": (
+                                    "\n\n> ⚠️ **上游内容安全审查拦截 (content_filter)**\n\n"
+                                    "当前使用的上游模型多次触发了内容安全过滤规则（通常因为命令输出中包含系统级敏感文件路径）。\n\n"
+                                    "**建议**：可在设置中切换为 MiniMax 模型 (`minimax/minimax-m3:free`) 或调整提问方式后重试。"
+                                ),
+                                "role": "assistant"
+                            }, ensure_ascii=False)
+                        }
+                        yield {"event": "done", "data": json.dumps({"status": "finished"})}
+                        return
+                else:
+                    error_budget -= 1
+                    if error_budget > 0:
+                        logger.warning("Empty LLM response at step %d, retrying...", step)
+                        history.append(Message.user("【系统提示】上一步大模型未返回有效输出，请继续推进任务并给出明确回答或调用工具。"))
+                        continue
+                    else:
+                        yield {
+                            "event": "message",
+                            "data": json.dumps({
+                                "delta": "\n\n> ⚠️ **模型响应为空**：上游未返回有效回答，请尝试重新发送指令或切换模型。",
+                                "role": "assistant"
+                            }, ensure_ascii=False)
+                        }
+                        yield {"event": "done", "data": json.dumps({"status": "finished"})}
+                        return
+
+            # ── 5C. 模型输出最终回答 ──
             if resp_content:
                 if step > 1:
                     yield {

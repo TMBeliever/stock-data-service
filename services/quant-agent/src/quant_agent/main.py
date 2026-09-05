@@ -375,7 +375,7 @@ async def chat_stream(req: AgentChatRequest, auth: UserAuth = Depends(get_curren
 
     stream = quant_agent.chat_stream(
         messages=messages,
-        model=req.model or "gemini-flash-lite-latest",
+        model=req.model or cfg.default_model or "minimax/minimax-m3:free",
         provider="key",  # 严格锁定 API Key 驱动模式
         system_prompt=req.system_prompt,
         page_context=page_ctx,

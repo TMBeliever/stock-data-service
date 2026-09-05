@@ -54,7 +54,7 @@ export const useAiStore = defineStore('ai', () => {
 
 
   // 2. 模型状态与对话记录
-  const aiModel = ref<'gemini-flash-lite-latest' | 'claude'>('gemini-flash-lite-latest')
+  const aiModel = ref<'minimax/minimax-m3:free' | 'gemini-flash-lite-latest' | 'claude'>('minimax/minimax-m3:free')
   const isStreaming = ref(false)
   const abortController = ref<AbortController | null>(null)
 

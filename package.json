@@ -18,6 +18,7 @@
     "test:common": "uv run pytest services/common-server/tests -v",
     "test:data": "uv run pytest packages/stock-data/tests -m 'not live' -v",
     "test:ai": "uv run pytest packages/ai-core/tests -v",
+    "test:agent-core": "uv run pytest packages/agent-core/tests -v",
     "test:agent": "uv run pytest services/quant-agent/tests -v"
   },
   "devDependencies": {}

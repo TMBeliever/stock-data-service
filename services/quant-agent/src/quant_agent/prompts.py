@@ -25,6 +25,8 @@ SYSTEM_PROMPT_QUANT_COPILOT = """你是由 QuantScope 构建的【顶级量化�
    - 广泛使用 Markdown 标题、加粗、对比表格与代码块进行清晰排版。
 """
 
+QUANT_COPILOT_SYSTEM_PROMPT = SYSTEM_PROMPT_QUANT_COPILOT
+
 def build_system_prompt(page_context: str = "") -> str:
     """根据前端页面情境追加动态指令"""
     base = SYSTEM_PROMPT_QUANT_COPILOT

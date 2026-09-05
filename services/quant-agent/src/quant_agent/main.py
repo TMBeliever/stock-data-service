@@ -7,8 +7,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from ai_core.models import Message
 from quant_agent.config import agent_config
-from quant_agent.mcp_manager import mcp_manager
-from quant_agent.agent_engine import agent_engine
+from quant_agent.agent_engine import quant_agent
 
 app = FastAPI(
     title="Quant Agent Service",
@@ -60,10 +59,11 @@ async def health_check():
 @app.get("/api/v1/agent/tools", tags=["Tools"])
 async def list_available_tools():
     """获取智能体当前挂载的所有 MCP 与量化工具清单"""
-    tools = await mcp_manager.list_tools()
+    await quant_agent.initialize_tools()
+    defs = quant_agent.tool_registry.to_definitions()
     return {
-        "total": len(tools),
-        "tools": [t.to_openai_dict() for t in tools]
+        "total": len(defs),
+        "tools": [t.to_openai_dict() for t in defs]
     }
 
 @app.post("/api/v1/agent/chat", tags=["Agent Chat"])
@@ -75,7 +75,7 @@ async def chat_stream(req: AgentChatRequest):
     """
     messages = _resolve_messages(req)
     
-    stream = agent_engine.chat_stream(
+    stream = quant_agent.chat_stream(
         messages=messages,
         model=req.model,
         provider=req.provider,

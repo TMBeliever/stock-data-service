@@ -3,6 +3,7 @@ members = [
     "packages/stock-data",
     "packages/quant-core",
     "packages/ai-core",
+    "packages/agent-core",
     "services/quant-server",
     "services/common-server",
     "services/quant-agent",

@@ -54,33 +54,10 @@ export interface UserHoldingItem {
   updated_at: string
 }
 
-export const PRESET_WATCHLISTS = [
-  {
-    name: '🛡️ 达利欧全天候大类资产配置',
-    description: '核心权益 + 长期国债 + 黄金 + 豆粕商品宏观对冲',
-    symbols: ['510300.SH.ETF', '511010.SH.BOND', '518880.SH.ETF', '159981.SZ.ETF'],
-  },
-  {
-    name: '💰 高息央企红利低波现金流',
-    description: '红利 ETF + 红利低波 + 银行高股息主题池',
-    symbols: ['510880.SH.ETF', '515100.SH.ETF', '512800.SH.ETF'],
-  },
-  {
-    name: '🚀 核心宽基与科技成长池',
-    description: '沪深300 + 中证500 + 创业板 + 科创50核心宽基',
-    symbols: ['510300.SH.ETF', '510500.SH.ETF', '159915.SZ.ETF', '588000.SH.ETF'],
-  },
-  {
-    name: '🍷 消费白酒与新能源白马池',
-    description: '贵州茅台 + 五粮液 + 宁德时代 + 比亚迪龙头精选',
-    symbols: ['600519.SH', '000858.SZ', '300750.SZ', '002594.SZ'],
-  },
-]
-
 export const PRESET_HOLDINGS = [
   { symbol: '510300.SH.ETF', name: '沪深300 ETF', quantity: 10000, avg_cost: 3.75 },
   { symbol: '510880.SH.ETF', name: '红利 ETF', quantity: 15000, avg_cost: 2.92 },
-  { symbol: '511010.SH.BOND', name: '国债 ETF', quantity: 500, avg_cost: 105.2 },
+  { symbol: '511010.SH.ETF', name: '国债 ETF', quantity: 500, avg_cost: 105.2 },
   { symbol: '518880.SH.ETF', name: '黄金 ETF', quantity: 6000, avg_cost: 5.4 },
 ]
 
@@ -119,9 +96,11 @@ export interface TradeRecord {
   side: string
   price: number
   quantity: number
+  amount: number
   commission: number
   timestamp: number
   datetime_str: string
+  reason?: string
 }
 
 export interface BacktestResultData {
@@ -129,6 +108,10 @@ export interface BacktestResultData {
   daily_records: DailyRecord[]
   benchmark_records: BenchmarkRecord[]
   trades: TradeRecord[]
+  symbols?: string[]
+  missing_symbols?: string[]
+  benchmark_symbol?: string
+  warnings?: string[]
 }
 
 export interface AiChatMessage {
@@ -195,12 +178,19 @@ class SmartDividendDCAStrategy(BaseStrategy):
         super().__init__(name="SmartDCA", params={"base_amount": base_amount, "window": window})
         self.base_amount = base_amount
         self.window = window
-        self.bar_counter = 0
+        self.last_dates = {}
+        self.symbol_days = {}
 
     def on_bar(self, bar: Bar):
-        self.bar_counter += 1
-        # 每 5 个交易日评估一次定投
-        if self.bar_counter % 5 != 0:
+        sym = bar.symbol
+        last_d = self.last_dates.get(sym)
+        if last_d != bar.date_str:
+            self.last_dates[sym] = bar.date_str
+            self.symbol_days[sym] = self.symbol_days.get(sym, 0) + 1
+
+        day_cnt = self.symbol_days.get(sym, 0)
+        # 每 5 个真实交易日评估一次定投
+        if day_cnt % 5 != 0:
             return
 
         pct = bar.percentile(self.window)
@@ -357,7 +347,8 @@ class AllWeatherStrategy(BaseStrategy):
         self.rebalance_band = rebalance_band
         self.rebalance_interval = rebalance_interval
         self.single_symbol_target = single_symbol_target
-        self.counter = 0
+        self.last_date = ""
+        self.trading_days = 0
 
     def _determine_symbol_target_weight(self, symbol: str) -> float:
         sym_lower = symbol.lower()
@@ -372,10 +363,10 @@ class AllWeatherStrategy(BaseStrategy):
         return self.single_symbol_target
 
     def on_bar(self, bar: Bar):
-        self.counter += 1
-        # 每隔固定周期进行组合再平衡 (或首根 K 线初始建仓)
-        if self.counter % self.rebalance_interval != 0 and self.counter != 1:
-            return
+        # 自然交易日变更检测
+        if self.last_date != bar.date_str:
+            self.last_date = bar.date_str
+            self.trading_days += 1
 
         total_equity = self.equity
         if total_equity <= 0:
@@ -386,14 +377,24 @@ class AllWeatherStrategy(BaseStrategy):
         current_mv = pos.market_value if pos else 0.0
         current_pct = current_mv / total_equity
 
-        # 首次建仓或偏离度突破容忍带宽时触发再平衡
-        if self.counter == 1 or abs(current_pct - target_pct) >= self.rebalance_band:
-            action = "全天候初始建仓" if self.counter == 1 else ("止盈降权" if current_pct > target_pct else "低位补齐增配")
+        # 1. 首日建仓：当前标的尚未持仓时，立即建立全天候目标底仓
+        if self.trading_days == 1 and not pos:
             self.order_target_percent(
                 bar.symbol,
                 target_pct,
-                reason=f"All-Weather {action} ({current_pct:.1%} -> {target_pct:.1%})"
+                reason=f"全天候首日建仓({target_pct:.1%})"
             )
+            return
+
+        # 2. 周期再平衡：每隔固定交易日 (如20天) 触发动态再平衡
+        if self.trading_days > 1 and self.trading_days % self.rebalance_interval == 0:
+            if abs(current_pct - target_pct) >= self.rebalance_band:
+                action = "止盈降权" if current_pct > target_pct else "低位补齐增配"
+                self.order_target_percent(
+                    bar.symbol,
+                    target_pct,
+                    reason=f"All-Weather {action} ({current_pct:.1%} -> {target_pct:.1%})"
+                )
 `
   }
 ]
@@ -882,6 +883,10 @@ class MyCustomStrategy(BaseStrategy):
         throw new Error('请至少输入或选择一个有效回测标的代码')
       }
 
+      if (startDate.value && endDate.value && startDate.value > endDate.value) {
+        throw new Error(`开始日期 (${startDate.value}) 不能晚于结束日期 (${endDate.value})`)
+      }
+
       const resp = await fetch('/api/v1/backtest/run-custom', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -911,19 +916,11 @@ class MyCustomStrategy(BaseStrategy):
     }
   }
 
-  // 拉取用户自选组合列表
+  // 拉取用户自选组合列表 (纯真实用户自定义，不掺杂写死假预设)
   async function fetchUserWatchlists() {
     const authStore = useAuthStore()
     if (!authStore.token) {
-      userWatchlists.value = PRESET_WATCHLISTS.map((w, idx) => ({
-        id: -(idx + 1),
-        user_id: 0,
-        name: w.name,
-        description: w.description,
-        symbols: w.symbols,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }))
+      userWatchlists.value = []
       return
     }
     watchlistsLoading.value = true
@@ -940,13 +937,14 @@ class MyCustomStrategy(BaseStrategy):
   }
 
   // 保存当前标的池为自定义自选组合
-  async function saveUserWatchlist(name: string, description?: string): Promise<boolean> {
+  async function saveUserWatchlist(name: string, description?: string, customSymbols?: string[]): Promise<boolean> {
     const authStore = useAuthStore()
     if (!authStore.isLoggedIn) {
       authStore.openLogin()
       return false
     }
     try {
+      const symList = customSymbols && customSymbols.length > 0 ? customSymbols : symbols.value
       const res = await fetch('/api/v1/user/watchlists', {
         method: 'POST',
         headers: {
@@ -956,7 +954,7 @@ class MyCustomStrategy(BaseStrategy):
         body: JSON.stringify({
           name: name.trim(),
           description: description?.trim() || null,
-          symbols: symbols.value,
+          symbols: symList,
         }),
       })
       if (res.ok) {

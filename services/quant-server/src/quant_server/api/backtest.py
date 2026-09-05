@@ -141,18 +141,32 @@ def run_custom_backtest_endpoint(req: CustomBacktestRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"策略编译/初始化失败: {str(e)}")
 
-    # 2. 解析目标标的列表 (兼容 symbols 列表与单值 symbol)
+    # 2. 解析与标准化目标标的列表 (兼容 symbols 列表与单值 symbol，自动容错与纠偏)
+    def normalize_symbol(raw: str) -> str:
+        s = raw.strip().upper()
+        # 兼容历史或手误配置的 .BOND 后缀 (如 511010.SH.BOND -> 511010.SH.ETF)
+        if s.endswith(".BOND"):
+            s = s[:-5] + ".ETF"
+        # 纯6位代码智能推导
+        if s.isdigit() and len(s) == 6:
+            if s.startswith("5") or s.startswith("6"):
+                s = f"{s}.SH.ETF" if s.startswith("5") else f"{s}.SH.STK"
+            elif s.startswith("0") or s.startswith("3") or s.startswith("1"):
+                s = f"{s}.SZ.ETF" if s.startswith("1") else f"{s}.SZ.STK"
+        return s
+
     target_symbols: List[str] = []
-    if req.symbols and len(req.symbols) > 0:
-        seen = set()
-        for s in req.symbols:
-            s_clean = s.strip()
-            if s_clean and s_clean not in seen:
-                target_symbols.append(s_clean)
-                seen.add(s_clean)
-    elif req.symbol and req.symbol.strip():
-        target_symbols = [req.symbol.strip()]
-    else:
+    input_symbols = req.symbols if (req.symbols and len(req.symbols) > 0) else ([req.symbol] if req.symbol else ["510300.SH.ETF"])
+    seen = set()
+    for s in input_symbols:
+        if not s or not s.strip():
+            continue
+        cleaned = normalize_symbol(s)
+        if cleaned not in seen:
+            target_symbols.append(cleaned)
+            seen.add(cleaned)
+
+    if not target_symbols:
         target_symbols = ["510300.SH.ETF"]
 
     # 3. 批量获取标的行情切片
@@ -188,7 +202,7 @@ def run_custom_backtest_endpoint(req: CustomBacktestRequest):
 
     # 5. 基准走势对齐 (单标的默认以该标的自身为基准，多标的默认以沪深300 ETF为基准或指定基准)
     is_multi = len(target_symbols) > 1
-    benchmark_sym = req.benchmark.strip() if req.benchmark else (target_symbols[0] if not is_multi else "510300.SH.ETF")
+    benchmark_sym = normalize_symbol(req.benchmark) if req.benchmark else (target_symbols[0] if not is_multi else "510300.SH.ETF")
 
     benchmark_bars: List[Bar] = []
     if benchmark_sym in bars_map:
@@ -234,14 +248,17 @@ def run_custom_backtest_endpoint(req: CustomBacktestRequest):
                 "side": t.side.value if hasattr(t.side, "value") else str(t.side),
                 "price": t.price,
                 "quantity": t.quantity,
+                "amount": getattr(t, "amount", round(t.price * t.quantity, 2)),
                 "commission": round(t.commission, 4),
                 "timestamp": t.timestamp,
                 "datetime_str": datetime.datetime.fromtimestamp(t.timestamp / 1000).strftime("%Y-%m-%d %H:%M:%S") if t.timestamp else "",
+                "reason": getattr(t, "reason", "") or "",
             }
             for t in engine.portfolio.trades
         ],
         "symbols": list(bars_map.keys()),
         "missing_symbols": missing_symbols,
         "benchmark_symbol": benchmark_sym,
+        "warnings": result.warnings,
     }
 

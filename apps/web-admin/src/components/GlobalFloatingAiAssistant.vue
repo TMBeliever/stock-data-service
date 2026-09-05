@@ -1634,7 +1634,7 @@ onUnmounted(() => {
                             <div class="flex items-center space-x-2">
                               <span v-if="tc.status === 'calling'" class="text-amber-400 animate-pulse font-bold">● LIVE</span>
                               <button
-                                @click.stop="copyText(tc.liveOutput || tc.outputPreview, '📋 终端输出已复制')"
+                                @click.stop="copyText(tc.liveOutput || tc.outputPreview || '', '📋 终端输出已复制')"
                                 class="hover:text-zinc-200 transition-colors cursor-pointer flex items-center space-x-0.5 px-1.5 py-0.2 rounded hover:bg-white/[0.08]"
                                 title="复制终端完整输出"
                               >

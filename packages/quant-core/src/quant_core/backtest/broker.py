@@ -27,6 +27,7 @@ class SimulatedBroker:
         self.stamp_tax_rate = stamp_tax_rate
         self.t_plus_one = t_plus_one
         self.lot_size = lot_size
+        self.rejected_orders: list = []
 
     def calculate_tax_and_commission(self, symbol: str, side: OrderSide, price: float, quantity: float) -> Tuple[float, float, float]:
         """计算滑点成本、佣金与印花税"""
@@ -72,7 +73,17 @@ class SimulatedBroker:
         if order.side == OrderSide.BUY:
             if portfolio.cash < total_buy_cost:
                 order.status = OrderStatus.REJECTED
-                order.reason = f"Insufficient cash: need {total_buy_cost:.2f}, have {portfolio.cash:.2f}"
+                order.reason = f"资金不足: 需 ¥{total_buy_cost:,.2f}，当前可用 ¥{portfolio.cash:,.2f}"
+                self.rejected_orders.append({
+                    "symbol": order.symbol,
+                    "side": "BUY",
+                    "price": exec_price,
+                    "quantity": order.quantity,
+                    "need_cash": round(total_buy_cost, 2),
+                    "avail_cash": round(portfolio.cash, 2),
+                    "reason": order.reason,
+                    "timestamp": timestamp,
+                })
                 return None
             portfolio.cash -= total_buy_cost
 
@@ -81,13 +92,22 @@ class SimulatedBroker:
             avail = pos.available_quantity if self.t_plus_one else pos.quantity
             if avail < order.quantity:
                 order.status = OrderStatus.REJECTED
-                order.reason = f"Insufficient available shares: need {order.quantity}, have {avail}"
+                order.reason = f"可用持仓不足: 需卖出 {order.quantity} 股，当前可用 {avail} 股"
+                self.rejected_orders.append({
+                    "symbol": order.symbol,
+                    "side": "SELL",
+                    "price": exec_price,
+                    "quantity": order.quantity,
+                    "reason": order.reason,
+                    "timestamp": timestamp,
+                })
                 return None
             # 卖出净收入到账
             sell_proceeds = exec_price * order.quantity - comm - tax
             portfolio.cash += sell_proceeds
 
         # 生成成交流水
+        trade_amount = round(exec_price * order.quantity, 2)
         trade = Trade(
             trade_id=f"trd_{uuid.uuid4().hex[:12]}",
             order_id=order.order_id,
@@ -95,10 +115,12 @@ class SimulatedBroker:
             side=order.side,
             price=exec_price,
             quantity=order.quantity,
+            amount=trade_amount,
             commission=comm,
             tax=tax,
             slippage=slip,
-            timestamp=timestamp
+            timestamp=timestamp,
+            reason=order.reason or ""
         )
 
         # 更新订单状态

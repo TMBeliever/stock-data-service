@@ -135,13 +135,11 @@ async def test_user_watchlists_and_holdings():
         token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
-        # 2. 获取自选组合 (初次拉取自动生成预置自选组合)
+        # 2. 获取自选组合 (新用户默认纯净无写死预置)
         wl_resp = await client.get("/api/v1/user/watchlists", headers=headers)
         assert wl_resp.status_code == 200
         watchlists = wl_resp.json()
-        assert len(watchlists) >= 4
-        assert isinstance(watchlists[0]["symbols"], list)
-        assert len(watchlists[0]["symbols"]) > 0
+        assert len(watchlists) == 0
 
         # 3. 创建自选组合
         create_wl_resp = await client.post("/api/v1/user/watchlists", headers=headers, json={

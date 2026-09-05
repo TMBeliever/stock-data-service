@@ -2,7 +2,7 @@
 import { computed, ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import EChartWrapper from '@/components/EChartWrapper.vue'
-import { useStrategyStore, type UserBacktestItem, PRESET_WATCHLISTS } from '@/stores/strategy'
+import { useStrategyStore, type UserBacktestItem } from '@/stores/strategy'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -186,8 +186,21 @@ const chartOption = computed(() => {
     return Number((((r.total_equity - initialCash) / initialCash) * 100).toFixed(2))
   })
 
-  // 标的基准收益对齐
-  const benchmarkReturns = res.benchmark_records?.map((b) => Number((b.return_pct * 100).toFixed(2))) || []
+  // 标的基准收益以自然交易日对齐，杜绝错位
+  const bmMap = new Map<string, number>()
+  if (res.benchmark_records) {
+    for (const b of res.benchmark_records) {
+      bmMap.set(b.date, Number((b.return_pct * 100).toFixed(2)))
+    }
+  }
+
+  let lastBmVal = 0
+  const benchmarkReturns = dates.map((d) => {
+    if (bmMap.has(d)) {
+      lastBmVal = bmMap.get(d)!
+    }
+    return lastBmVal
+  })
 
   return {
     backgroundColor: 'transparent',
@@ -511,15 +524,14 @@ onMounted(() => {
 
         <!-- 组合快捷操作条：经典组合模板 & 存为自选 & 清空 -->
         <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
-          <!-- 模板组合与我的组合选择下拉 -->
+          <!-- 我的自选组合选择下拉 -->
           <div class="flex items-center space-x-2">
-            <span class="text-zinc-500 text-[11px]">组合模板:</span>
+            <span class="text-zinc-500 text-[11px]">自选组合:</span>
             <select
               @change="(e: any) => {
                 const val = e.target.value
                 if (!val) return
-                const all = [...PRESET_WATCHLISTS, ...strategyStore.userWatchlists]
-                const target = all.find((w) => w.name === val)
+                const target = strategyStore.userWatchlists.find((w) => w.name === val)
                 if (target) {
                   strategyStore.loadPresetWatchlist(target)
                   showToast(`✅ 已应用组合：${target.name}`)
@@ -527,17 +539,13 @@ onMounted(() => {
               }"
               class="bg-black/50 border border-white/[0.1] rounded-lg px-2 py-0.5 text-xs text-zinc-200 focus:outline-none focus:border-amber-500/50 cursor-pointer"
             >
-              <option value="">快速载入组合模板...</option>
-              <optgroup label="🏛️ 机构经典配置池">
-                <option v-for="w in PRESET_WATCHLISTS" :key="w.name" :value="w.name">
-                  {{ w.name }} ({{ w.symbols.length }}标的)
-                </option>
-              </optgroup>
-              <optgroup v-if="strategyStore.userWatchlists.length > 0" label="⭐ 我的自选组合">
+              <option value="">快速载入我的自选组合...</option>
+              <template v-if="strategyStore.userWatchlists.length > 0">
                 <option v-for="w in strategyStore.userWatchlists" :key="w.id" :value="w.name">
-                  {{ w.name }} ({{ w.symbols.length }}标的)
+                  ⭐ {{ w.name }} ({{ w.symbols.length }}标的)
                 </option>
-              </optgroup>
+              </template>
+              <option v-else disabled value="">暂无自选组合 (点击右侧保存创建)</option>
             </select>
           </div>
 
@@ -869,6 +877,21 @@ onMounted(() => {
 
         <!-- 回测完成：展示指标卡片与图表/流水 -->
         <template v-else>
+          <!-- 回测执行诊断提示 (资金不足、0成交标的等智能诊断) -->
+          <div
+            v-if="strategyStore.backtestResult?.warnings?.length"
+            class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200 space-y-1.5 animate-fadeIn"
+          >
+            <div class="flex items-center space-x-1.5 font-bold text-amber-400">
+              <span>💡 回测执行诊断提示 ({{ strategyStore.backtestResult.warnings.length }})</span>
+            </div>
+            <ul class="list-disc list-inside font-mono text-[11px] leading-relaxed space-y-1 text-zinc-300">
+              <li v-for="(w, idx) in strategyStore.backtestResult.warnings" :key="idx">
+                {{ w }}
+              </li>
+            </ul>
+          </div>
+
           <!-- 核心 KPI 矩阵卡片 -->
           <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
             <!-- 累计收益率 -->
@@ -941,6 +964,8 @@ onMounted(() => {
                   <th class="p-2.5">方向</th>
                   <th class="p-2.5">成交均价</th>
                   <th class="p-2.5">成交数量</th>
+                  <th class="p-2.5">成交总额</th>
+                  <th class="p-2.5">调仓理由</th>
                   <th class="p-2.5">佣金手续费</th>
                 </tr>
               </thead>
@@ -970,10 +995,19 @@ onMounted(() => {
                   </td>
                   <td class="p-2.5 text-zinc-100 font-semibold">¥{{ t.price.toFixed(3) }}</td>
                   <td class="p-2.5 text-zinc-300">{{ t.quantity.toLocaleString() }} 股</td>
+                  <td class="p-2.5 text-zinc-200 font-bold">¥{{ (t.amount || (t.price * t.quantity)).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</td>
+                  <td class="p-2.5">
+                    <span
+                      class="px-2 py-0.5 rounded-lg bg-white/[0.04] text-zinc-300 text-[10px] font-sans border border-white/[0.06] truncate max-w-[140px] inline-block"
+                      :title="t.reason || '策略信号'"
+                    >
+                      {{ t.reason || '策略信号' }}
+                    </span>
+                  </td>
                   <td class="p-2.5 text-zinc-400">¥{{ t.commission.toFixed(2) }}</td>
                 </tr>
                 <tr v-if="!strategyStore.backtestResult.trades?.length">
-                  <td colspan="6" class="p-4 text-center text-zinc-500">该回测区间内未触发交易信号</td>
+                  <td colspan="8" class="p-4 text-center text-zinc-500">该回测区间内未触发交易信号</td>
                 </tr>
               </tbody>
             </table>

@@ -107,4 +107,30 @@ class BacktestEngine:
             daily_records=daily_records,
             trades=self.portfolio.trades
         )
+
+        # 4. 回测诊断与告警收集 (可观测性增强)
+        warnings: List[str] = []
+        traded_symbols = {t.symbol for t in self.portfolio.trades}
+        for sym in symbol_bars.keys():
+            if sym not in traded_symbols:
+                bars = symbol_bars.get(sym, [])
+                if bars:
+                    first_price = bars[0].close
+                    min_lot_cost = first_price * 100
+                    if min_lot_cost > self.initial_cash:
+                        warnings.append(f"标的 {sym} 历史单价较高 (约 ¥{first_price:.2f}/股)，买入一手 (100股) 需约 ¥{min_lot_cost:,.0f}，当前初始资金 (¥{self.initial_cash:,.0f}) 不足一手，全程未触发成交")
+                    else:
+                        warnings.append(f"标的 {sym} 在回测区间内未产生任何成交 (策略信号未触发或调仓资金分配不足)")
+                else:
+                    warnings.append(f"标的 {sym} 在指定区间内无有效行情数据")
+
+        # 检查拒单记录中的资金不足告警
+        cash_rejected = [r for r in getattr(self.broker, "rejected_orders", []) if r.get("side") == "BUY"]
+        if cash_rejected:
+            max_need = max(r.get("need_cash", 0) for r in cash_rejected)
+            warnings.append(f"回测期间共发生 {len(cash_rejected)} 次买入拒单 (可用现金不足)，最大需可用资金 ¥{max_need:,.0f}，建议适当提升初始资金以保障策略完整建仓")
+
+        result.warnings = warnings
+        result.rejected_orders = getattr(self.broker, "rejected_orders", [])
+
         return result

@@ -16,6 +16,8 @@ class BacktestResult(BaseModel):
     profit_factor: float
     total_trades: int
     daily_records: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    rejected_orders: List[Dict[str, Any]] = []
 
     def print_summary(self):
         """打印标准量化绩效报表"""

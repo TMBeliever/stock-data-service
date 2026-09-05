@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import EChartWrapper from '@/components/EChartWrapper.vue'
-import { useStrategyStore, PRESET_WATCHLISTS, type UserBacktestItem } from '@/stores/strategy'
+import { useStrategyStore, type UserBacktestItem } from '@/stores/strategy'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -366,6 +366,20 @@ async function confirmArchiveBacktest() {
   }
 }
 
+// 快捷保存当前标的池为新组合
+async function handleSaveCurrentSymbolsAsWatchlist() {
+  if (!authStore.isLoggedIn) {
+    authStore.openLogin()
+    return
+  }
+  const name = prompt('请输入新自选组合名称:', `我的策略组合 (${strategyStore.symbols.length}只标的)`)
+  if (!name || !name.trim()) return
+  const ok = await strategyStore.saveUserWatchlist(name.trim())
+  if (ok) {
+    showToast(`⭐ 已成功创建自选组合「${name.trim()}」！`)
+  }
+}
+
 // 净值走势图 ECharts 配置
 const chartOption = computed(() => {
   const res = strategyStore.backtestResult
@@ -379,8 +393,22 @@ const chartOption = computed(() => {
     return Number((((r.total_equity - initialCash) / initialCash) * 100).toFixed(2))
   })
 
-  // 基准收益对齐
-  const benchmarkReturns = res.benchmark_records?.map((b) => Number((b.return_pct * 100).toFixed(2))) || []
+  // 基准收益严格按自然交易日 Key 精确对齐 (杜绝因停牌或切片天数差异导致的错位)
+  const benchmarkMap = new Map<string, number>()
+  if (res.benchmark_records) {
+    for (const b of res.benchmark_records) {
+      benchmarkMap.set(b.date, Number((b.return_pct * 100).toFixed(2)))
+    }
+  }
+
+  let lastBench = 0.0
+  const benchmarkReturns = dates.map((d) => {
+    if (benchmarkMap.has(d)) {
+      lastBench = benchmarkMap.get(d)!
+      return lastBench
+    }
+    return lastBench
+  })
 
   return {
     backgroundColor: 'transparent',
@@ -816,54 +844,34 @@ const chartOption = computed(() => {
             </div>
           </div>
 
-          <!-- 自定义载入预设组合下拉 (Custom Watchlist Popover) -->
-          <div class="flex items-center space-x-2 text-xs">
-            <span class="text-zinc-400 text-[11px]">快速载入预设配置池:</span>
-            <div class="relative no-drag" ref="watchlistDropdownRef">
-              <button
-                @click="showWatchlistDropdown = !showWatchlistDropdown"
-                class="flex items-center space-x-2 px-3 py-1 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.1] hover:border-amber-500/40 text-xs text-zinc-200 transition-all cursor-pointer shadow-sm group"
-              >
-                <span>📁</span>
-                <span>选择经典资产配置池...</span>
-                <span
-                  class="text-zinc-400 text-[9px] group-hover:text-amber-300 transition-transform duration-200"
-                  :class="{ 'rotate-180': showWatchlistDropdown }"
-                >▼</span>
-              </button>
-
-              <transition name="fade">
-                <div
-                  v-if="showWatchlistDropdown"
-                  class="absolute left-0 mt-2 w-80 max-h-80 overflow-y-auto rounded-2xl bg-[#14161f]/98 border border-white/[0.14] shadow-2xl backdrop-blur-3xl p-2 z-50 animate-fadeIn"
+          <!-- 自定义载入用户组合下拉 (Custom Watchlist Popover) -->
+          <div class="flex items-center justify-between gap-2 text-xs">
+            <div class="flex items-center space-x-2">
+              <span class="text-zinc-400 text-[11px]">快速载入我的组合:</span>
+              <div class="relative no-drag" ref="watchlistDropdownRef">
+                <button
+                  @click="showWatchlistDropdown = !showWatchlistDropdown"
+                  class="flex items-center space-x-2 px-3 py-1 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.1] hover:border-amber-500/40 text-xs text-zinc-200 transition-all cursor-pointer shadow-sm group"
                 >
-                  <div class="px-2.5 py-1.5 text-[10px] font-bold text-zinc-400 tracking-wider uppercase border-b border-white/[0.06]">
-                    🏛️ 机构经典配置池
-                  </div>
-                  <div class="space-y-1 py-1">
-                    <div
-                      v-for="w in PRESET_WATCHLISTS"
-                      :key="w.name"
-                      @click="selectWatchlistTemplate(w)"
-                      class="p-2.5 rounded-xl hover:bg-white/[0.06] transition-all cursor-pointer flex flex-col space-y-0.5 group"
-                    >
-                      <div class="flex items-center justify-between text-xs font-semibold text-white group-hover:text-amber-300">
-                        <span>{{ w.name }}</span>
-                        <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-white/[0.08] text-zinc-300 font-mono">
-                          {{ w.symbols.length }} 标的
-                        </span>
-                      </div>
-                      <div class="text-[10px] text-zinc-400 line-clamp-1 leading-normal">
-                        {{ w.description }}
-                      </div>
-                    </div>
-                  </div>
+                  <span>📁</span>
+                  <span>{{ strategyStore.userWatchlists.length > 0 ? '选择我的自选组合...' : '暂无自选组合' }}</span>
+                  <span
+                    class="text-zinc-400 text-[9px] group-hover:text-amber-300 transition-transform duration-200"
+                    :class="{ 'rotate-180': showWatchlistDropdown }"
+                  >▼</span>
+                </button>
 
-                  <template v-if="strategyStore.userWatchlists.length > 0">
-                    <div class="px-2.5 py-1.5 text-[10px] font-bold text-zinc-400 tracking-wider uppercase border-t border-b border-white/[0.06] mt-1">
-                      ⭐ 我的自选组合
+                <transition name="fade">
+                  <div
+                    v-if="showWatchlistDropdown"
+                    class="absolute left-0 mt-2 w-80 max-h-80 overflow-y-auto rounded-2xl bg-[#14161f]/98 border border-white/[0.14] shadow-2xl backdrop-blur-3xl p-2 z-50 animate-fadeIn"
+                  >
+                    <div class="px-2.5 py-1.5 text-[10px] font-bold text-zinc-400 tracking-wider uppercase border-b border-white/[0.06] flex items-center justify-between">
+                      <span>⭐ 我的自选组合</span>
+                      <span class="text-[10px] text-zinc-500 font-mono">{{ strategyStore.userWatchlists.length }} 个</span>
                     </div>
-                    <div class="space-y-1 py-1">
+
+                    <div v-if="strategyStore.userWatchlists.length > 0" class="space-y-1 py-1">
                       <div
                         v-for="w in strategyStore.userWatchlists"
                         :key="w.id"
@@ -877,14 +885,38 @@ const chartOption = computed(() => {
                           </span>
                         </div>
                         <div class="text-[10px] text-zinc-400 line-clamp-1 leading-normal">
-                          {{ w.description || '用户自选池' }}
+                          {{ w.description || w.symbols.join(', ') }}
                         </div>
                       </div>
                     </div>
-                  </template>
-                </div>
-              </transition>
+                    <div v-else class="p-4 text-center space-y-2 text-zinc-500">
+                      <div class="text-xl">📭</div>
+                      <div class="text-xs text-zinc-400">暂无自定义自选组合</div>
+                      <div class="text-[11px] text-zinc-500 leading-normal">
+                        可在上方手动添加标的代码，点击右侧「保存为组合」创建
+                      </div>
+                      <button
+                        @click="router.push('/portfolio'); showWatchlistDropdown = false"
+                        class="mt-1 px-3 py-1 rounded-lg bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-[11px] font-medium transition-colors"
+                      >
+                        前往组合中心管理
+                      </button>
+                    </div>
+                  </div>
+                </transition>
+              </div>
             </div>
+
+            <!-- 快捷另存当前标的池为新组合 -->
+            <button
+              v-if="strategyStore.symbols.length > 0"
+              @click="handleSaveCurrentSymbolsAsWatchlist"
+              class="px-2.5 py-1 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-zinc-300 hover:text-white text-xs transition-colors flex items-center space-x-1 cursor-pointer shrink-0"
+              title="将当前股票池标的保存为一个新自选组合"
+            >
+              <span>💾</span>
+              <span>保存为组合</span>
+            </button>
           </div>
         </div>
 
@@ -925,6 +957,21 @@ const chartOption = computed(() => {
         <p class="font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap">
           {{ strategyStore.backtestError }}
         </p>
+      </div>
+
+      <!-- 2.3.1 回测诊断告警区 (资金不足、0成交标的等智能诊断) -->
+      <div
+        v-if="strategyStore.backtestResult?.warnings?.length"
+        class="m-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200 space-y-1.5 animate-fadeIn"
+      >
+        <div class="flex items-center space-x-1.5 font-bold text-amber-400">
+          <span>💡 回测执行诊断提示 ({{ strategyStore.backtestResult.warnings.length }})</span>
+        </div>
+        <ul class="list-disc list-inside font-mono text-[11px] leading-relaxed space-y-1 text-zinc-300">
+          <li v-for="(w, idx) in strategyStore.backtestResult.warnings" :key="idx">
+            {{ w }}
+          </li>
+        </ul>
       </div>
 
       <!-- 2.4 标签页条与归档按钮 -->
@@ -1049,6 +1096,8 @@ const chartOption = computed(() => {
                   <th class="p-2.5">买卖</th>
                   <th class="p-2.5">成交价格</th>
                   <th class="p-2.5">成交数量</th>
+                  <th class="p-2.5">成交总额</th>
+                  <th class="p-2.5">调仓理由</th>
                   <th class="p-2.5">手续费</th>
                 </tr>
               </thead>
@@ -1074,6 +1123,15 @@ const chartOption = computed(() => {
                   </td>
                   <td class="p-2.5 text-white font-bold">¥{{ t.price.toFixed(3) }}</td>
                   <td class="p-2.5 text-zinc-300">{{ t.quantity.toLocaleString() }} 股</td>
+                  <td class="p-2.5 text-zinc-200 font-bold">¥{{ (t.amount || (t.price * t.quantity)).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</td>
+                  <td class="p-2.5">
+                    <span
+                      class="px-2 py-0.5 rounded-lg bg-white/[0.04] text-zinc-300 text-[11px] font-sans border border-white/[0.06] truncate max-w-[150px] inline-block"
+                      :title="t.reason || '策略信号'"
+                    >
+                      {{ t.reason || '策略信号' }}
+                    </span>
+                  </td>
                   <td class="p-2.5 text-zinc-400">¥{{ t.commission.toFixed(2) }}</td>
                 </tr>
               </tbody>

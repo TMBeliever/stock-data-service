@@ -44,6 +44,7 @@ export interface CodexMessage {
   toolCalls?: ToolCallItem[]
   thought?: string
   waitingApproval?: WaitingApprovalItem
+  guardAlerts?: any[]
 }
 
 export interface CodexSession {
@@ -301,7 +302,7 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
         const rawProjects: CodexProject[] = data.projects || []
         for (const p of rawProjects) {
           for (const s of p.sessions || []) {
-            s.messages = (s.messages || []).map((m: any) => ({
+            s.messages = (s.messages || []).map((m: any): CodexMessage => ({
               id: m.id || `msg_${Date.now()}`,
               role: m.role,
               content: m.content || '',
@@ -316,6 +317,8 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
                 step: tc.step,
               })),
               thought: m.thought,
+              waitingApproval: m.waitingApproval,
+              guardAlerts: m.guardAlerts || [],
             }))
           }
         }

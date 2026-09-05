@@ -526,33 +526,10 @@ async def delete_user_backtest(
 # -------------------------------------------------------------
 # 3. 用户自选股票池/组合 API (User Watchlists)
 # -------------------------------------------------------------
-DEFAULT_PRESET_WATCHLISTS = [
-    {
-        "name": "🛡️ 达利欧全天候大类资产篮子",
-        "description": "全球经典风险平价资产配置：核心权益、长短端国债与黄金商品宏观对冲",
-        "symbols": ["510300.SH.ETF", "511010.SH.BOND", "518880.SH.ETF", "159981.SZ.ETF"]
-    },
-    {
-        "name": "💰 高股息红利现金流组合",
-        "description": "精选高分红、低波动央国企与红利主题基金",
-        "symbols": ["510880.SH.ETF", "515100.SH.ETF", "512800.SH.ETF"]
-    },
-    {
-        "name": "🚀 核心宽基与科技成长池",
-        "description": "大盘蓝筹+成长动量组合：沪深300、中证500与创业板核心",
-        "symbols": ["510300.SH.ETF", "510500.SH.ETF", "159915.SZ.ETF", "588000.SH.ETF"]
-    },
-    {
-        "name": "🍷 消费与新能源龙头白马池",
-        "description": "白酒与新质生产力核心资产精选",
-        "symbols": ["600519.SH", "000858.SZ", "300750.SZ", "002594.SZ"]
-    }
-]
-
 DEFAULT_PRESET_HOLDINGS = [
     {"symbol": "510300.SH.ETF", "name": "沪深300 ETF", "quantity": 10000.0, "avg_cost": 3.750},
     {"symbol": "510880.SH.ETF", "name": "红利 ETF", "quantity": 15000.0, "avg_cost": 2.920},
-    {"symbol": "511010.SH.BOND", "name": "国债 ETF", "quantity": 500.0, "avg_cost": 105.20},
+    {"symbol": "511010.SH.ETF", "name": "国债 ETF", "quantity": 500.0, "avg_cost": 105.20},
     {"symbol": "518880.SH.ETF", "name": "黄金 ETF", "quantity": 6000.0, "avg_cost": 5.40},
 ]
 
@@ -582,7 +559,7 @@ async def list_user_watchlists(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """获取用户自选组合列表，若为空自动初始化预置经典组合"""
+    """获取用户自选组合列表"""
     stmt = (
         select(UserWatchlist)
         .where(UserWatchlist.user_id == current_user.id)
@@ -590,23 +567,6 @@ async def list_user_watchlists(
     )
     result = await db.execute(stmt)
     items = result.scalars().all()
-
-    if not items:
-        # 首次访问自动初始化预置自选组合
-        created_items = []
-        for preset in DEFAULT_PRESET_WATCHLISTS:
-            new_item = UserWatchlist(
-                user_id=current_user.id,
-                name=preset["name"],
-                description=preset["description"],
-                symbols=json.dumps(preset["symbols"], ensure_ascii=False)
-            )
-            db.add(new_item)
-            created_items.append(new_item)
-        await db.commit()
-        for item in created_items:
-            await db.refresh(item)
-        items = created_items
 
     # 反序列化 symbols 为 List[str]
     response = []

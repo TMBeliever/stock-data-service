@@ -292,10 +292,12 @@ class Trade(BaseModel):
     side: OrderSide
     price: float
     quantity: float
+    amount: float = 0.0
     commission: float = 0.0
     tax: float = 0.0
     slippage: float = 0.0
     timestamp: int  # UTC 毫秒
+    reason: str = ""
 
 class Position(BaseModel):
     """个股持仓模型 (支持 A 股 T+1 约束)"""

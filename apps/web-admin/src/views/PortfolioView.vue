@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useStrategyStore, PRESET_WATCHLISTS, type UserWatchlistItem, type UserHoldingItem } from '@/stores/strategy'
+import { useStrategyStore, type UserWatchlistItem, type UserHoldingItem } from '@/stores/strategy'
 import { useMarketStore, type SymbolItem } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
 
@@ -13,8 +13,8 @@ const authStore = useAuthStore()
 const activeMainTab = ref<'watchlists' | 'holdings'>('watchlists')
 const toastMsg = ref('')
 
-// 选中的组合 (可以是预置组合或用户的自选组合)
-const activeWatchlistName = ref<string>(PRESET_WATCHLISTS[0].name)
+// 选中的组合 (真实用户的自选组合)
+const activeWatchlistName = ref<string>('')
 const watchlistSymbolsQuotes = ref<Record<string, SymbolItem>>({})
 const isQuotesLoading = ref(false)
 
@@ -41,19 +41,28 @@ function showToast(msg: string) {
   }, 2500)
 }
 
-// 获取所有可用组合列表 (包含预设与用户云端组合)
+// 获取所有可用用户组合列表
 const allWatchlists = computed(() => {
-  return [
-    ...PRESET_WATCHLISTS.map((w) => ({ ...w, isPreset: true })),
-    ...strategyStore.userWatchlists.map((w) => ({ ...w, isPreset: false })),
-  ]
+  return strategyStore.userWatchlists.map((w) => ({ ...w, isPreset: false }))
 })
 
 // 当前选中的组合对象
 const currentWatchlist = computed(() => {
+  if (allWatchlists.value.length === 0) return null
   const found = allWatchlists.value.find((w) => w.name === activeWatchlistName.value)
   return found || allWatchlists.value[0]
 })
+
+// 监听组合列表加载完成自动选中第一个
+watch(
+  () => strategyStore.userWatchlists,
+  (list) => {
+    if (list.length > 0 && !activeWatchlistName.value) {
+      activeWatchlistName.value = list[0].name
+    }
+  },
+  { immediate: true }
+)
 
 // 批量加载当前组合内标的的实时行情
 async function loadWatchlistQuotes() {
@@ -117,22 +126,14 @@ async function handleAddSymbolToCurrent() {
   }
 
   const wl = currentWatchlist.value
-  if (wl.isPreset) {
-    // 预设组合不可直接覆盖服务端，自动复制为用户新组合并追加
-    const newSymbols = Array.from(new Set([...wl.symbols, sym]))
-    const copyName = `${wl.name} (我的副本)`
-    const ok = await strategyStore.saveUserWatchlist(copyName, '基于官方模板定制', newSymbols)
-    if (ok) {
-      activeWatchlistName.value = copyName
-      showToast(`⭐ 已复制为个人组合「${copyName}」并添加标的！`)
-    }
-  } else {
-    // 用户自定义组合：调用追加接口
-    const ok = await marketStore.addSymbolToWatchlist(wl.id!, sym)
-    if (ok) {
-      showToast(`✅ 已向「${wl.name}」添加标的 ${sym}`)
-      loadWatchlistQuotes()
-    }
+  if (!wl) {
+    showToast('⚠️ 请先选择或创建一个自选组合')
+    return
+  }
+  const ok = await marketStore.addSymbolToWatchlist(wl.id, sym)
+  if (ok) {
+    showToast(`✅ 已向「${wl.name}」添加标的 ${sym}`)
+    loadWatchlistQuotes()
   }
   inputAddSymbol.value = ''
 }
@@ -140,11 +141,8 @@ async function handleAddSymbolToCurrent() {
 // 从当前组合移除标的
 async function handleRemoveSymbolFromCurrent(sym: string) {
   const wl = currentWatchlist.value
-  if (wl.isPreset) {
-    showToast('⚠️ 官方经典配置池为系统基准，不可直接修改。请点击「存为我的组合」进行定制！')
-    return
-  }
-  const ok = await marketStore.removeSymbolFromWatchlist(wl.id!, sym)
+  if (!wl) return
+  const ok = await marketStore.removeSymbolFromWatchlist(wl.id, sym)
   if (ok) {
     showToast(`已从「${wl.name}」移除标的 ${sym}`)
     loadWatchlistQuotes()
@@ -154,12 +152,12 @@ async function handleRemoveSymbolFromCurrent(sym: string) {
 // 删除自定义组合
 async function handleDeleteCurrentWatchlist() {
   const wl = currentWatchlist.value
-  if (wl.isPreset) return
+  if (!wl) return
   if (confirm(`确认删除自选组合「${wl.name}」吗？`)) {
     const ok = await strategyStore.deleteUserWatchlist(wl.id!)
     if (ok) {
       showToast(`🗑️ 已删除组合「${wl.name}」`)
-      activeWatchlistName.value = PRESET_WATCHLISTS[0].name
+      activeWatchlistName.value = strategyStore.userWatchlists[0]?.name || ''
     }
   }
 }
@@ -191,14 +189,16 @@ async function confirmCreateWatchlist() {
 
 // 一键唤起悬浮工作舱并以当前组合发起回测
 function runBacktestWithWatchlist() {
-  const symbols = currentWatchlist.value.symbols
+  const wl = currentWatchlist.value
+  if (!wl) return
+  const symbols = wl.symbols
   if (!symbols || symbols.length === 0) return
   strategyStore.openBacktestCockpit({
     symbols: [...symbols],
     mode: 'basket',
     autoRun: true,
   })
-  showToast(`⚡ 已唤起回测工作舱并载入组合「${currentWatchlist.value.name}」(${symbols.length}只标的)！`)
+  showToast(`⚡ 已唤起回测工作舱并载入组合「${wl.name}」(${symbols.length}只标的)！`)
 }
 
 // 持仓管理计算
@@ -345,46 +345,34 @@ function syncHoldingsToBacktest() {
           </button>
         </div>
 
-        <!-- 组合导航卡片列表 -->
+        <!-- 组合导航卡片列表 (纯真实用户自定义) -->
         <div class="space-y-2">
-          <!-- 官方经典配置池 -->
-          <div class="text-[10px] text-zinc-500 font-bold uppercase tracking-wider px-1 pt-1">
-            🏛️ 机构经典配置组合
-          </div>
-          <div
-            v-for="wl in PRESET_WATCHLISTS"
-            :key="wl.name"
-            @click="selectWatchlist(wl.name)"
-            :class="activeWatchlistName === wl.name ? 'bg-blue-500/15 border-blue-500/40 text-white' : 'bg-white/[0.02] hover:bg-white/[0.04] border-white/[0.06] text-zinc-300'"
-            class="p-3 rounded-xl border transition-all cursor-pointer space-y-1 group"
-          >
-            <div class="flex items-center justify-between">
-              <span class="font-bold text-xs group-hover:text-blue-300 transition-colors">{{ wl.name }}</span>
-              <span class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-white/[0.06] text-zinc-400">
-                {{ wl.symbols.length }}标的
-              </span>
-            </div>
-            <div class="text-[10px] text-zinc-500 truncate">{{ wl.description }}</div>
+          <div class="text-[10px] text-zinc-500 font-bold uppercase tracking-wider px-1 pt-1 flex items-center justify-between">
+            <span>⭐ 我的自定义组合</span>
+            <span class="font-mono text-zinc-400">{{ strategyStore.userWatchlists.length }} 个</span>
           </div>
 
-          <!-- 用户自定义组合 -->
-          <div class="text-[10px] text-zinc-500 font-bold uppercase tracking-wider px-1 pt-2">
-            ⭐ 我的自定义组合 ({{ strategyStore.userWatchlists.length }})
-          </div>
-          <div
-            v-for="wl in strategyStore.userWatchlists"
-            :key="wl.id"
-            @click="selectWatchlist(wl.name)"
-            :class="activeWatchlistName === wl.name ? 'bg-amber-500/15 border-amber-500/40 text-white' : 'bg-white/[0.02] hover:bg-white/[0.04] border-white/[0.06] text-zinc-300'"
-            class="p-3 rounded-xl border transition-all cursor-pointer space-y-1 group"
-          >
-            <div class="flex items-center justify-between">
-              <span class="font-bold text-xs group-hover:text-amber-300 transition-colors">{{ wl.name }}</span>
-              <span class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-white/[0.06] text-zinc-400">
-                {{ wl.symbols.length }}标的
-              </span>
+          <div v-if="strategyStore.userWatchlists.length > 0" class="space-y-2">
+            <div
+              v-for="wl in strategyStore.userWatchlists"
+              :key="wl.id"
+              @click="selectWatchlist(wl.name)"
+              :class="activeWatchlistName === wl.name ? 'bg-amber-500/15 border-amber-500/40 text-white' : 'bg-white/[0.02] hover:bg-white/[0.04] border-white/[0.06] text-zinc-300'"
+              class="p-3 rounded-xl border transition-all cursor-pointer space-y-1 group"
+            >
+              <div class="flex items-center justify-between">
+                <span class="font-bold text-xs group-hover:text-amber-300 transition-colors">{{ wl.name }}</span>
+                <span class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-white/[0.06] text-zinc-400">
+                  {{ wl.symbols.length }}标的
+                </span>
+              </div>
+              <div class="text-[10px] text-zinc-500 truncate">{{ wl.description || wl.symbols.join(', ') }}</div>
             </div>
-            <div class="text-[10px] text-zinc-500 truncate">{{ wl.description || '自定义自选策略股票池' }}</div>
+          </div>
+          <div v-else class="p-6 text-center space-y-2 bg-white/[0.01] rounded-xl border border-dashed border-white/[0.08]">
+            <div class="text-2xl">📭</div>
+            <div class="text-xs text-zinc-400 font-medium">暂无自定义组合</div>
+            <div class="text-[11px] text-zinc-500">点击上方「+ 新建组合」添加专属股票配置池</div>
           </div>
         </div>
       </div>
@@ -392,16 +380,16 @@ function syncHoldingsToBacktest() {
       <!-- 右侧：当前组合标的大盘与行情报盘 -->
       <div class="lg:col-span-3 space-y-4">
         <!-- 组合头部工具条 -->
-        <div class="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.08] flex flex-wrap items-center justify-between gap-3">
+        <div v-if="currentWatchlist" class="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.08] flex flex-wrap items-center justify-between gap-3">
           <div>
             <div class="flex items-center space-x-2">
               <h2 class="text-base font-bold text-white">{{ currentWatchlist.name }}</h2>
-              <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="currentWatchlist.isPreset ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'">
-                {{ currentWatchlist.isPreset ? '官方策略池' : '个人自选池' }}
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                个人自选池
               </span>
               <span class="text-xs text-zinc-400 font-mono">共 {{ currentWatchlist.symbols.length }} 只标的</span>
             </div>
-            <p class="text-xs text-zinc-400 mt-1">{{ currentWatchlist.description }}</p>
+            <p class="text-xs text-zinc-400 mt-1">{{ currentWatchlist.description || '无附加描述' }}</p>
           </div>
 
           <!-- 右侧动作按钮 -->
@@ -417,7 +405,6 @@ function syncHoldingsToBacktest() {
 
             <!-- 删除自定义组合 -->
             <button
-              v-if="!currentWatchlist.isPreset"
               @click="handleDeleteCurrentWatchlist"
               class="px-2.5 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs transition-colors cursor-pointer"
               title="删除此组合"
@@ -427,138 +414,150 @@ function syncHoldingsToBacktest() {
           </div>
         </div>
 
-        <!-- 组合内快捷添加标的输入栏 -->
-        <div class="flex items-center space-x-2 p-3 rounded-xl bg-black/40 border border-white/[0.08]">
-          <span class="text-xs text-zinc-400 font-medium shrink-0">➕ 向本组合追加标的:</span>
-          <input
-            v-model="inputAddSymbol"
-            @keydown.enter="handleAddSymbolToCurrent"
-            type="text"
-            placeholder="输入股票/ETF代码 (如 600519、510300、300750，回车直接添加)..."
-            class="flex-1 bg-transparent text-xs text-white placeholder-zinc-500 focus:outline-none font-mono"
-          />
-          <button
-            @click="handleAddSymbolToCurrent"
-            :disabled="!inputAddSymbol.trim()"
-            class="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-bold text-xs transition-colors cursor-pointer"
-          >
-            添加
-          </button>
-        </div>
-
-        <!-- 标的行情表格 (Quote Grid) -->
-        <div class="rounded-2xl border border-white/[0.08] overflow-hidden bg-white/[0.01]">
-          <div v-if="isQuotesLoading" class="p-8 text-center text-zinc-400 space-y-2">
-            <div class="w-6 h-6 border-2 border-red-500/30 border-t-red-500 rounded-full animate-spin mx-auto"></div>
-            <span class="text-xs font-mono">正在拉取组合内标的的实时盘口数据...</span>
+        <template v-if="currentWatchlist">
+          <!-- 组合内快捷添加标的输入栏 -->
+          <div class="flex items-center space-x-2 p-3 rounded-xl bg-black/40 border border-white/[0.08]">
+            <span class="text-xs text-zinc-400 font-medium shrink-0">➕ 向本组合追加标的:</span>
+            <input
+              v-model="inputAddSymbol"
+              @keydown.enter="handleAddSymbolToCurrent"
+              type="text"
+              placeholder="输入股票/ETF代码 (如 600519、510300、300750，回车直接添加)..."
+              class="flex-1 bg-transparent text-xs text-white placeholder-zinc-500 focus:outline-none font-mono"
+            />
+            <button
+              @click="handleAddSymbolToCurrent"
+              :disabled="!inputAddSymbol.trim()"
+              class="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-bold text-xs transition-colors cursor-pointer"
+            >
+              添加
+            </button>
           </div>
 
-          <table v-else class="w-full text-left font-mono text-xs">
-            <thead class="bg-white/[0.04] text-zinc-400 border-b border-white/[0.08] text-[11px]">
-              <tr>
-                <th class="p-3">标的代码</th>
-                <th class="p-3">标的名称</th>
-                <th class="p-3">市场/类型</th>
-                <th class="p-3 text-right">最新价</th>
-                <th class="p-3 text-right">今日涨跌幅</th>
-                <th class="p-3 text-right">最高 / 最低</th>
-                <th class="p-3 text-right">成交额</th>
-                <th class="p-3 text-center">操作</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-white/[0.04]">
-              <tr
-                v-for="sym in currentWatchlist.symbols"
-                :key="sym"
-                class="hover:bg-white/[0.03] transition-colors group"
-              >
-                <!-- 代码 -->
-                <td class="p-3">
-                  <span
-                    @click="router.push(`/symbol/${encodeURIComponent(sym)}`)"
-                    class="font-bold text-amber-300 hover:underline cursor-pointer"
-                  >
-                    {{ sym }}
-                  </span>
-                </td>
+          <!-- 标的行情表格 (Quote Grid) -->
+          <div class="rounded-2xl border border-white/[0.08] overflow-hidden bg-white/[0.01]">
+            <div v-if="isQuotesLoading" class="p-8 text-center text-zinc-400 space-y-2">
+              <div class="w-6 h-6 border-2 border-red-500/30 border-t-red-500 rounded-full animate-spin mx-auto"></div>
+              <span class="text-xs font-mono">正在拉取组合内标的的实时盘口数据...</span>
+            </div>
 
-                <!-- 名称 -->
-                <td class="p-3">
-                  <span
-                    @click="router.push(`/symbol/${encodeURIComponent(sym)}`)"
-                    class="font-sans font-semibold text-white hover:text-red-400 cursor-pointer transition-colors"
-                  >
-                    {{ watchlistSymbolsQuotes[sym]?.name || sym.split('.')[0] }}
-                  </span>
-                </td>
-
-                <!-- 市场/类型 -->
-                <td class="p-3">
-                  <span class="px-1.5 py-0.5 rounded text-[10px] bg-white/[0.06] text-zinc-300 border border-white/[0.08] mr-1">
-                    {{ watchlistSymbolsQuotes[sym]?.market || sym.split('.')[1] || 'SH' }}
-                  </span>
-                  <span class="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/15 text-blue-300 border border-blue-500/20">
-                    {{ watchlistSymbolsQuotes[sym]?.asset_type || (sym.includes('ETF') ? 'ETF' : 'STK') }}
-                  </span>
-                </td>
-
-                <!-- 最新价 -->
-                <td class="p-3 text-right font-bold text-white">
-                  ¥{{ watchlistSymbolsQuotes[sym]?.latest_price !== undefined && watchlistSymbolsQuotes[sym]?.latest_price !== null ? watchlistSymbolsQuotes[sym].latest_price?.toFixed(watchlistSymbolsQuotes[sym].latest_price! > 10 ? 2 : 3) : '--' }}
-                </td>
-
-                <!-- 涨跌幅 -->
-                <td class="p-3 text-right font-bold">
-                  <span
-                    v-if="watchlistSymbolsQuotes[sym]?.pct_change !== undefined && watchlistSymbolsQuotes[sym]?.pct_change !== null"
-                    :class="watchlistSymbolsQuotes[sym].pct_change! >= 0 ? 'text-red-400' : 'text-emerald-400'"
-                  >
-                    {{ watchlistSymbolsQuotes[sym].pct_change! >= 0 ? '+' : '' }}{{ watchlistSymbolsQuotes[sym].pct_change }}%
-                  </span>
-                  <span v-else class="text-zinc-500">--</span>
-                </td>
-
-                <!-- 最高 / 最低 -->
-                <td class="p-3 text-right text-zinc-400 text-[11px]">
-                  <span class="text-red-400">¥{{ watchlistSymbolsQuotes[sym]?.high || '--' }}</span>
-                  <span class="mx-1 text-zinc-600">/</span>
-                  <span class="text-emerald-400">¥{{ watchlistSymbolsQuotes[sym]?.low || '--' }}</span>
-                </td>
-
-                <!-- 成交额 -->
-                <td class="p-3 text-right text-zinc-300 text-[11px]">
-                  {{ watchlistSymbolsQuotes[sym]?.amount ? (watchlistSymbolsQuotes[sym].amount! / 100000000).toFixed(2) + '亿' : '--' }}
-                </td>
-
-                <!-- 操作按钮 -->
-                <td class="p-3 text-center">
-                  <div class="flex items-center justify-center space-x-1.5">
-                    <button
+            <table v-else class="w-full text-left font-mono text-xs">
+              <thead class="bg-white/[0.04] text-zinc-400 border-b border-white/[0.08] text-[11px]">
+                <tr>
+                  <th class="p-3">标的代码</th>
+                  <th class="p-3">标的名称</th>
+                  <th class="p-3">市场/类型</th>
+                  <th class="p-3 text-right">最新价</th>
+                  <th class="p-3 text-right">今日涨跌幅</th>
+                  <th class="p-3 text-right">最高 / 最低</th>
+                  <th class="p-3 text-right">成交额</th>
+                  <th class="p-3 text-center">操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-white/[0.04]">
+                <tr
+                  v-for="sym in currentWatchlist.symbols"
+                  :key="sym"
+                  class="hover:bg-white/[0.03] transition-colors group"
+                >
+                  <!-- 代码 -->
+                  <td class="p-3">
+                    <span
                       @click="router.push(`/symbol/${encodeURIComponent(sym)}`)"
-                      class="px-2 py-1 rounded bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-colors text-[11px] cursor-pointer"
-                      title="查看K线详情"
+                      class="font-bold text-amber-300 hover:underline cursor-pointer"
                     >
-                      👁️ K线
-                    </button>
-                    <button
-                      @click="strategyStore.openBacktestCockpit({ symbol: sym, mode: 'single', autoRun: true }); showToast(`⚡ 已唤起回测工作舱测试 ${sym}`)"
-                      class="px-2 py-1 rounded bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 transition-colors text-[11px] cursor-pointer"
-                      title="以此标的立即运行回测"
+                      {{ sym }}
+                    </span>
+                  </td>
+
+                  <!-- 名称 -->
+                  <td class="p-3">
+                    <span
+                      @click="router.push(`/symbol/${encodeURIComponent(sym)}`)"
+                      class="font-sans font-semibold text-white hover:text-red-400 cursor-pointer transition-colors"
                     >
-                      ⚡ 回测
-                    </button>
-                    <button
-                      @click="handleRemoveSymbolFromCurrent(sym)"
-                      class="px-1.5 py-1 rounded hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-colors text-xs cursor-pointer"
-                      title="从组合中移除"
+                      {{ watchlistSymbolsQuotes[sym]?.name || sym.split('.')[0] }}
+                    </span>
+                  </td>
+
+                  <!-- 市场/类型 -->
+                  <td class="p-3">
+                    <span class="px-1.5 py-0.5 rounded text-[10px] bg-white/[0.06] text-zinc-300 border border-white/[0.08] mr-1">
+                      {{ watchlistSymbolsQuotes[sym]?.market || sym.split('.')[1] || 'SH' }}
+                    </span>
+                    <span class="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/15 text-blue-300 border border-blue-500/20">
+                      {{ watchlistSymbolsQuotes[sym]?.asset_type || (sym.includes('ETF') ? 'ETF' : 'STK') }}
+                    </span>
+                  </td>
+
+                  <!-- 最新价 -->
+                  <td class="p-3 text-right font-bold text-white">
+                    ¥{{ watchlistSymbolsQuotes[sym]?.latest_price !== undefined && watchlistSymbolsQuotes[sym]?.latest_price !== null ? watchlistSymbolsQuotes[sym].latest_price?.toFixed(watchlistSymbolsQuotes[sym].latest_price! > 10 ? 2 : 3) : '--' }}
+                  </td>
+
+                  <!-- 涨跌幅 -->
+                  <td class="p-3 text-right font-bold">
+                    <span
+                      v-if="watchlistSymbolsQuotes[sym]?.pct_change !== undefined"
+                      :class="(watchlistSymbolsQuotes[sym]?.pct_change || 0) >= 0 ? 'text-red-400' : 'text-emerald-400'"
                     >
-                      ✕
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                      {{ (watchlistSymbolsQuotes[sym]?.pct_change || 0) >= 0 ? '+' : '' }}{{ ((watchlistSymbolsQuotes[sym]?.pct_change || 0) * 100).toFixed(2) }}%
+                    </span>
+                    <span v-else class="text-zinc-500">--</span>
+                  </td>
+
+                  <!-- 最高 / 最低 -->
+                  <td class="p-3 text-right text-zinc-400">
+                    {{ watchlistSymbolsQuotes[sym]?.high?.toFixed(2) || '--' }} / {{ watchlistSymbolsQuotes[sym]?.low?.toFixed(2) || '--' }}
+                  </td>
+
+                  <!-- 成交额 -->
+                  <td class="p-3 text-right text-zinc-300">
+                    {{ watchlistSymbolsQuotes[sym]?.amount ? `¥${(watchlistSymbolsQuotes[sym].amount! / 100000000).toFixed(2)}亿` : '--' }}
+                  </td>
+
+                  <!-- 操作动作 -->
+                  <td class="p-3 text-center">
+                    <div class="flex items-center justify-center space-x-1.5">
+                      <button
+                        @click="router.push(`/symbol/${encodeURIComponent(sym)}`)"
+                        class="px-2 py-1 rounded bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-colors text-[11px] cursor-pointer"
+                        title="查看独立 K 线详情"
+                      >
+                        👁️ K线
+                      </button>
+                      <button
+                        @click="strategyStore.openBacktestCockpit({ symbol: sym, mode: 'single', autoRun: true }); showToast(`⚡ 已唤起回测工作舱测试 ${sym}`)"
+                        class="px-2 py-1 rounded bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 transition-colors text-[11px] cursor-pointer"
+                        title="以此标的立即运行回测"
+                      >
+                        ⚡ 回测
+                      </button>
+                      <button
+                        @click="handleRemoveSymbolFromCurrent(sym)"
+                        class="px-1.5 py-1 rounded hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-colors text-xs cursor-pointer"
+                        title="从组合中移除"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
+
+        <div v-else class="p-12 text-center space-y-3 bg-white/[0.01] rounded-2xl border border-white/[0.08]">
+          <div class="text-3xl">📁</div>
+          <div class="text-sm font-bold text-white">暂未选择或创建组合</div>
+          <div class="text-xs text-zinc-400">请点击左侧「新建组合」创建一个专属策略股票池，或从搜索栏添加标的</div>
+          <button
+            @click="showCreateModal = true"
+            class="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs font-bold shadow-lg shadow-blue-500/20 cursor-pointer"
+          >
+            ＋ 立即新建策略组合
+          </button>
         </div>
       </div>
     </div>

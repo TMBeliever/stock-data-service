@@ -38,13 +38,17 @@ services:
       - COMMON_SERVER_URL=http://common-server:8090
       - STOCK_DATA_DIR=/app/packages/stock-data
       - WORKSPACE_ROOT=/app
+      # 宿主机项目根路径（docker compose 命令需要用到）
+      - HOST_PROJECT_ROOT=${HOST_PROJECT_ROOT:-/root/quant-system}
     volumes:
       # 核心：挂载宿主机 Docker 套接字，允许 Agent 实时调度宿主机 Docker Daemon
       - /var/run/docker.sock:/var/run/docker.sock
       # 会话历史树与挂载项目持久化卷
       - agent_workspace_storage:/app/data
-      # 挂载宿主机家目录，支持免路径全自动探测各类量化与代码工程
+      # 挂载宿主机 /home 目录，支持普通用户部署工程探测
       - /home:/host_home:ro
+      # 挂载宿主机 /root 目录，支持 root 用户部署工程探测（只读）
+      - /root:/host_root:ro
     depends_on:
       - ai-core
       - quant-server

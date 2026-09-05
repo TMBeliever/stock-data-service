@@ -226,6 +226,7 @@ class BaseAgent:
             history.append(Message.tool_result(tool_call_id=tc.id, content=truncated_result, name=tc.name))
 
         step = 0
+        consecutive_errors = 0  # 连续失败熏断器
 
         # 0. 优先分支：用户显式授权了上一轮被挂起的特定工具调用，直接执行它并推进后续 ReAct 循环
         if approved_tool_call and approved_tool_call.get("name"):
@@ -346,6 +347,31 @@ class BaseAgent:
                 for tc in parsed_calls:
                     async for ev in _execute_and_stream_tool(tc, step):
                         yield ev
+
+                # 工具返回结果分析：连续失败熏断
+                last_tool_msgs = [m for m in history if m.role == "tool"]
+                if last_tool_msgs:
+                    last_result = last_tool_msgs[-1].content or ""
+                    # 检测失败关键词
+                    is_error = any(kw in last_result for kw in [
+                        "Error", "error", "failed", "denied", "not found", "No such", "cannot", "失败", "异常"
+                    ])
+                    if is_error:
+                        consecutive_errors += 1
+                    else:
+                        consecutive_errors = 0  # 成功则清零
+
+                    if consecutive_errors >= 3:
+                        error_summary = last_result[:400]
+                        yield {
+                            "event": "message",
+                            "data": json.dumps({
+                                "delta": f"\n\n> ⚠️ **连续工具调用失败 (3次)**，已中断重试。\n\n**最近错误**：\n```\n{error_summary}\n```\n\n请检查运行环境或提供更多上下文。",
+                                "role": "assistant"
+                            }, ensure_ascii=False)
+                        }
+                        yield {"event": "done", "data": json.dumps({"status": "finished"})}
+                        return
 
                 # 继续下一轮 ReAct 思考与综合
                 continue

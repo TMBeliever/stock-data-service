@@ -368,6 +368,14 @@ async def admin_docker_manage(action: str, args: str = "", on_progress: Optional
         return f"Error: 不支持的 Docker 动作 '{action}'。支持列表: {list(action_map.keys())}"
 
     command = action_map[action].strip()
+
+    # compose 类命令需在宿主机项目目录下运行（容器内无法找到 docker-compose.prod.yml）
+    if action.startswith("compose"):
+        host_root = os.getenv("HOST_PROJECT_ROOT", "").strip()
+        if host_root and host_root != agent_config.WORKSPACE_ROOT:
+            # 切换到宿主机项目目录执行 compose 命令
+            command = f"cd {host_root} && {command}"
+
     return await admin_execute_shell(command=command, timeout=120, on_progress=on_progress)
 
 # ==========================================

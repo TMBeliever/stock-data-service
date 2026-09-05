@@ -333,6 +333,8 @@ class WorkspaceManager:
         ]
         if Path("/host_home").exists():
             quick_roots.append({"name": "宿主机用户目录 (/host_home)", "path": "/host_home", "icon": "🖥️"})
+        if Path("/host_root").exists():
+            quick_roots.append({"name": "宿主机 root 目录 (/host_root)", "path": "/host_root", "icon": "🔑"})
         if Path("/data").exists():
             quick_roots.append({"name": "数据目录 (/data)", "path": "/data", "icon": "💾"})
 
@@ -485,7 +487,7 @@ class WorkspaceManager:
         except Exception:
             pass
 
-        for sys_path in ["/host_home", "/data", "/data/projects", "/opt/projects", "/var/www"]:
+        for sys_path in ["/host_home", "/host_root", "/data", "/data/projects", "/opt/projects", "/var/www"]:
             p = Path(sys_path)
             if p.exists() and p.is_dir():
                 candidate_roots.append(p)

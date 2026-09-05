@@ -225,6 +225,7 @@ function applyCodeToEditor(code: string) {
 // 简约风工具链展示 (Minimalist Toolchain Accordion) 状态与方法
 // -------------------------------------------------------------
 const expandedToolchains = ref<Record<string, boolean>>({})
+const autoExpandedToolchains = ref<Set<string>>(new Set()) // 记录已经自动展开过的消息，防止重复触发
 const expandedPreviews = ref<Record<string, boolean>>({})
 
 function toggleToolchain(msgId: string) {
@@ -236,11 +237,18 @@ function isToolchainExpandedById(msgId: string): boolean {
 }
 
 function isToolchainExpanded(msg: any): boolean {
+  // 用户手动操作过一次，以用户选择为准（防闪烁）
   if (expandedToolchains.value[msg.id] !== undefined) {
     return expandedToolchains.value[msg.id]
   }
-  // 正在推演且有未完成工具时，默认展开给予实时反馈；推演完成后默认折叠保持界面极简
-  return hasRunningTools(msg)
+  // 未手动操作时：有工具运行中 → 自动展开一次（并记录）
+  if (hasRunningTools(msg) && !autoExpandedToolchains.value.has(msg.id)) {
+    autoExpandedToolchains.value.add(msg.id)
+    expandedToolchains.value[msg.id] = true
+    return true
+  }
+  // 默认收起
+  return false
 }
 
 function togglePreview(tcId: string) {

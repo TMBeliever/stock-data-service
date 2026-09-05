@@ -750,8 +750,9 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
       let currentEventType = 'message'
+      let streamDone = false
 
-      while (true) {
+      streamLoop: while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
@@ -773,7 +774,11 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
 
           if (trimmed.startsWith('data:')) {
             const rawData = trimmed.slice(5).trim()
-            if (rawData === '[DONE]' || currentEventType === 'done') break
+            // ✅ 修复：done 事件必须跳出外层 while，否则会继续阻塞等待下一个 chunk
+            if (rawData === '[DONE]' || currentEventType === 'done') {
+              streamDone = true
+              break streamLoop
+            }
 
             try {
               if (currentEventType === 'thought') {
@@ -805,7 +810,7 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
                 }
               } else if (currentEventType === 'tool_progress') {
                 const prog = JSON.parse(rawData)
-                let t = assistantMsg.toolCalls?.find((x) => x.id === prog.id)
+                const t = assistantMsg.toolCalls?.find((x) => x.id === prog.id)
                 if (t) {
                   t.liveOutput = (t.liveOutput || '') + (prog.delta || '')
                   t.outputPreview = t.liveOutput
@@ -843,7 +848,7 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
                   t.outputPreview = res.output_preview || t.liveOutput
                 }
               } else if (currentEventType === 'ping') {
-                // 保活驻守心跳
+                // 保活驻守心跳，忽略
               }
             } catch {
               if (currentEventType === 'message') {

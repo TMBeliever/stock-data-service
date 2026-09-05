@@ -12,6 +12,13 @@ export interface AiToolCall {
   step?: number
 }
 
+export interface AgentStep {
+  step: number
+  thought?: string
+  toolCalls: AiToolCall[]
+  status: 'running' | 'done'
+}
+
 export interface AiChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -20,6 +27,7 @@ export interface AiChatMessage {
   codeBlock?: string
   pageContext?: string
   toolCalls?: AiToolCall[]
+  steps?: AgentStep[]
 }
 
 export interface QuickPrompt {
@@ -233,6 +241,8 @@ ${contextSnippet}`
       content: '',
       timestamp: Date.now(),
       pageContext: currentRoutePath,
+      toolCalls: [],
+      steps: [],
     }
     messages.value.push(assistantMsg)
     isStreaming.value = true
@@ -289,36 +299,71 @@ ${contextSnippet}`
             }
 
             try {
-              if (currentEventType === 'tool_call') {
+              if (currentEventType === 'thought') {
+                const th = JSON.parse(rawData)
+                const stepNum = th.step || 1
+                let stepObj = assistantMsg.steps?.find((s) => s.step === stepNum)
+                if (!stepObj) {
+                  stepObj = {
+                    step: stepNum,
+                    thought: th.thought,
+                    toolCalls: [],
+                    status: 'running',
+                  }
+                  assistantMsg.steps?.push(stepObj)
+                } else {
+                  stepObj.thought = th.thought
+                }
+              } else if (currentEventType === 'tool_call') {
                 const call = JSON.parse(rawData)
-                if (!assistantMsg.toolCalls) assistantMsg.toolCalls = []
-                const existing = assistantMsg.toolCalls.find((t) => t.id === call.id)
-                if (!existing) {
-                  assistantMsg.toolCalls.push({
-                    id: call.id,
-                    name: call.name,
-                    arguments: call.arguments,
-                    status: 'calling',
-                    step: call.step,
-                  })
+                const stepNum = call.step || 1
+                let stepObj = assistantMsg.steps?.find((s) => s.step === stepNum)
+                if (!stepObj) {
+                  stepObj = {
+                    step: stepNum,
+                    toolCalls: [],
+                    status: 'running',
+                  }
+                  assistantMsg.steps?.push(stepObj)
+                }
+
+                const toolItem: AiToolCall = {
+                  id: call.id,
+                  name: call.name,
+                  arguments: call.arguments,
+                  status: 'calling',
+                  step: stepNum,
+                }
+
+                if (!stepObj.toolCalls.find((t) => t.id === call.id)) {
+                  stepObj.toolCalls.push(toolItem)
+                }
+                if (!assistantMsg.toolCalls?.find((t) => t.id === call.id)) {
+                  assistantMsg.toolCalls?.push(toolItem)
                 }
               } else if (currentEventType === 'tool_result') {
                 const res = JSON.parse(rawData)
-                if (!assistantMsg.toolCalls) assistantMsg.toolCalls = []
-                const existing = assistantMsg.toolCalls.find((t) => t.id === res.id)
-                if (existing) {
-                  existing.status = 'done'
-                  existing.outputPreview = res.output_preview
-                } else {
-                  assistantMsg.toolCalls.push({
-                    id: res.id,
-                    name: res.name,
-                    outputPreview: res.output_preview,
-                    status: 'done',
-                    step: res.step,
-                  })
+                const stepNum = res.step || 1
+                const stepObj = assistantMsg.steps?.find((s) => s.step === stepNum)
+                if (stepObj) {
+                  const t = stepObj.toolCalls.find((x) => x.id === res.id)
+                  if (t) {
+                    t.status = 'done'
+                    t.outputPreview = res.output_preview
+                  }
+                }
+                const t2 = assistantMsg.toolCalls?.find((x) => x.id === res.id)
+                if (t2) {
+                  t2.status = 'done'
+                  t2.outputPreview = res.output_preview
                 }
               } else if (currentEventType === 'message') {
+                // 收到消息正文时，将前面的步骤标记为已完成
+                if (assistantMsg.steps) {
+                  for (const s of assistantMsg.steps) {
+                    s.status = 'done'
+                  }
+                }
                 const parsed = JSON.parse(rawData)
                 if (parsed.delta) {
                   assistantMsg.content += parsed.delta

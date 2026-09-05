@@ -133,8 +133,27 @@ class BaseAgent:
                 # 记录 assistant 发起的 tool_calls
                 history.append(Message.assistant(content=resp_content, tool_calls=parsed_calls))
 
+                # 5.0 提取或生成本步骤的思考 (Thought)
+                step_thought = resp_content.strip() if resp_content else ""
+                if not step_thought:
+                    tool_descs = []
+                    for tc in parsed_calls:
+                        t_obj = self.tool_registry.get_tool(tc.name)
+                        desc = t_obj.description.strip().split('\n')[0] if t_obj else tc.name
+                        tool_descs.append(f"【{desc}】")
+                    step_thought = f"正在推进第 {step} 步推演：调用 {'、'.join(tool_descs)} 采集关键数据与指标。"
+
+                # 5.1 推送 thought 思考事件
+                yield {
+                    "event": "thought",
+                    "data": json.dumps({
+                        "step": step,
+                        "thought": step_thought
+                    }, ensure_ascii=False)
+                }
+
                 for tc in parsed_calls:
-                    # 5.1 推送 tool_call 开始事件
+                    # 5.2 推送 tool_call 开始事件
                     yield {
                         "event": "tool_call",
                         "data": json.dumps({
@@ -145,16 +164,16 @@ class BaseAgent:
                         }, ensure_ascii=False)
                     }
 
-                    # 5.2 执行工具
+                    # 5.3 执行工具
                     try:
                         raw_result = await self.tool_registry.execute(tc.name, tc.arguments)
                     except Exception as e:
                         raw_result = f"Error executing tool '{tc.name}': {str(e)}"
 
-                    # 5.3 通过 TokenGovernor 进行 Observation 观察截断保护
+                    # 5.4 通过 TokenGovernor 进行 Observation 观察截断保护
                     truncated_result = self.token_governor.truncate_observation(raw_result)
 
-                    # 5.4 推送 tool_result 完成事件
+                    # 5.5 推送 tool_result 完成事件
                     preview = truncated_result[:300] if len(truncated_result) > 300 else truncated_result
                     yield {
                         "event": "tool_result",
@@ -166,7 +185,7 @@ class BaseAgent:
                         }, ensure_ascii=False)
                     }
 
-                    # 5.5 结果作为 tool 消息压入历史
+                    # 5.6 结果作为 tool 消息压入历史
                     history.append(Message.tool_result(tool_call_id=tc.id, content=truncated_result, name=tc.name))
 
                 # 继续下一轮 ReAct 思考与综合
@@ -174,6 +193,15 @@ class BaseAgent:
 
             # 6. 分支 B: 模型未调用工具，输出了最终回答
             if resp_content:
+                # 若经历过多步工具调用，在输出正文前先发送就绪通知
+                if step > 1:
+                    yield {
+                        "event": "thought",
+                        "data": json.dumps({
+                            "step": step,
+                            "thought": "多维数据均已采集齐备，正在综合基本面、技术面与估值体系生成专业量化报告..."
+                        }, ensure_ascii=False)
+                    }
                 # 分段逐块平滑推送最终文本
                 chunk_size = 12
                 for i in range(0, len(resp_content), chunk_size):

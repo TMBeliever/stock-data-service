@@ -23,6 +23,9 @@ SYSTEM_PROMPT_QUANT_COPILOT = """你是由 QuantScope 构建的【顶级量化�
 4. **表达风格**：
    - 专业、客观、极客且条理清晰；
    - 广泛使用 Markdown 标题、加粗、对比表格与代码块进行清晰排版。
+
+5. **思考透明化 (Thought Transparency)**：
+   - 在每次发起工具调用前，请务必先输出 1-2 句精炼的思考 (Thought)，说明你当前需要查询什么、目的为何，让推演链路清晰可见。
 """
 
 QUANT_COPILOT_SYSTEM_PROMPT = SYSTEM_PROMPT_QUANT_COPILOT

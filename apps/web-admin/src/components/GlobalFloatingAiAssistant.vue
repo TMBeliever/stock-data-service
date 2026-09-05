@@ -108,6 +108,20 @@ function formatToolArgs(args?: Record<string, any>) {
     .join(', ')
 }
 
+// 思考与工具推演折叠面板状态管理 (默认展开)
+const trajectoryOpenMap = ref<Record<string, boolean>>({})
+
+function isTrajectoryOpen(msgId: string): boolean {
+  if (trajectoryOpenMap.value[msgId] === undefined) {
+    return true // 默认展开，便于直观审计
+  }
+  return trajectoryOpenMap.value[msgId]
+}
+
+function toggleTrajectory(msgId: string) {
+  trajectoryOpenMap.value[msgId] = !isTrajectoryOpen(msgId)
+}
+
 // 切换模型处理
 function handleSelectModel(modelKey: 'gemini-flash-lite-latest' | 'claude') {
   if (modelKey === 'claude') {
@@ -513,116 +527,186 @@ onUnmounted(() => {
             <span>{{ new Date(msg.timestamp).toLocaleTimeString() }}</span>
           </div>
 
-          <!-- 当 AI 刚响应、内容尚未吐出时：展示 Loading 小机器人卡片与工具执行状态 -->
+          <!-- 当 AI 刚响应、内容尚未吐出且没有步骤时：展示初始 Loading 小机器人卡片 -->
           <div
-            v-if="msg.role === 'assistant' && (!msg.content || !msg.content.trim())"
-            class="p-3.5 bg-[#171922]/90 border border-amber-500/25 rounded-2xl rounded-tl-sm shadow-xl flex flex-col space-y-2.5 backdrop-blur-md self-start max-w-full w-full"
+            v-if="msg.role === 'assistant' && (!msg.content || !msg.content.trim()) && (!msg.steps || msg.steps.length === 0)"
+            class="p-3.5 bg-[#171922]/90 border border-amber-500/25 rounded-2xl rounded-tl-sm shadow-xl flex items-center space-x-3.5 backdrop-blur-md self-start max-w-full w-full"
           >
-            <div class="flex items-center space-x-3.5">
-              <!-- 小机器人动画主体 -->
-              <div class="relative shrink-0 flex items-center justify-center">
-                <div class="absolute -inset-1 rounded-full bg-gradient-to-r from-amber-500/30 to-orange-500/30 blur-sm animate-pulse"></div>
-                <div class="relative w-10 h-10 rounded-xl bg-gradient-to-b from-zinc-800 to-zinc-900 border border-amber-500/40 flex items-center justify-center text-xl shadow-lg robot-float">
-                  <span class="absolute -top-1 w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
-                  <span>🤖</span>
-                </div>
-              </div>
-
-              <!-- 思考状态文字与跳动粒子 -->
-              <div class="flex-1 min-w-0 space-y-1">
-                <div class="flex items-center space-x-2">
-                  <span class="text-xs font-semibold text-amber-300 tracking-wide">
-                    {{ msg.toolCalls && msg.toolCalls.length > 0 ? 'Quant Copilot 正在调用金融/量化工具链' : 'Quant Copilot 正在思考' }}
-                  </span>
-                  <span class="flex space-x-1 items-center">
-                    <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 0ms"></span>
-                    <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 150ms"></span>
-                    <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 300ms"></span>
-                  </span>
-                </div>
-                <div class="text-[11px] text-zinc-400 truncate flex items-center space-x-1.5">
-                  <span class="text-amber-500/80">⚡</span>
-                  <span>{{ msg.toolCalls && msg.toolCalls.length > 0 ? '正在连接金融中台 MCP 获取实时数据并执行验证...' : '正在检索量化语义树与因子逻辑，即将生成回复...' }}</span>
-                </div>
+            <!-- 小机器人动画主体 -->
+            <div class="relative shrink-0 flex items-center justify-center">
+              <div class="absolute -inset-1 rounded-full bg-gradient-to-r from-amber-500/30 to-orange-500/30 blur-sm animate-pulse"></div>
+              <div class="relative w-10 h-10 rounded-xl bg-gradient-to-b from-zinc-800 to-zinc-900 border border-amber-500/40 flex items-center justify-center text-xl shadow-lg robot-float">
+                <span class="absolute -top-1 w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
+                <span>🤖</span>
               </div>
             </div>
 
-            <!-- 工具执行动态卡片列表 (思考阶段) -->
-            <div v-if="msg.toolCalls && msg.toolCalls.length > 0" class="pt-2 border-t border-white/[0.06] space-y-1.5">
-              <div
-                v-for="tool in msg.toolCalls"
-                :key="tool.id"
-                class="px-2.5 py-1.5 rounded-xl border bg-black/40 text-[11px] font-mono flex items-center justify-between transition-all"
-                :class="tool.status === 'calling' ? 'border-amber-500/40 text-amber-300' : 'border-emerald-500/30 text-emerald-300'"
-              >
-                <div class="flex items-center space-x-1.5 truncate">
-                  <span class="text-xs">{{ getToolMeta(tool.name).icon }}</span>
-                  <span class="font-semibold text-zinc-200">{{ getToolMeta(tool.name).label }}</span>
-                  <span v-if="formatToolArgs(tool.arguments)" class="text-[10px] text-zinc-400 truncate max-w-[150px]">
-                    ({{ formatToolArgs(tool.arguments) }})
-                  </span>
-                </div>
-                <span
-                  class="text-[9px] px-1.5 py-0.5 rounded shrink-0 ml-1.5"
-                  :class="tool.status === 'calling' ? 'bg-amber-500/20 text-amber-300 animate-pulse' : 'bg-emerald-500/20 text-emerald-300'"
-                >
-                  {{ tool.status === 'calling' ? '⚡ 执行中...' : '✓ 完成' }}
+            <!-- 思考状态文字与跳动粒子 -->
+            <div class="flex-1 min-w-0 space-y-1">
+              <div class="flex items-center space-x-2">
+                <span class="text-xs font-semibold text-amber-300 tracking-wide">Quant Copilot 正在深度思考</span>
+                <span class="flex space-x-1 items-center">
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 0ms"></span>
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 150ms"></span>
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" style="animation-delay: 300ms"></span>
                 </span>
+              </div>
+              <div class="text-[11px] text-zinc-400 truncate flex items-center space-x-1.5">
+                <span class="text-amber-500/80">⚡</span>
+                <span>正在分析用户意图并检索量化语义链...</span>
               </div>
             </div>
           </div>
 
-          <!-- 正常有内容时的消息卡片 -->
+          <!-- 正常消息卡片 (包含用户提问与助手多步推演/正文) -->
           <div
             v-else
             :class="msg.role === 'user'
               ? 'bg-red-500/10 border border-red-500/20 text-zinc-100 self-end rounded-2xl rounded-tr-sm max-w-[90%]'
               : 'bg-white/[0.03] border border-white/[0.06] text-zinc-300 self-start rounded-2xl rounded-tl-sm w-full'"
-            class="p-3 leading-relaxed shadow-sm"
+            class="p-3 leading-relaxed shadow-sm space-y-2.5"
           >
-            <!-- 助手端：工具调用链路审计卡片 (Tool Calls Audit Strip) -->
+            <!-- 助手端：思考与工具链多步推演轨迹面板 (Agent Thought & Tool Trajectory Accordion) -->
             <div
-              v-if="msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0"
-              class="mb-3 space-y-1.5"
+              v-if="msg.role === 'assistant' && ((msg.steps && msg.steps.length > 0) || (msg.toolCalls && msg.toolCalls.length > 0))"
+              class="rounded-xl border border-white/[0.08] bg-black/40 overflow-hidden text-xs transition-all shadow-inner"
             >
-              <div class="text-[10px] text-zinc-400 font-mono flex items-center space-x-1.5 px-0.5">
-                <span class="text-amber-400">🔧</span>
-                <span class="font-semibold text-zinc-300">已调用的投研工具链 ({{ msg.toolCalls.length }})：</span>
-              </div>
+              <!-- 折叠标题栏 -->
               <div
-                v-for="tool in msg.toolCalls"
-                :key="tool.id"
-                class="rounded-xl border bg-black/40 text-[11px] font-mono overflow-hidden transition-all"
-                :class="tool.status === 'calling' ? 'border-amber-500/40 text-amber-300' : 'border-emerald-500/25 text-emerald-300'"
+                @click="toggleTrajectory(msg.id)"
+                class="px-3 py-2 bg-white/[0.02] hover:bg-white/[0.05] flex items-center justify-between cursor-pointer select-none transition-colors border-b border-white/[0.04]"
               >
-                <details class="group/detail">
-                  <summary class="px-2.5 py-1.5 flex items-center justify-between cursor-pointer select-none hover:bg-white/[0.02]">
-                    <div class="flex items-center space-x-1.5 truncate">
-                      <span class="text-xs">{{ getToolMeta(tool.name).icon }}</span>
-                      <span class="font-semibold text-zinc-200">{{ getToolMeta(tool.name).label }}</span>
-                      <span v-if="formatToolArgs(tool.arguments)" class="text-[10px] text-zinc-400 truncate max-w-[130px]">
-                        ({{ formatToolArgs(tool.arguments) }})
+                <div class="flex items-center space-x-2">
+                  <span class="text-sm">🧠</span>
+                  <span class="font-semibold text-zinc-200">
+                    {{ aiStore.isStreaming && msg.id === aiStore.messages[aiStore.messages.length - 1]?.id ? '智能体正在推演中...' : `推演思考与工具链 (${msg.steps?.length || msg.toolCalls?.length || 0} 步)` }}
+                  </span>
+                </div>
+                <div class="flex items-center space-x-2 text-[10px] text-zinc-400">
+                  <span
+                    v-if="aiStore.isStreaming && msg.id === aiStore.messages[aiStore.messages.length - 1]?.id"
+                    class="flex items-center space-x-1 text-amber-300 font-mono"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
+                    <span>思考与调用中</span>
+                  </span>
+                  <span class="text-xs transition-transform duration-200 text-zinc-500" :class="isTrajectoryOpen(msg.id) ? 'rotate-180' : ''">
+                    ▼
+                  </span>
+                </div>
+              </div>
+
+              <!-- 展开的每一步推演流水线 -->
+              <div v-show="isTrajectoryOpen(msg.id)" class="p-3 space-y-3 font-mono">
+                <!-- A. 标准按步骤渲染 (优先) -->
+                <template v-if="msg.steps && msg.steps.length > 0">
+                  <div
+                    v-for="st in msg.steps"
+                    :key="st.step"
+                    class="relative pl-4 border-l-2 space-y-2"
+                    :class="st.status === 'running' ? 'border-amber-400/80 animate-pulse' : 'border-emerald-500/40'"
+                  >
+                    <!-- 步骤左侧指示灯 -->
+                    <div
+                      class="absolute -left-[5px] top-0.5 w-2 h-2 rounded-full ring-2 ring-[#121316]"
+                      :class="st.status === 'running' ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'"
+                    ></div>
+
+                    <!-- 步骤序号与状态 -->
+                    <div class="flex items-center justify-between text-[11px]">
+                      <span class="font-bold text-zinc-200 flex items-center space-x-1.5">
+                        <span>📍 第 {{ st.step }} 步</span>
                       </span>
-                    </div>
-                    <div class="flex items-center space-x-1.5 shrink-0 ml-1.5">
                       <span
-                        class="text-[9px] px-1.5 py-0.5 rounded"
-                        :class="tool.status === 'calling' ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'"
+                        class="text-[9px] px-1.5 py-0.2 rounded"
+                        :class="st.status === 'running' ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/15 text-emerald-300'"
                       >
-                        {{ tool.status === 'calling' ? '执行中' : '✓ 真实数据' }}
+                        {{ st.status === 'running' ? '思考与调用中...' : '✓ 步骤完成' }}
                       </span>
-                      <span v-if="tool.outputPreview" class="text-[9px] text-zinc-500 group-open/detail:rotate-180 transition-transform">▼</span>
                     </div>
-                  </summary>
-                  <div v-if="tool.outputPreview" class="p-2 border-t border-white/[0.06] bg-black/70 text-[10px] text-zinc-400 font-mono overflow-x-auto max-h-36">
-                    <pre class="whitespace-pre-wrap leading-tight">{{ tool.outputPreview }}</pre>
+
+                    <!-- 思考内容 (Thought) -->
+                    <div v-if="st.thought" class="p-2 rounded-lg bg-white/[0.03] border border-white/[0.05] text-[11px] text-zinc-300 flex items-start space-x-1.5 leading-relaxed">
+                      <span class="text-xs shrink-0 mt-0.5">💭</span>
+                      <div class="flex-1 min-w-0">
+                        <span class="text-zinc-400 text-[10px] block font-semibold mb-0.5">AI 思考意图：</span>
+                        <span class="text-amber-200/90">{{ st.thought }}</span>
+                      </div>
+                    </div>
+
+                    <!-- 本步骤调用的工具列表 (Tool Calls) -->
+                    <div v-if="st.toolCalls && st.toolCalls.length > 0" class="space-y-1.5 pt-0.5">
+                      <div
+                        v-for="tool in st.toolCalls"
+                        :key="tool.id"
+                        class="rounded-lg border bg-black/50 text-[10px] overflow-hidden transition-all"
+                        :class="tool.status === 'calling' ? 'border-amber-500/40 text-amber-300' : 'border-emerald-500/25 text-emerald-300'"
+                      >
+                        <details class="group/tcall">
+                          <summary class="px-2.5 py-1.5 flex items-center justify-between cursor-pointer select-none hover:bg-white/[0.02]">
+                            <div class="flex items-center space-x-1.5 truncate">
+                              <span class="text-xs">{{ getToolMeta(tool.name).icon }}</span>
+                              <span class="font-semibold text-zinc-200">{{ getToolMeta(tool.name).label }}</span>
+                              <span v-if="formatToolArgs(tool.arguments)" class="text-[9px] text-zinc-400 truncate max-w-[130px]">
+                                ({{ formatToolArgs(tool.arguments) }})
+                              </span>
+                            </div>
+                            <div class="flex items-center space-x-1 shrink-0 ml-1">
+                              <span
+                                class="text-[9px] px-1.5 py-0.2 rounded"
+                                :class="tool.status === 'calling' ? 'bg-amber-500/20 text-amber-300 animate-pulse' : 'bg-emerald-500/20 text-emerald-300'"
+                              >
+                                {{ tool.status === 'calling' ? '执行中...' : '✓ 真实数据' }}
+                              </span>
+                              <span v-if="tool.outputPreview" class="text-[8px] text-zinc-500 group-open/tcall:rotate-180 transition-transform">▼</span>
+                            </div>
+                          </summary>
+                          <div v-if="tool.outputPreview" class="p-2 border-t border-white/[0.06] bg-black/80 text-[10px] text-zinc-400 font-mono overflow-x-auto max-h-32">
+                            <pre class="whitespace-pre-wrap leading-tight">{{ tool.outputPreview }}</pre>
+                          </div>
+                        </details>
+                      </div>
+                    </div>
                   </div>
-                </details>
+                </template>
+
+                <!-- B. 兜底纯工具列表渲染 -->
+                <template v-else>
+                  <div
+                    v-for="tool in msg.toolCalls"
+                    :key="tool.id"
+                    class="rounded-lg border bg-black/50 text-[10px] overflow-hidden"
+                    :class="tool.status === 'calling' ? 'border-amber-500/40 text-amber-300' : 'border-emerald-500/25 text-emerald-300'"
+                  >
+                    <details class="group/tcall">
+                      <summary class="px-2.5 py-1.5 flex items-center justify-between cursor-pointer select-none hover:bg-white/[0.02]">
+                        <div class="flex items-center space-x-1.5 truncate">
+                          <span class="text-xs">{{ getToolMeta(tool.name).icon }}</span>
+                          <span class="font-semibold text-zinc-200">{{ getToolMeta(tool.name).label }}</span>
+                        </div>
+                        <span class="text-[9px] px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300">✓ 获得数据</span>
+                      </summary>
+                      <div v-if="tool.outputPreview" class="p-2 border-t border-white/[0.06] bg-black/80 text-[10px] text-zinc-400 font-mono overflow-x-auto max-h-32">
+                        <pre class="whitespace-pre-wrap leading-tight">{{ tool.outputPreview }}</pre>
+                      </div>
+                    </details>
+                  </div>
+                </template>
               </div>
             </div>
 
-            <!-- Markdown 内容 -->
+            <!-- 当仍在推理中且尚无正文时：展示行内小机器人加载状态 -->
             <div
+              v-if="msg.role === 'assistant' && (!msg.content || !msg.content.trim())"
+              class="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center space-x-2.5 animate-pulse"
+            >
+              <span class="text-base">🤖</span>
+              <span class="text-xs text-amber-300 font-medium">Quant Copilot 正在综合多维数据生成最终研报...</span>
+            </div>
+
+            <!-- Markdown 正文内容 -->
+            <div
+              v-if="msg.content && msg.content.trim()"
               class="prose prose-invert prose-xs max-w-none break-words space-y-2 select-text"
               v-html="renderMarkdown(msg.content)"
             ></div>

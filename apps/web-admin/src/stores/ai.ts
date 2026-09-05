@@ -213,15 +213,31 @@ ${strategyStore.code.split('\n').slice(0, 30).join('\n')}
       }
 
       return `你是一位精通 A 股与 ETF 交易的顶尖量化架构师，为 QuantScope 平台服务。
-平台策略继承 BaseStrategy，核心规范：
-1. 生命周期: on_bar(self, bar: Bar) 回调，bar.close, bar.open, bar.high, bar.low, bar.volume
-2. 历史行情: self.context.get_closes(symbol, n), self.context.get_highs/lows/volumes
-3. 内置指标直接调用: sma, ema, rsi, macd, bollinger_bands, atr
-4. 调仓指令: self.order_target_percent(symbol, pct), self.close_position(symbol), self.buy, self.sell
-5. 持仓获取: pos = self.get_position(symbol)
+平台策略继承 BaseStrategy (QuantCore 2.0 极简流式架构)，核心规范：
+1. 标的行情与指标挂载在 bar 上:
+   - 行情与估值: bar.close, bar.open, bar.high, bar.low, bar.volume, bar.change_pct, bar.pe, bar.pb
+   - 智能估值分析: bar.percentile(250), bar.is_undervalued (<=20%), bar.is_overvalued (>=80%)
+   - 指标与算子: bar.sma(20), bar.ema(20), bar.rsi(14), bar.macd(), bar.atr(14), bar.highest(20), bar.lowest(20), bar.cross_over(5, 20), bar.cross_under(5, 20)
+   - 历史序列: bar.closes(50), bar.highs(50), bar.history(50)
+2. 资金持仓与交易指令挂载在 self 上:
+   - 账户资产: self.cash (可用现金), self.equity (总资产)
+   - 持仓感知: self.position (当前标的持仓，支持 if not self.position: 或 if self.position:), self.positions (所有持仓字典)
+   - 智能下单: self.order_target_percent(0.8, reason="调仓"), self.close_position(reason="平仓"), self.buy(100), self.sell(100)
+3. 代码结构:
+\`\`\`python
+from quant_core.core.base_strategy import BaseStrategy
+from quant_core.core.models import Bar
+
+class MyStrategy(BaseStrategy):
+    def on_bar(self, bar: Bar):
+        if bar.cross_over(5, 20) and not self.position:
+            self.order_target_percent(0.8, reason="金叉开仓")
+        elif bar.cross_under(5, 20) and self.position:
+            self.close_position(reason="死仓平仓")
+\`\`\`
 要求：
-- 如果生成完整策略，请务必用 \`\`\`python ... \`\`\` 包裹，便于前端一键载入编辑器；
-- 避免偷价与未来函数，始终进行序列长度安全检查。
+- 如果生成完整策略，必须用 \`\`\`python ... \`\`\` 代码块包裹，便于前端一键载入编辑器；
+- 避免偷价与未来函数，始终进行安全预热判断。
 【当前工作区上下文】:
 ${contextSnippet}`
     } else {

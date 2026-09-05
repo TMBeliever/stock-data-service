@@ -121,3 +121,45 @@ def test_endpoint_run_custom_security_block():
     response = client.post("/api/v1/backtest/run-custom", json=payload)
     assert response.status_code == 400
     assert "安全策略拦截" in response.json()["detail"]
+
+def test_endpoint_sandbox_validate_valid():
+    response = client.post("/api/v1/sandbox/validate", json={"code": VALID_MA_CODE})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["is_valid"] is True
+    assert data["strategy_name"] == "TestMA"
+
+def test_endpoint_sandbox_validate_invalid_syntax():
+    response = client.post("/api/v1/sandbox/validate", json={"code": SYNTAX_ERROR_CODE})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["is_valid"] is False
+    assert "语法错误" in data["error"]
+
+def test_quant_core_2_api_backtest():
+    code = """
+from quant_core.core.base_strategy import BaseStrategy
+from quant_core.core.models import Bar
+
+class StreamStrategy(BaseStrategy):
+    def on_bar(self, bar: Bar):
+        ma5 = self.sma(5)
+        ma10 = self.sma(10)
+        if self.cross_over(5, 10) and not self.position:
+            self.order_target_percent(0.8, reason="金叉开仓")
+        elif self.cross_under(5, 10) and self.position:
+            self.close_position(reason="死叉平仓")
+"""
+    payload = {
+        "symbol": "510300.SH.ETF",
+        "code": code,
+        "start": "2024-01-01",
+        "end": "2024-03-01",
+        "initial_cash": 100000.0
+    }
+    response = client.post("/api/v1/backtest/run-custom", json=payload)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["summary"]["initial_cash"] == 100000.0
+    assert len(data["daily_records"]) > 0
+

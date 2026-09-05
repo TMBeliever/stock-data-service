@@ -1,11 +1,17 @@
 import ast
 import math
 import traceback
+import datetime
 from typing import Type, Tuple, Dict, Any, Optional
 import numpy as np
+import pandas as pd
+from fastapi import APIRouter
+from pydantic import BaseModel, Field
 
 from quant_core.core.base_strategy import BaseStrategy
 from quant_core.core.models import Bar, Order, Position, Snapshot, Trade, OrderSide, OrderType
+
+router = APIRouter()
 
 # 高危模块黑名单
 FORBIDDEN_MODULES = {
@@ -108,6 +114,10 @@ class StrategyCodeSandbox:
         }
 
         from quant_core.factors.technical import sma, ema, rsi, macd, bollinger_bands, atr
+        import typing
+        from typing import (
+            Optional, List, Dict, Tuple, Set, Any, Union, Sequence, Callable, Iterable
+        )
 
         safe_globals: Dict[str, Any] = {
             "__builtins__": safe_builtins,
@@ -123,6 +133,20 @@ class StrategyCodeSandbox:
             "math": math,
             "np": np,
             "numpy": np,
+            "pd": pd,
+            "pandas": pd,
+            "datetime": datetime,
+            "typing": typing,
+            "Optional": Optional,
+            "List": List,
+            "Dict": Dict,
+            "Tuple": Tuple,
+            "Set": Set,
+            "Any": Any,
+            "Union": Union,
+            "Sequence": Sequence,
+            "Callable": Callable,
+            "Iterable": Iterable,
             # 内置常用指标函数
             "sma": sma,
             "ema": ema,
@@ -159,3 +183,43 @@ class StrategyCodeSandbox:
             raise ValueError("未在代码中找到继承自 BaseStrategy 的策略类，请确保策略类继承自 BaseStrategy。")
 
         return candidate_cls
+
+
+class CodeValidationRequest(BaseModel):
+    code: str = Field(..., description="待校验的策略源码")
+
+
+@router.post("/sandbox/validate")
+def validate_code_endpoint(req: CodeValidationRequest):
+    """
+    在线校验 Python 量化策略源码：
+    1. 静态 AST 安全审计；
+    2. 类结构与 BaseStrategy 继承合法性检查；
+    3. 构造函数实例化尝试；
+    4. 返回诊断建议与类元数据。
+    """
+    try:
+        cls_obj = StrategyCodeSandbox.load_strategy_class(req.code)
+        try:
+            inst = cls_obj()
+            params = getattr(inst, "params", {})
+            name = getattr(inst, "name", cls_obj.__name__)
+        except Exception as init_e:
+            return {
+                "is_valid": False,
+                "error": f"策略类初始化异常 (缺少默认参数或构造函数错误): {str(init_e)}",
+                "strategy_name": cls_obj.__name__ if cls_obj else None,
+            }
+
+        return {
+            "is_valid": True,
+            "strategy_name": name,
+            "params": params,
+            "message": "策略源码安全审计与继承规范检查通过，可直接加入回测或实盘。"
+        }
+    except SecurityCheckError as e:
+        return {"is_valid": False, "error": f"安全策略拦截: {str(e)}"}
+    except ValueError as e:
+        return {"is_valid": False, "error": f"代码规范错误: {str(e)}"}
+    except Exception as e:
+        return {"is_valid": False, "error": f"执行/语法异常: {str(e)}"}

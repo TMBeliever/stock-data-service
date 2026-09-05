@@ -88,31 +88,30 @@ class QuantAgent(BaseAgent):
             :param end: 截止日期 YYYY-MM-DD
             :param initial_cash: 初始资金 (默认 100000.0)
             """
-            url = f"{agent_config.QUANT_SERVER_URL}/api/v1/backtest/run"
+            url = f"{agent_config.QUANT_SERVER_URL}/api/v1/backtest/run-custom"
             payload = {
                 "code": code,
                 "symbol": symbol,
                 "start": start,
                 "end": end,
                 "initial_cash": float(initial_cash),
-                "commission_rate": 0.0003,
-                "slippage": 0.001
             }
             try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with httpx.AsyncClient(timeout=60.0) as client:
                     resp = await client.post(url, json=payload)
                     if resp.status_code == 200:
                         data = resp.json()
-                        kpis = data.get("kpi", {})
+                        summary = data.get("summary", {})
                         return json.dumps({
                             "status": "success",
                             "symbol": symbol,
-                            "total_return": kpis.get("total_return"),
-                            "annualized_return": kpis.get("annualized_return"),
-                            "sharpe_ratio": kpis.get("sharpe_ratio"),
-                            "max_drawdown": kpis.get("max_drawdown"),
-                            "win_rate": kpis.get("win_rate"),
-                            "total_trades": kpis.get("total_trades"),
+                            "total_return": summary.get("total_return"),
+                            "annualized_return": summary.get("annualized_return"),
+                            "sharpe_ratio": summary.get("sharpe_ratio"),
+                            "max_drawdown": summary.get("max_drawdown"),
+                            "win_rate": summary.get("win_rate"),
+                            "total_trades": summary.get("total_trades"),
+                            "trades_count": len(data.get("trades", [])),
                         }, ensure_ascii=False)
                     return json.dumps({"status": "failed", "detail": resp.text}, ensure_ascii=False)
             except Exception as e:

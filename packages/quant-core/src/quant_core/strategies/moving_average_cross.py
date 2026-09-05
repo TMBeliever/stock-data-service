@@ -3,7 +3,7 @@ from quant_core.core.models import Bar
 
 class DualMovingAverageStrategy(BaseStrategy):
     """
-    经典双均线趋势策略 (Dual Moving Average Cross)：
+    经典双均线趋势策略 (Dual Moving Average Cross - QuantCore 2.0 极简流式架构)：
     - 短期均线 (如 MA5) 上穿 长期均线 (如 MA20) 形成金叉：买入开仓；
     - 短期均线 下穿 长期均线 形成死叉：卖出平仓止盈/止损。
     """
@@ -13,25 +13,10 @@ class DualMovingAverageStrategy(BaseStrategy):
         self.slow = slow_period
 
     def on_bar(self, bar: Bar):
-        symbol = bar.symbol
-        closes = self.context.get_closes(symbol, n=self.slow + 2)
-        if len(closes) < self.slow + 1:
-            return
+        # 1. 均线金叉开仓 (Golden Cross)
+        if bar.cross_over(self.fast, self.slow) and not self.position:
+            self.order_target_percent(0.8, reason="Golden Cross Buy")
 
-        ma_fast_prev = sum(closes[-self.fast-1:-1]) / self.fast
-        ma_fast_curr = sum(closes[-self.fast:]) / self.fast
-
-        ma_slow_prev = sum(closes[-self.slow-1:-1]) / self.slow
-        ma_slow_curr = sum(closes[-self.slow:]) / self.slow
-
-        pos = self.get_position(symbol)
-
-        # 金叉买入 (Golden Cross)
-        if ma_fast_prev <= ma_slow_prev and ma_fast_curr > ma_slow_curr:
-            if pos.quantity == 0:
-                self.order_target_percent(symbol, 0.8, reason="Golden Cross Buy")
-
-        # 死叉卖出 (Death Cross)
-        elif ma_fast_prev >= ma_slow_prev and ma_fast_curr < ma_slow_curr:
-            if pos.available_quantity > 0:
-                self.close_position(symbol, reason="Death Cross Sell")
+        # 2. 均线死叉平仓 (Death Cross)
+        elif bar.cross_under(self.fast, self.slow) and self.position:
+            self.close_position(reason="Death Cross Sell")

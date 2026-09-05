@@ -61,6 +61,8 @@ class BacktestEngine:
 
             # 2.2 触发策略 on_bar 回调
             for sym, bar in current_bar_map.items():
+                if hasattr(self.strategy, "_set_current_bar"):
+                    self.strategy._set_current_bar(bar)
                 self.strategy.on_bar(bar)
 
             # 2.3 提取并撮合策略下发的待处理订单

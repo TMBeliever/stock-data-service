@@ -4,7 +4,7 @@ import { Codemirror } from 'vue-codemirror'
 import { python } from '@codemirror/lang-python'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { autocompletion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
-import type { EditorView } from '@codemirror/view'
+import { EditorView } from '@codemirror/view'
 import { useStrategyStore, type UserStrategyItem } from '@/stores/strategy'
 import { useAuthStore } from '@/stores/auth'
 import { useAiStore } from '@/stores/ai'
@@ -35,19 +35,24 @@ function quantCompletionSource(context: CompletionContext): CompletionResult | n
   const line = context.state.doc.lineAt(context.pos)
   const lineText = line.text.slice(0, context.pos - line.from)
 
+  // 辅助：获取光标后紧邻的单词字符以精准确定替换结束点 to，避免补全后残留杂散字符
+  const afterMatch = context.state.sliceDoc(context.pos, context.pos + 50).match(/^\w*/)
+  const to = context.pos + (afterMatch ? afterMatch[0].length : 0)
+
   // A. 匹配 self.context. 或 context.
   if (/self\.context\.\w*$/.test(lineText) || /(^|\s)context\.\w*$/.test(lineText)) {
     const match = lineText.match(/(?:self\.)?context\.(\w*)$/)
     const from = context.pos - (match ? match[1].length : 0)
     return {
       from,
+      to,
       options: [
-        { label: 'get_closes', type: 'method', detail: '(symbol, n=50)', info: '获取最近 N 根收盘价列表 (List[float])' },
-        { label: 'get_highs', type: 'method', detail: '(symbol, n=50)', info: '获取最近 N 根最高价列表 (List[float])' },
-        { label: 'get_lows', type: 'method', detail: '(symbol, n=50)', info: '获取最近 N 根最低价列表 (List[float])' },
-        { label: 'get_volumes', type: 'method', detail: '(symbol, n=50)', info: '获取最近 N 根成交量列表 (List[float])' },
-        { label: 'get_opens', type: 'method', detail: '(symbol, n=50)', info: '获取最近 N 根开盘价列表 (List[float])' },
-        { label: 'portfolio', type: 'property', detail: 'Portfolio', info: '账户组合对象 (包含 cash, total_equity, total_market_value)' },
+        { label: 'get_closes', type: 'method', detail: '历史收盘序列 · closes(sym, n)', info: '【历史收盘】获取指定标的最近 N 根收盘价 List[float]' },
+        { label: 'get_highs', type: 'method', detail: '历史最高序列 · highs(sym, n)', info: '【历史最高】获取指定标的最近 N 根最高价 List[float]' },
+        { label: 'get_lows', type: 'method', detail: '历史最低序列 · lows(sym, n)', info: '【历史最低】获取指定标的最近 N 根最低价 List[float]' },
+        { label: 'get_volumes', type: 'method', detail: '历史成交序列 · volumes(sym, n)', info: '【历史成交】获取指定标的最近 N 根成交量 List[float]' },
+        { label: 'get_opens', type: 'method', detail: '历史开盘序列 · opens(sym, n)', info: '【历史开盘】获取指定标的最近 N 根开盘价 List[float]' },
+        { label: 'portfolio', type: 'property', detail: '账户总线组合 · Portfolio', info: '【账户组合】总线组合对象 (包含 cash, total_equity, positions)' },
       ],
       validFor: /^\w*$/,
     }
@@ -59,34 +64,81 @@ function quantCompletionSource(context: CompletionContext): CompletionResult | n
     const from = context.pos - (match ? match[1].length : 0)
     return {
       from,
+      to,
       options: [
-        { label: 'order_target_percent', type: 'method', detail: '(symbol, pct, reason="")', info: '【核心调仓】调整目标仓位占比 (0.0~1.0)' },
-        { label: 'close_position', type: 'method', detail: '(symbol, reason="")', info: '【一键平仓】全仓清空该标的持仓' },
-        { label: 'buy', type: 'method', detail: '(symbol, quantity, price=None, reason="")', info: '【按手买入】买入指定股数' },
-        { label: 'sell', type: 'method', detail: '(symbol, quantity, price=None, reason="")', info: '【按手卖出】卖出指定股数' },
-        { label: 'get_position', type: 'method', detail: '(symbol)', info: '【持仓查询】获取 Position (quantity, avg_cost, available_quantity)' },
-        { label: 'context', type: 'property', detail: 'StrategyContext', info: '【上下文】获取历史行情序列与账户信息' },
+        { label: 'position', type: 'property', detail: '当前标的持仓 · Position', info: '【当前持仓】当前标的持仓对象，直接支持 if self.position > 0: 或 if not self.position:' },
+        { label: 'cash', type: 'property', detail: '可用现金余额 · float', info: '【可用现金】当前可用现金余额 (CNY)' },
+        { label: 'equity', type: 'property', detail: '账户总资产 · float', info: '【动态权益】账户总动态资产 (现金 + 持仓总市值)' },
+        { label: 'order_target_percent', type: 'method', detail: '智能调仓 · (pct, reason)', info: '【智能调仓】调至总资产目标比例 (0.0~1.0)，单标的自动省略 symbol' },
+        { label: 'close_position', type: 'method', detail: '一键清仓平仓 · (reason)', info: '【一键平仓】清空当前标的所有可用持仓' },
+        { label: 'buy', type: 'method', detail: '智能买入 · (qty, price)', info: '【智能买入】按当前市价或限价买入指定股数' },
+        { label: 'sell', type: 'method', detail: '智能卖出 · (qty, price)', info: '【智能卖出】按当前市价或限价卖出指定股数' },
+        { label: 'positions', type: 'property', detail: '全仓持仓字典 · Dict[str, Pos]', info: '【全仓持仓】所有标的持仓字典 {symbol: Position}' },
+        { label: 'bars', type: 'property', detail: '历史Bar序列 · List[Bar]', info: '【历史切片】当前标的接收到的所有历史 Bar 序列' },
+        { label: 'sma', type: 'method', detail: '标的移动均线 · sma(20)', info: '【移动均线】当前标的简单移动平均: self.sma(20)' },
+        { label: 'cross_over', type: 'method', detail: '均线金叉 · (fast, slow)', info: '【均线金叉】自动判断当前标的均线金叉: self.cross_over(5, 20)' },
+        { label: 'cross_under', type: 'method', detail: '均线死叉 · (fast, slow)', info: '【均线死叉】自动判断当前标的均线死叉: self.cross_under(5, 20)' },
+        { label: 'closes', type: 'method', detail: '历史收盘序列 · closes(50)', info: '【历史收盘】获取当前标的最近 N 根收盘价 List[float]' },
+        { label: 'get_position', type: 'method', detail: '查询指定持仓 · (symbol)', info: '【指定持仓】获取指定 symbol 的 Position 对象' },
+        { label: 'context', type: 'property', detail: '底层上下文 · StrategyContext', info: '【底层上下文】StrategyContext 核心状态总线' },
       ],
       validFor: /^\w*$/,
     }
   }
 
-  // C. 匹配 bar.
+  // C. 匹配 bar. (标的行情、估值、指标与历史序列)
   if (/bar\.\w*$/.test(lineText)) {
     const match = lineText.match(/bar\.(\w*)$/)
     const from = context.pos - (match ? match[1].length : 0)
     return {
       from,
+      to,
       options: [
-        { label: 'close', type: 'property', detail: 'float', info: '当前 K 线切片最新收盘价' },
-        { label: 'open', type: 'property', detail: 'float', info: '当前 K 线开盘价' },
-        { label: 'high', type: 'property', detail: 'float', info: '当前 K 线最高价' },
-        { label: 'low', type: 'property', detail: 'float', info: '当前 K 线最低价' },
-        { label: 'volume', type: 'property', detail: 'float', info: '当前 K 线成交量' },
-        { label: 'symbol', type: 'property', detail: 'str', info: '当前标的代码 (如 510300.SH.ETF)' },
-        { label: 'date_str', type: 'property', detail: 'str', info: '当前日期字符串 (YYYY-MM-DD)' },
-        { label: 'amount', type: 'property', detail: 'float', info: '当前成交金额' },
-        { label: 'timestamp', type: 'property', detail: 'int', info: '当前 UTC 毫秒时间戳' },
+        // 1. 基础行情与价格切片
+        { label: 'close', type: 'property', detail: '最新收盘价 · float', info: '【核心价格】当前 K 线最新收盘价 (如 3.850)' },
+        { label: 'open', type: 'property', detail: '今日开盘价 · float', info: '【核心价格】当前 K 线开盘价' },
+        { label: 'high', type: 'property', detail: '最高价格 · float', info: '【核心价格】当前 K 线最高价' },
+        { label: 'low', type: 'property', detail: '最低价格 · float', info: '【核心价格】当前 K 线最低价' },
+        { label: 'volume', type: 'property', detail: '成交量(股) · float', info: '【成交数据】当前 K 线成交量 (股)' },
+        { label: 'prev_close', type: 'property', detail: '昨日收盘价 · float', info: '【昨日收盘】上一交易日收盘价' },
+        { label: 'change', type: 'property', detail: '涨跌额(元) · float', info: '【价格涨跌】最新涨跌额 (close - prev_close)' },
+        { label: 'change_pct', type: 'property', detail: '涨跌幅比例 · float', info: '【涨跌比例】最新涨跌幅比例 (如 +0.03 代表 +3.0%)' },
+        { label: 'amplitude', type: 'property', detail: '日内振幅 · float', info: '【日内振幅】(high - low) / prev_close 振幅比例' },
+        { label: 'is_up', type: 'property', detail: '收阳线判定 · bool', info: '【阳线判定】今日是否收阳 (close >= open)' },
+        { label: 'is_down', type: 'property', detail: '收阴线判定 · bool', info: '【阴线判定】今日是否收阴 (close < open)' },
+
+        // 2. 估值与基本面指标
+        { label: 'pe', type: 'property', detail: '动态市盈率 · TTM', info: '【市盈率】标的当前动态 PE (TTM 估值)' },
+        { label: 'pb', type: 'property', detail: '市净率 · PB', info: '【市净率】标的当前市净率 PB' },
+        { label: 'ps', type: 'property', detail: '市销率 · PS', info: '【市销率】标的当前市销率 PS' },
+        { label: 'turnover_rate', type: 'property', detail: '换手率比例 · %', info: '【换手率】今日实际换手率比例 (%)' },
+        { label: 'percentile', type: 'method', detail: '估值分位数 · percentile(250)', info: '【估值分位】过去 N 日价格滚动历史分位数 (0.0~1.0)' },
+        { label: 'is_undervalued', type: 'property', detail: '深度低估信号 · bool', info: '【深度低估】过去 250 日分位数 <= 20% 或 PE < 15' },
+        { label: 'is_overvalued', type: 'property', detail: '高估泡沫信号 · bool', info: '【高估泡沫】过去 250 日分位数 >= 80% 或 PE > 50' },
+
+        // 3. 高频技术指标与形态算子
+        { label: 'sma', type: 'method', detail: '简单移动均线 · sma(20)', info: '【移动均线】简单移动平均 SMA: bar.sma(20)' },
+        { label: 'ema', type: 'method', detail: '指数移动均线 · ema(20)', info: '【指数均线】指数移动平均 EMA: bar.ema(20)' },
+        { label: 'rsi', type: 'method', detail: '相对强弱指标 · rsi(14)', info: '【强弱指标】相对强弱指标 RSI (0~100): bar.rsi(14)' },
+        { label: 'macd', type: 'method', detail: '平滑异同均线 · macd()', info: '【MACD】平滑异同移动平均: dif, dea, hist = bar.macd()' },
+        { label: 'atr', type: 'method', detail: '真实波幅 · atr(14)', info: '【真实波幅】平均真实波幅 ATR: bar.atr(14)' },
+        { label: 'highest', type: 'method', detail: '区间最高价 · highest(20)', info: '【区间极高】唐奇安通道上轨 (过去 N 日最高价)' },
+        { label: 'lowest', type: 'method', detail: '区间最低价 · lowest(20)', info: '【区间极低】唐奇安通道下轨 (过去 N 日最低价)' },
+        { label: 'cross_over', type: 'method', detail: '均线金叉上穿 · bool', info: '【均线金叉】快捷金叉判断: bar.cross_over(5, 20)' },
+        { label: 'cross_under', type: 'method', detail: '均线死叉下穿 · bool', info: '【均线死叉】快捷死叉判断: bar.cross_under(5, 20)' },
+
+        // 4. 标的历史行情切片序列
+        { label: 'closes', type: 'method', detail: '收盘价序列 · closes(50)', info: '【收盘序列】获取当前标的最近 N 根收盘价 List[float]' },
+        { label: 'highs', type: 'method', detail: '最高价序列 · highs(50)', info: '【最高序列】获取当前标的最近 N 根最高价 List[float]' },
+        { label: 'lows', type: 'method', detail: '最低价序列 · lows(50)', info: '【最低序列】获取当前标的最近 N 根最低价 List[float]' },
+        { label: 'opens', type: 'method', detail: '开盘价序列 · opens(50)', info: '【开盘序列】获取当前标的最近 N 根开盘价 List[float]' },
+        { label: 'volumes', type: 'method', detail: '成交量序列 · volumes(50)', info: '【成交序列】获取当前标的最近 N 根成交量 List[float]' },
+        { label: 'history', type: 'method', detail: '历史Bar序列 · history(50)', info: '【切片历史】获取当前标的最近 N 根 Bar 对象序列' },
+
+        // 5. 标的元信息
+        { label: 'symbol', type: 'property', detail: '标的代码 · str', info: '【标的代码】当前标的代码 (如 510300.SH.ETF)' },
+        { label: 'date_str', type: 'property', detail: '日期切片 · str', info: '【日期切片】当前切片日期字符串 (YYYY-MM-DD)' },
+        { label: 'dt', type: 'property', detail: '时间对象 · datetime', info: '【时间对象】当前切片标准 UTC datetime 对象' },
       ],
       validFor: /^\w*$/,
     }
@@ -98,12 +150,13 @@ function quantCompletionSource(context: CompletionContext): CompletionResult | n
     const from = context.pos - (match ? match[1].length : 0)
     return {
       from,
+      to,
       options: [
-        { label: 'quantity', type: 'property', detail: 'float', info: '当前持仓总股数' },
-        { label: 'available_quantity', type: 'property', detail: 'float', info: 'A 股 T+1 可卖出股数' },
-        { label: 'avg_cost', type: 'property', detail: 'float', info: '持仓均价成本' },
-        { label: 'current_price', type: 'property', detail: 'float', info: '最新市价' },
-        { label: 'market_value', type: 'property', detail: 'float', info: '持仓总市值' },
+        { label: 'quantity', type: 'property', detail: '持仓总股数 · float', info: '【持仓股数】当前标的持仓总股数' },
+        { label: 'available_quantity', type: 'property', detail: '可用股数(T+1) · float', info: '【可用股数】A 股 T+1 交易制度下当前可卖出的股数' },
+        { label: 'avg_cost', type: 'property', detail: '持仓均价成本 · float', info: '【持仓成本】当前标的持仓均价 (CNY)' },
+        { label: 'current_price', type: 'property', detail: '最新收盘市价 · float', info: '【最新市价】当前标的最新收盘价格' },
+        { label: 'market_value', type: 'property', detail: '持仓总市值 · float', info: '【持仓市值】当前标的持仓总市值 (股数 * 最新价)' },
       ],
       validFor: /^\w*$/,
     }
@@ -115,29 +168,145 @@ function quantCompletionSource(context: CompletionContext): CompletionResult | n
 
   return {
     from: word.from,
+    to,
     options: [
-      { label: 'sma', type: 'function', detail: '(prices, period)', info: '简单移动平均线: sma(closes, 20)' },
-      { label: 'ema', type: 'function', detail: '(prices, period)', info: '指数移动平均线: ema(closes, 12)' },
-      { label: 'rsi', type: 'function', detail: '(prices, period=14)', info: '相对强弱指标 (0~100): rsi(closes, 14)' },
-      { label: 'macd', type: 'function', detail: '(prices, 12, 26, 9)', info: 'MACD 指标: dif, dea, hist = macd(closes, 12, 26, 9)' },
-      { label: 'bollinger_bands', type: 'function', detail: '(prices, 20, 2.0)', info: '布林带: upper, mid, lower = bollinger_bands(closes, 20, 2.0)' },
-      { label: 'atr', type: 'function', detail: '(highs, lows, closes, 14)', info: '真实波幅均值: atr_val = atr(highs, lows, closes, 14)' },
-      { label: 'self', type: 'keyword', detail: 'BaseStrategy 策略实例' },
-      { label: 'bar', type: 'variable', detail: 'Bar 行情切片' },
-      { label: 'order_target_percent', type: 'method', detail: 'self.order_target_percent(symbol, pct)' },
-      { label: 'close_position', type: 'method', detail: 'self.close_position(symbol)' },
+      { label: 'bar', type: 'variable', detail: 'K线行情切片 · Bar', info: '【行情切片】当前触发 on_bar 的 K 线对象，包含估值与指标' },
+      { label: 'self', type: 'keyword', detail: '当前策略实例 · BaseStrategy', info: '【策略实例】当前 BaseStrategy 实例，管理持仓与交易' },
+      { label: 'sma', type: 'function', detail: '简单移动均线 · sma(c, 20)', info: '【内置算子】简单移动平均线: sma(closes, 20)' },
+      { label: 'ema', type: 'function', detail: '指数移动均线 · ema(c, 12)', info: '【内置算子】指数移动平均线: ema(closes, 12)' },
+      { label: 'rsi', type: 'function', detail: '相对强弱指标 · rsi(c, 14)', info: '【内置算子】相对强弱指标 (0~100): rsi(closes, 14)' },
+      { label: 'macd', type: 'function', detail: 'MACD指标 · macd(closes)', info: '【内置算子】平滑异同移动平均: dif, dea, hist = macd(closes)' },
+      { label: 'bollinger_bands', type: 'function', detail: '布林带轨道 · (closes, 20)', info: '【内置算子】布林带: upper, mid, lower = bollinger_bands(closes)' },
+      { label: 'atr', type: 'function', detail: '真实波幅 · atr(h, l, c, 14)', info: '【内置算子】真实波幅均值: atr_val = atr(highs, lows, closes, 14)' },
+      { label: 'order_target_percent', type: 'method', detail: '智能调仓指令 · (pct, reason)', info: '【调仓指令】self.order_target_percent(0.8, reason="开仓")' },
+      { label: 'close_position', type: 'method', detail: '一键平仓指令 · (reason)', info: '【平仓指令】self.close_position(reason="止损平仓")' },
     ],
   }
 }
 
-const extensions = [
+// 极客暗黑 CodeMirror 补全弹窗与对齐主题 (Raycast / Cursor 风格)
+const quantEditorTheme = EditorView.theme({
+  '.cm-tooltip': {
+    border: '1px solid rgba(255, 255, 255, 0.12) !important',
+    backgroundColor: '#16171d !important',
+    borderRadius: '10px !important',
+    boxShadow: '0 20px 48px -10px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08) !important',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete': {
+    overflow: 'visible !important',
+    minWidth: '420px !important',
+    maxWidth: '580px !important',
+    padding: '4px !important',
+  },
+  '.cm-tooltip-autocomplete > ul': {
+    maxHeight: '280px !important',
+    padding: '2px !important',
+    overflowY: 'auto !important',
+    overflowX: 'hidden !important',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important',
+    fontSize: '12px !important',
+  },
+  '.cm-tooltip-autocomplete > ul > li': {
+    display: 'flex !important',
+    alignItems: 'center !important',
+    justifyContent: 'space-between !important',
+    height: '28px !important',
+    lineHeight: '28px !important',
+    padding: '0 8px !important',
+    borderRadius: '6px !important',
+    margin: '1px 0 !important',
+    color: '#d1d5db !important',
+    cursor: 'pointer !important',
+  },
+  '.cm-tooltip-autocomplete > ul > li[aria-selected="true"]': {
+    background: 'linear-gradient(90deg, rgba(255, 95, 61, 0.25) 0%, rgba(255, 95, 61, 0.10) 100%) !important',
+    borderLeft: '2px solid #ff5f3d !important',
+    color: '#ffffff !important',
+    fontWeight: '600 !important',
+  },
+  '.cm-completionIcon': {
+    width: '18px !important',
+    height: '18px !important',
+    marginRight: '8px !important',
+    display: 'inline-flex !important',
+    alignItems: 'center !important',
+    justifyContent: 'center !important',
+    fontSize: '10px !important',
+    borderRadius: '4px !important',
+    background: 'rgba(255, 255, 255, 0.06) !important',
+    color: '#94a3b8 !important',
+    flexShrink: '0 !important',
+  },
+  '.cm-completionIcon-property': {
+    color: '#38bdf8 !important',
+    background: 'rgba(56, 189, 248, 0.15) !important',
+  },
+  '.cm-completionIcon-method, .cm-completionIcon-function': {
+    color: '#c084fc !important',
+    background: 'rgba(192, 132, 252, 0.15) !important',
+  },
+  '.cm-completionIcon-keyword': {
+    color: '#fbbf24 !important',
+    background: 'rgba(251, 191, 36, 0.15) !important',
+  },
+  '.cm-completionIcon-variable': {
+    color: '#34d399 !important',
+    background: 'rgba(52, 211, 153, 0.15) !important',
+  },
+  '.cm-completionLabel': {
+    fontWeight: '500 !important',
+    color: '#f3f4f6 !important',
+    marginRight: '12px !important',
+    flexShrink: '0 !important',
+  },
+  '.cm-completionMatchedText': {
+    textDecoration: 'none !important',
+    color: '#ff5f3d !important',
+    fontWeight: '700 !important',
+    background: 'rgba(255, 95, 61, 0.2) !important',
+    borderRadius: '2px !important',
+    padding: '0 2px !important',
+  },
+  '.cm-completionDetail': {
+    marginLeft: 'auto !important',
+    textAlign: 'right !important',
+    color: '#9ca3af !important',
+    fontSize: '11px !important',
+    fontStyle: 'normal !important',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", monospace !important',
+    opacity: '0.9 !important',
+    whiteSpace: 'nowrap !important',
+  },
+  '.cm-tooltip-autocomplete > ul > li[aria-selected="true"] .cm-completionDetail': {
+    color: '#fed7aa !important',
+    opacity: '1 !important',
+    fontWeight: '500 !important',
+  },
+  '.cm-tooltip.cm-completionInfo': {
+    background: 'rgba(20, 21, 27, 0.98) !important',
+    backdropFilter: 'blur(20px) !important',
+    border: '1px solid rgba(255, 255, 255, 0.14) !important',
+    borderRadius: '10px !important',
+    boxShadow: '0 20px 48px rgba(0, 0, 0, 0.75) !important',
+    padding: '10px 14px !important',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif !important',
+    fontSize: '12px !important',
+    lineHeight: '1.6 !important',
+    color: '#e4e4e7 !important',
+    maxWidth: '380px !important',
+    zIndex: '10001 !important',
+  },
+})
+
+const extensions = Object.freeze([
   python(),
   oneDark,
+  quantEditorTheme,
   autocompletion({
     override: [quantCompletionSource],
     activateOnTyping: true,
   }),
-]
+])
 
 function handleReady(payload: { view: EditorView }) {
   editorView.value = payload.view
@@ -173,38 +342,41 @@ function showToast(msg: string) {
 const lineCount = computed(() => strategyStore.code.split('\n').length)
 const charCount = computed(() => strategyStore.code.length)
 
-// 常用 API 片段速查表
+// 常用 API 片段速查表 (QuantCore 2.0 极简范式)
 const apiCheatSheet = [
   {
-    category: '📊 常用技术指标函数 (沙箱内置，直接调用)',
+    category: '📊 常用技术指标与形态算子 (直接在 bar 或 self 上调用)',
     items: [
-      { name: 'sma(prices, period)', desc: '简单移动平均 (SMA)', code: 'ma20 = sma(closes, 20)' },
-      { name: 'ema(prices, period)', desc: '指数移动平均 (EMA)', code: 'ema12 = ema(closes, 12)' },
-      { name: 'rsi(prices, period=14)', desc: '相对强弱指标 (RSI 0~100)', code: 'rsi_val = rsi(closes, 14)' },
-      { name: 'macd(prices, 12, 26, 9)', desc: 'MACD (返回 DIF, DEA, 柱)', code: 'dif, dea, hist = macd(closes, 12, 26, 9)' },
-      { name: 'bollinger_bands(prices, 20, 2.0)', desc: '布林带 (返回 上轨, 中轨, 下轨)', code: 'upper, mid, lower = bollinger_bands(closes, 20, 2.0)' },
-      { name: 'atr(highs, lows, closes, 14)', desc: '真实波幅均值 (ATR)', code: 'atr_val = atr(highs, lows, closes, 14)' },
+      { name: 'bar.sma(20)', desc: '简单移动平均 (SMA)', code: 'ma20 = bar.sma(20)' },
+      { name: 'bar.ema(12)', desc: '指数移动平均 (EMA)', code: 'ema12 = bar.ema(12)' },
+      { name: 'bar.rsi(14)', desc: '相对强弱指标 (0~100)', code: 'rsi_val = bar.rsi(14)' },
+      { name: 'bar.macd()', desc: 'MACD (返回 DIF, DEA, 柱)', code: 'dif, dea, hist = bar.macd()' },
+      { name: 'bar.atr(14)', desc: '真实波幅均值 (ATR)', code: 'atr_val = bar.atr(14)' },
+      { name: 'bar.highest(20) / lowest(20)', desc: '唐奇安通道高低轨 (前20日极值)', code: 'entry_high = bar.highest(20, include_current=False)' },
+      { name: 'bar.cross_over(5, 20)', desc: '均线金叉上穿判断', code: 'if bar.cross_over(5, 20):' },
+      { name: 'bar.cross_under(5, 20)', desc: '均线死叉下穿判断', code: 'elif bar.cross_under(5, 20):' },
     ],
   },
   {
-    category: '📈 行情切片与历史数据获取 (self.context)',
+    category: '📈 行情切片与估值分析 (bar)',
     items: [
-      { name: 'self.context.get_closes(symbol, n)', desc: '获取最近 N 根收盘价列表 (List[float])', code: 'closes = self.context.get_closes(bar.symbol, n=50)' },
-      { name: 'self.context.get_highs(symbol, n)', desc: '获取最近 N 根最高价列表 (List[float])', code: 'highs = self.context.get_highs(bar.symbol, n=50)' },
-      { name: 'self.context.get_lows(symbol, n)', desc: '获取最近 N 根最低价列表 (List[float])', code: 'lows = self.context.get_lows(bar.symbol, n=50)' },
-      { name: 'self.context.get_volumes(symbol, n)', desc: '获取最近 N 根成交量列表 (List[float])', code: 'vols = self.context.get_volumes(bar.symbol, n=50)' },
-      { name: 'bar.close / open / high / low / volume', desc: '当前 K 线切片原始字段', code: 'curr_price = bar.close\ncurr_vol = bar.volume' },
+      { name: 'bar.close / open / high / low', desc: '当前 K 线切片原始价格', code: 'curr_price = bar.close' },
+      { name: 'bar.change_pct / amplitude', desc: '涨跌幅比例 (如 +0.03) / 振幅', code: 'pct = bar.change_pct' },
+      { name: 'bar.pe / bar.pb', desc: '动态市盈率 / 市净率估值', code: 'if bar.pe and bar.pe < 15:' },
+      { name: 'bar.is_undervalued', desc: '是否低估 (分位<=20%或PE<15)', code: 'if bar.is_undervalued:' },
+      { name: 'bar.is_overvalued', desc: '是否高估 (分位>=80%或PE>50)', code: 'if bar.is_overvalued:' },
+      { name: 'bar.percentile(250)', desc: '过去 N 日价格历史分位数 (0.0~1.0)', code: 'pct = bar.percentile(250)' },
+      { name: 'bar.closes(50)', desc: '获取最近 N 根收盘价列表 (List[float])', code: 'closes = bar.closes(50)' },
     ],
   },
   {
-    category: '🛒 下单与仓位控制助手',
+    category: '🛒 账户资金与交易指令 (self)',
     items: [
-      { name: 'self.order_target_percent(symbol, pct)', desc: '将标的调至占总资产比例 (如 0.8=80%)', code: 'self.order_target_percent(bar.symbol, 0.8, reason="建仓")' },
-      { name: 'self.close_position(symbol)', desc: '将标的所有可用持仓全仓平仓', code: 'self.close_position(bar.symbol, reason="止损出场")' },
-      { name: 'self.buy(symbol, qty, price=...)', desc: '指定数量买入 (A股1手=100股)', code: 'self.buy(bar.symbol, 1000, price=bar.close, reason="加仓")' },
-      { name: 'self.sell(symbol, qty, price=...)', desc: '指定数量卖出', code: 'self.sell(bar.symbol, 1000, price=bar.close, reason="减仓")' },
-      { name: 'self.get_position(symbol)', desc: '获取当前标的持仓对象', code: 'pos = self.get_position(bar.symbol)\n# pos.quantity, pos.available_quantity, pos.avg_cost' },
-      { name: 'self.context.portfolio.cash', desc: '当前账户可用剩余现金 (CNY)', code: 'avail_cash = self.context.portfolio.cash' },
+      { name: 'self.order_target_percent(0.8)', desc: '调仓至总资产目标比例 (0.0~1.0)', code: 'self.order_target_percent(0.8, reason="建仓")' },
+      { name: 'self.close_position()', desc: '一键全仓清空当前标的持仓', code: 'self.close_position(reason="止损出场")' },
+      { name: 'self.buy(100) / sell(100)', desc: '智能买入/卖出指定股数 (自动取市价)', code: 'self.buy(100, reason="加仓")' },
+      { name: 'self.position', desc: '当前标的持仓 (支持 if self.position > 0:)', code: 'if not self.position:' },
+      { name: 'self.cash / self.equity', desc: '当前可用现金 / 动态总资产 (CNY)', code: 'if self.cash > 10000:' },
     ],
   },
 ]
@@ -667,3 +839,142 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style>
+/* CodeMirror 智能补全列表排版与高亮对齐系统 */
+.cm-tooltip.cm-tooltip-autocomplete {
+  background: rgba(22, 23, 29, 0.98) !important;
+  backdrop-filter: blur(24px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 20px 48px -8px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+  min-width: 420px !important;
+  max-width: 580px !important;
+  overflow: visible !important;
+  padding: 4px !important;
+  z-index: 10000 !important;
+}
+
+.cm-tooltip-autocomplete > ul {
+  max-height: 280px !important;
+  padding: 2px !important;
+  margin: 0 !important;
+  list-style: none !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  font-size: 12px !important;
+}
+
+.cm-tooltip-autocomplete > ul > li {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  height: 28px !important;
+  line-height: 28px !important;
+  padding: 0 10px !important;
+  border-radius: 6px !important;
+  margin: 1px 0 !important;
+  color: #d1d5db !important;
+  cursor: pointer !important;
+  transition: all 0.08s ease !important;
+}
+
+.cm-tooltip-autocomplete > ul > li:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #ffffff !important;
+}
+
+.cm-tooltip-autocomplete > ul > li[aria-selected="true"] {
+  background: linear-gradient(90deg, rgba(255, 95, 61, 0.28) 0%, rgba(255, 95, 61, 0.12) 100%) !important;
+  border-left: 2.5px solid #ff5f3d !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 95, 61, 0.2) !important;
+}
+
+.cm-completionIcon {
+  width: 18px !important;
+  height: 18px !important;
+  margin-right: 8px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  border-radius: 4px !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #94a3b8 !important;
+  flex-shrink: 0 !important;
+}
+
+.cm-completionIcon-property {
+  color: #38bdf8 !important;
+  background: rgba(56, 189, 248, 0.15) !important;
+}
+
+.cm-completionIcon-method,
+.cm-completionIcon-function {
+  color: #c084fc !important;
+  background: rgba(192, 132, 252, 0.15) !important;
+}
+
+.cm-completionIcon-keyword {
+  color: #fbbf24 !important;
+  background: rgba(251, 191, 36, 0.15) !important;
+}
+
+.cm-completionIcon-variable {
+  color: #34d399 !important;
+  background: rgba(52, 211, 153, 0.15) !important;
+}
+
+.cm-completionLabel {
+  font-weight: 500 !important;
+  color: #f3f4f6 !important;
+  margin-right: 12px !important;
+  flex-shrink: 0 !important;
+}
+
+.cm-completionMatchedText {
+  text-decoration: none !important;
+  color: #ff5f3d !important;
+  font-weight: 700 !important;
+  background: rgba(255, 95, 61, 0.25) !important;
+  border-radius: 3px !important;
+  padding: 0 2px !important;
+}
+
+.cm-completionDetail {
+  margin-left: auto !important;
+  text-align: right !important;
+  color: #9ca3af !important;
+  font-size: 11px !important;
+  font-style: normal !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", monospace !important;
+  opacity: 0.9 !important;
+  white-space: nowrap !important;
+}
+
+.cm-tooltip-autocomplete > ul > li[aria-selected="true"] .cm-completionDetail {
+  color: #fed7aa !important;
+  opacity: 1 !important;
+  font-weight: 500 !important;
+}
+
+.cm-tooltip.cm-completionInfo {
+  margin-left: 8px !important;
+  background: rgba(20, 21, 27, 0.98) !important;
+  backdrop-filter: blur(24px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.8) !important;
+  padding: 10px 14px !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif !important;
+  font-size: 12px !important;
+  line-height: 1.6 !important;
+  color: #e4e4e7 !important;
+  max-width: 380px !important;
+  z-index: 10001 !important;
+}
+</style>

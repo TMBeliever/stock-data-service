@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from quant_server.api.health import router as health_router
 from quant_server.api.strategies import router as strategies_router
 from quant_server.api.backtest import router as backtest_router
+from quant_server.api.sandbox import router as sandbox_router
 
 app = FastAPI(
     title="Quant Platform API",
@@ -24,6 +25,7 @@ app.add_middleware(
 app.include_router(health_router, prefix="/api/v1", tags=["Health"])
 app.include_router(strategies_router, prefix="/api/v1", tags=["Strategies"])
 app.include_router(backtest_router, prefix="/api/v1", tags=["Backtest"])
+app.include_router(sandbox_router, prefix="/api/v1", tags=["Sandbox"])
 
 @app.get("/")
 def root():

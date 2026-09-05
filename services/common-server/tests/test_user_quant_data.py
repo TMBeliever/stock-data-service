@@ -67,11 +67,12 @@ async def test_user_strategies_and_backtest_records():
         assert strat_data["name"] == "沪深300双均线策略"
         strat_id = strat_data["id"]
 
-        # 3. 获取策略列表 (4 套初始标准策略 + 1 套新建策略 = 5)
+        # 3. 获取策略列表 (预置初始标准策略 + 1 套新建策略)
+        from common_server.api.user_data import DEFAULT_PRESET_STRATEGIES
         list_resp = await client.get("/api/v1/user/strategies", headers=headers)
         assert list_resp.status_code == 200
         strategies = list_resp.json()
-        assert len(strategies) == 5
+        assert len(strategies) == len(DEFAULT_PRESET_STRATEGIES) + 1
         assert any(s["id"] == strat_id for s in strategies)
 
         # 4. 更新策略

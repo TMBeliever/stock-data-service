@@ -18,6 +18,7 @@ class StrategyContext:
         self.user_data: Dict[str, Any] = {}
 
     def record_bar(self, bar: Bar):
+        bar.bind_context(self)
         self.current_bars[bar.symbol] = bar
         if bar.symbol not in self.bar_history:
             self.bar_history[bar.symbol] = []

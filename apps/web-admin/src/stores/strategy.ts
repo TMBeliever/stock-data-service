@@ -102,7 +102,7 @@ from quant_core.core.models import Bar
 
 class DualMAStrategy(BaseStrategy):
     """
-    经典双均线交叉策略 (Dual Moving Average Cross)：
+    经典双均线交叉策略 (Dual Moving Average Cross - QuantCore 2.0 极简范式)：
     - MA(5) 上穿 MA(20) 金叉：以 80% 目标仓位买入建仓；
     - MA(5) 下穿 MA(20) 死叉：全部平仓落袋为安。
     """
@@ -112,28 +112,13 @@ class DualMAStrategy(BaseStrategy):
         self.slow = slow_period
 
     def on_bar(self, bar: Bar):
-        symbol = bar.symbol
-        closes = self.context.get_closes(symbol, n=self.slow + 2)
-        if len(closes) < self.slow + 1:
-            return
+        # 1. 均线金叉开仓 (Golden Cross)
+        if self.cross_over(self.fast, self.slow) and not self.position:
+            self.order_target_percent(0.8, reason="金叉开仓")
 
-        ma_fast_prev = sum(closes[-self.fast - 1 : -1]) / self.fast
-        ma_fast_curr = sum(closes[-self.fast :]) / self.fast
-
-        ma_slow_prev = sum(closes[-self.slow - 1 : -1]) / self.slow
-        ma_slow_curr = sum(closes[-self.slow :]) / self.slow
-
-        pos = self.get_position(symbol)
-
-        # 1. 金叉买入 (Golden Cross)
-        if ma_fast_prev <= ma_slow_prev and ma_fast_curr > ma_slow_curr:
-            if pos.quantity == 0:
-                self.order_target_percent(symbol, 0.8, reason="金叉开仓")
-
-        # 2. 死叉卖出 (Death Cross)
-        elif ma_fast_prev >= ma_slow_prev and ma_fast_curr < ma_slow_curr:
-            if pos.available_quantity > 0:
-                self.close_position(symbol, reason="死叉平仓")
+        # 2. 均线死叉平仓 (Death Cross)
+        elif self.cross_under(self.fast, self.slow) and self.position:
+            self.close_position(reason="死叉平仓")
 `
   },
   {
@@ -149,10 +134,10 @@ from quant_core.core.models import Bar
 
 class SmartDividendDCAStrategy(BaseStrategy):
     """
-    智能估值分位数定投策略：
-    - 在 250 日滚动窗口中计算价格历史分位数；
-    - 分位数 <= 20% (极度低估): 加码 2.0 倍基准金额买入；
-    - 分位数 >= 85% (严重高估): 减仓 20% 主动止盈防回撤。
+    智能估值分位数定投策略 (QuantCore 2.0 极简范式)：
+    - 利用 bar.percentile(250) 计算价格历史分位数；
+    - 分位数 <= 20% (bar.is_undervalued): 加码 2.0 倍基准金额买入；
+    - 分位数 >= 80% (bar.is_overvalued): 减仓 20% 主动止盈防回撤。
     """
     def __init__(self, base_amount: float = 2000.0, window: int = 250):
         super().__init__(name="SmartDCA", params={"base_amount": base_amount, "window": window})
@@ -162,34 +147,29 @@ class SmartDividendDCAStrategy(BaseStrategy):
 
     def on_bar(self, bar: Bar):
         self.bar_counter += 1
-        symbol = bar.symbol
-        closes = self.context.get_closes(symbol, n=self.window)
-        if len(closes) < 30:
-            return
-
         # 每 5 个交易日评估一次定投
         if self.bar_counter % 5 != 0:
             return
 
-        curr_price = bar.close
-        less_count = sum(1 for c in closes if c < curr_price)
-        pct = less_count / len(closes)
+        pct = bar.percentile(self.window)
 
-        pos = self.get_position(symbol)
-        portfolio = self.context.portfolio
+        # 1. 极度低估: 加倍定投抄底
+        if bar.is_undervalued and self.cash >= self.base_amount * 2:
+            qty = int((self.base_amount * 2.0) / bar.close // 100) * 100
+            if qty > 0:
+                self.buy(qty, reason=f"低估加倍定投(分位{pct:.1%})")
 
-        if pct <= 0.20 and portfolio.cash >= self.base_amount * 2:
-            qty = int((self.base_amount * 2.0) / curr_price // 100) * 100
+        # 2. 合理估值: 正常定投
+        elif pct <= 0.50 and self.cash >= self.base_amount:
+            qty = int(self.base_amount / bar.close // 100) * 100
             if qty > 0:
-                self.buy(symbol, qty, price=curr_price, reason=f"低估加倍定投(分位{pct:.1%})")
-        elif pct <= 0.50 and portfolio.cash >= self.base_amount:
-            qty = int(self.base_amount / curr_price // 100) * 100
-            if qty > 0:
-                self.buy(symbol, qty, price=curr_price, reason=f"合理估值定投(分位{pct:.1%})")
-        elif pct >= 0.85 and pos.available_quantity >= 500:
-            sell_qty = min(pos.available_quantity, int(pos.available_quantity * 0.2 // 100) * 100)
+                self.buy(qty, reason=f"合理估值定投(分位{pct:.1%})")
+
+        # 3. 严重高估泡沫: 主动止盈 20%
+        elif bar.is_overvalued and self.position.available_quantity >= 500:
+            sell_qty = min(self.position.available_quantity, int(self.position.available_quantity * 0.2 // 100) * 100)
             if sell_qty > 0:
-                self.sell(symbol, sell_qty, price=curr_price, reason=f"高估主动止盈(分位{pct:.1%})")
+                self.sell(sell_qty, reason=f"高估主动止盈(分位{pct:.1%})")
 `
   },
   {
@@ -205,43 +185,35 @@ from quant_core.core.models import Bar
 
 class GridTradingStrategy(BaseStrategy):
     """
-    动态自适应网格策略：
-    - 以 60 日均线为中枢基准；
-    - 价格下跌超 2.5% 触及下轨分批加仓；
-    - 价格上涨超 2.5% 触及上轨获利止盈。
+    动态自适应网格策略 (QuantCore 2.0 极简范式)：
+    - 初始建立 40% 底仓；
+    - 价格下跌超 2.5% 触及网格下轨低吸加仓；
+    - 价格上涨超 2.5% 触及网格上轨高抛止盈。
     """
     def __init__(self, step_pct: float = 0.025, base_shares: int = 1000):
-        super().__init__(name="GridTrading", params={"step": step_pct})
+        super().__init__(name="GridTrading", params={"step": step_pct, "shares": base_shares})
         self.step_pct = step_pct
         self.base_shares = base_shares
         self.last_trade_price = 0.0
 
     def on_bar(self, bar: Bar):
-        symbol = bar.symbol
-        closes = self.context.get_closes(symbol, n=60)
-        if len(closes) < 30:
-            return
-
-        curr_price = bar.close
-        pos = self.get_position(symbol)
-
-        # 初始建底仓
+        # 1. 初始建底仓
         if self.last_trade_price == 0.0:
-            self.order_target_percent(symbol, 0.4, reason="网格初始化底仓")
-            self.last_trade_price = curr_price
+            self.order_target_percent(0.4, reason="网格初始化底仓")
+            self.last_trade_price = bar.close
             return
 
-        # 下跌触及网格下轨加仓
-        if curr_price <= self.last_trade_price * (1.0 - self.step_pct):
-            if self.context.portfolio.cash >= curr_price * self.base_shares:
-                self.buy(symbol, self.base_shares, price=curr_price, reason="网格低吸加仓")
-                self.last_trade_price = curr_price
+        # 2. 下跌触及网格下轨加仓
+        if bar.close <= self.last_trade_price * (1.0 - self.step_pct):
+            if self.cash >= bar.close * self.base_shares:
+                self.buy(self.base_shares, reason="网格低吸加仓")
+                self.last_trade_price = bar.close
 
-        # 上涨触及网格上轨止盈
-        elif curr_price >= self.last_trade_price * (1.0 + self.step_pct):
-            if pos.available_quantity >= self.base_shares:
-                self.sell(symbol, self.base_shares, price=curr_price, reason="网格高抛止盈")
-                self.last_trade_price = curr_price
+        # 3. 上涨触及网格上轨高抛止盈
+        elif bar.close >= self.last_trade_price * (1.0 + self.step_pct):
+            if self.position.available_quantity >= self.base_shares:
+                self.sell(self.base_shares, reason="网格高抛止盈")
+                self.last_trade_price = bar.close
 `
   },
   {
@@ -257,9 +229,9 @@ from quant_core.core.models import Bar
 
 class ExtremeDipHeavyStrategy(BaseStrategy):
     """
-    极端急跌重仓抄底策略：
+    极端急跌重仓抄底策略 (QuantCore 2.0 极简范式)：
     - 监控 120 日内最高价的高位回撤幅度；
-    - 当自高点回撤超过 15% 且触底阳线反弹时，果断调仓至 90% 仓位重仓抄底；
+    - 当自高点回撤超过 15% 且当前无持仓时，果断调仓至 90% 仓位重仓抄底；
     - 当价格重回 60 日均线之上时，分批结利降低风险暴露。
     """
     def __init__(self, dip_threshold: float = 0.15, ma_period: int = 60):
@@ -268,25 +240,108 @@ class ExtremeDipHeavyStrategy(BaseStrategy):
         self.ma_period = ma_period
 
     def on_bar(self, bar: Bar):
-        symbol = bar.symbol
-        closes = self.context.get_closes(symbol, n=120)
-        if len(closes) < 60:
+        peak_high = bar.highest(120)
+        if peak_high <= 0:
             return
 
-        max_close = max(closes)
-        curr_price = bar.close
-        drawdown_from_peak = (max_close - curr_price) / max_close
-        pos = self.get_position(symbol)
+        drawdown_from_peak = (peak_high - bar.close) / peak_high
 
-        ma_val = sum(closes[-self.ma_period :]) / self.ma_period
+        # 1. 触发极端超跌：一次性 90% 仓位重仓建仓
+        if drawdown_from_peak >= self.dip_threshold and not self.position:
+            self.order_target_percent(0.90, reason=f"暴跌{drawdown_from_peak:.1%}极端抄底")
 
-        # 触发极端超跌：一次性重仓建仓
-        if drawdown_from_peak >= self.dip_threshold and pos.quantity == 0:
-            self.order_target_percent(symbol, 0.90, reason=f"暴跌{drawdown_from_peak:.1%}极端抄底")
+        # 2. 价格回归均线之上：减仓至 20% 止盈
+        elif bar.close > bar.sma(self.ma_period) and self.position:
+            self.order_target_percent(0.20, reason="价格回归均线减仓止盈")
+`
+  },
+  {
+    id: -5,
+    user_id: 0,
+    name: '达利欧全球全天候大类资产配置策略 (Ray Dalio All-Weather)',
+    description: '全球经典风险平价多资产配置，按30%股票、40%长债、15%中债、7.5%黄金、7.5%商品定期动态再平衡，穿越宏观经济四象限',
+    symbol: '510300.SH.ETF',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    code: `from quant_core.core.base_strategy import BaseStrategy
+from quant_core.core.models import Bar
 
-        # 均线修复出场
-        elif curr_price > ma_val and pos.available_quantity > 0:
-            self.order_target_percent(symbol, 0.20, reason="价格回归均线减仓止盈")
+class AllWeatherStrategy(BaseStrategy):
+    """
+    达利欧全球全天候大类资产配置策略 (Ray Dalio All-Weather Portfolio - QuantCore 2.0)：
+    - 股票权益 (30%): 捕捉经济繁荣增长红利 (如 510300 沪深300 / 标普500)
+    - 长期债券 (40%): 抵御经济衰退通缩危机 (如 511010 国债ETF)
+    - 中期纯债 (15%): 平滑组合净值波动与流动性
+    - 黄金资产 (7.5%): 抵御货币超发与通胀风险 (如 518880 黄金ETF)
+    - 大宗商品 (7.5%): 抵御恶性通货膨胀与供应链冲击
+    """
+    def __init__(
+        self,
+        stock_weight: float = 0.30,
+        long_bond_weight: float = 0.40,
+        inter_bond_weight: float = 0.15,
+        gold_weight: float = 0.075,
+        commodity_weight: float = 0.075,
+        rebalance_band: float = 0.03,
+        rebalance_interval: int = 20,
+        single_symbol_target: float = 0.40
+    ):
+        params = {
+            "stock_weight": stock_weight,
+            "long_bond_weight": long_bond_weight,
+            "inter_bond_weight": inter_bond_weight,
+            "gold_weight": gold_weight,
+            "commodity_weight": commodity_weight,
+            "rebalance_band": rebalance_band,
+            "rebalance_interval": rebalance_interval,
+            "single_symbol_target": single_symbol_target
+        }
+        super().__init__(name="RayDalioAllWeather", params=params)
+        self.stock_weight = stock_weight
+        self.long_bond_weight = long_bond_weight
+        self.inter_bond_weight = inter_bond_weight
+        self.gold_weight = gold_weight
+        self.commodity_weight = commodity_weight
+        self.rebalance_band = rebalance_band
+        self.rebalance_interval = rebalance_interval
+        self.single_symbol_target = single_symbol_target
+        self.counter = 0
+
+    def _determine_symbol_target_weight(self, symbol: str) -> float:
+        sym_lower = symbol.lower()
+        if any(kw in sym_lower for kw in ["518880", "159934", "gold", "黄金"]):
+            return self.gold_weight
+        elif any(kw in sym_lower for kw in ["511010", "511260", "bond", "国债"]):
+            return self.long_bond_weight
+        elif any(kw in sym_lower for kw in ["159981", "commodity", "豆粕", "商品"]):
+            return self.commodity_weight
+        elif any(kw in sym_lower for kw in ["510300", "510500", "stock", "etf", "300"]):
+            return self.stock_weight
+        return self.single_symbol_target
+
+    def on_bar(self, bar: Bar):
+        self.counter += 1
+        # 每隔固定周期进行组合再平衡 (或首根 K 线初始建仓)
+        if self.counter % self.rebalance_interval != 0 and self.counter != 1:
+            return
+
+        total_equity = self.equity
+        if total_equity <= 0:
+            return
+
+        target_pct = self._determine_symbol_target_weight(bar.symbol)
+        pos = self.positions.get(bar.symbol)
+        current_mv = pos.market_value if pos else 0.0
+        current_pct = current_mv / total_equity
+
+        # 首次建仓或偏离度突破容忍带宽时触发再平衡
+        if self.counter == 1 or abs(current_pct - target_pct) >= self.rebalance_band:
+            action = "全天候初始建仓" if self.counter == 1 else ("止盈降权" if current_pct > target_pct else "低位补齐增配")
+            self.order_target_percent(
+                bar.symbol,
+                target_pct,
+                reason=f"All-Weather {action} ({current_pct:.1%} -> {target_pct:.1%})"
+            )
 `
   }
 ]
@@ -294,7 +349,7 @@ class ExtremeDipHeavyStrategy(BaseStrategy):
 const STORAGE_CODE_KEY = 'quantscope_custom_strategy_code'
 
 export const useStrategyStore = defineStore('strategy', () => {
-  // 1. 用户专属云端策略库状态（默认为预置的 4 套初始策略）
+  // 1. 用户专属云端策略库状态（默认为预置的 5 套初始策略）
   const userStrategies = ref<UserStrategyItem[]>([...DEFAULT_INITIAL_STRATEGIES])
   const activeStrategyId = ref<number | null>(DEFAULT_INITIAL_STRATEGIES[0].id)
   const activeStrategyName = ref<string>(DEFAULT_INITIAL_STRATEGIES[0].name)
@@ -662,30 +717,56 @@ class MyCustomStrategy(BaseStrategy):
 
     try {
       const systemPrompt = `你是一位精通 A 股与 ETF 交易的顶尖量化架构师，为 QuantScope 平台服务。
-平台策略继承 BaseStrategy，核心方法与内置指标库：
-1. 生命周期与时序:
-   - on_bar(self, bar: Bar): 必选入口回调
-   - bar.close, bar.open, bar.high, bar.low, bar.volume
-   - self.context.get_closes(symbol, n): 获取最近 n 根收盘价列表 (List[float])
-   - self.context.get_highs(symbol, n): 获取最近 n 根最高价列表
-   - self.context.get_lows(symbol, n): 获取最近 n 根最低价列表
-   - self.context.get_volumes(symbol, n): 获取最近 n 根成交量列表
-2. 内置技术指标函数 (沙箱全局直接可用，也可导入):
-   - sma(prices, period): 简单移动均线
-   - ema(prices, period): 指数移动均线
-   - rsi(prices, period=14): 相对强弱指标 (0~100)
-   - macd(prices, fast=12, slow=26, signal=9): 返回 (dif, dea, hist)
-   - bollinger_bands(prices, period=20, num_std=2.0): 返回 (upper, mid, lower)
-   - atr(highs, lows, closes, period=14): 真实波幅均值
-3. 交易下达与持仓:
-   - self.order_target_percent(symbol, target_pct, reason): 目标仓位调仓 (0.0~1.0)
-   - self.close_position(symbol, reason): 全仓平仓
-   - self.buy(symbol, qty, price, reason) / self.sell(symbol, qty, price, reason)
-   - self.get_position(symbol): 获取 Position (pos.quantity, pos.available_quantity, pos.avg_cost)
-要求：
-1. 策略代码必须完整规范，包含类定义与继承。
-2. 避免未来函数，必须做历史序列长度检查 (如 if len(closes) < period: return)。
-3. 如果生成代码，请始终用 \`\`\`python ... \`\`\` 包裹，便于前端一键识别应用。`
+平台策略继承 BaseStrategy (QuantCore 2.0 极简流式架构)，核心规范与内置 API 如下：
+
+1. 标的行情与指标全部挂载在 bar 上 (自然流式语法，免去繁琐导入与计算):
+   - 实时行情切片: bar.close, bar.open, bar.high, bar.low, bar.volume, bar.change_pct, bar.prev_close
+   - 估值与基本面: bar.pe (市盈率), bar.pb (市净率), bar.ps, bar.turnover_rate (换手率)
+   - 智能估值分析: bar.percentile(250) (过去N日分位数0.0~1.0), bar.is_undervalued (<=20%严重低估), bar.is_overvalued (>=80%严重泡沫)
+   - 标的技术指标与算子 (直接在 bar 上调用):
+     * bar.sma(period=20) / bar.ema(period=20)
+     * bar.rsi(period=14)
+     * bar.macd() -> 返回 (dif, dea, hist)
+     * bar.atr(period=14)
+     * bar.highest(period=20) / bar.lowest(period=20)
+     * bar.cross_over(fast=5, slow=20) -> 金叉快捷判断 (支持周期整数或列表)
+     * bar.cross_under(fast=5, slow=20) -> 死叉快捷判断
+   - 标的历史切片列表: bar.closes(50), bar.highs(50), bar.lows(50), bar.history(50)
+
+2. 账户资金、持仓与交易指令挂载在 self 上 (极简上下文感知):
+   - self.cash: 当前可用现金 (float)
+   - self.equity: 组合动态总资产 (float)
+   - self.position: 当前标的持仓对象 (原生支持 if not self.position: 或 if self.position: 或 if self.position > 0:)
+   - self.positions: 多标的持仓字典 {symbol: Position}
+   - self.order_target_percent(0.8, reason="建仓") -> 调至目标仓位 (单标的省略 symbol，多标的传 symbol)
+   - self.close_position(reason="平仓") -> 全仓清空当前标的持仓
+   - self.buy(100, reason="买入") / self.sell(100, reason="卖出")
+
+3. 标准策略代码模版骨架示例 (必须遵循此类结构与命名):
+\`\`\`python
+from quant_core.core.base_strategy import BaseStrategy
+from quant_core.core.models import Bar
+
+class MyStrategy(BaseStrategy):
+    def __init__(self, fast_period: int = 5, slow_period: int = 20):
+        super().__init__(name="MyStrategy", params={"fast": fast_period, "slow": slow_period})
+        self.fast = fast_period
+        self.slow = slow_period
+
+    def on_bar(self, bar: Bar):
+        # 1. 均线金叉且无持仓：以 80% 目标仓位买入
+        if bar.cross_over(self.fast, self.slow) and not self.position:
+            self.order_target_percent(0.8, reason="金叉开仓")
+
+        # 2. 均线死叉且有持仓：全部平仓避险
+        elif bar.cross_under(self.fast, self.slow) and self.position:
+            self.close_position(reason="死叉平仓")
+\`\`\`
+
+代码生成要求：
+1. 策略代码必须完整规范，包含类定义与 BaseStrategy 继承，可直接在沙箱执行。
+2. 避免未来函数，必须做数据预热检查 (如 if len(self.bars) < 25: return 或 if bar.sma(20) == 0: return)。
+3. 如果生成代码，必须使用 \`\`\`python ... \`\`\` 代码块包裹，以便用户一键载入编辑器。`
 
       const resp = await fetch('/api/v1/ai/stream', {
         method: 'POST',

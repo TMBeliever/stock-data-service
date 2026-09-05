@@ -27,6 +27,29 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@': path.resolve(__dirname, './src'),
       },
+      dedupe: [
+        'vue',
+        '@codemirror/state',
+        '@codemirror/view',
+        '@codemirror/language',
+        '@codemirror/commands',
+        '@codemirror/autocomplete',
+        'codemirror',
+        'vue-codemirror',
+      ],
+    },
+    optimizeDeps: {
+      include: [
+        '@codemirror/state',
+        '@codemirror/view',
+        '@codemirror/language',
+        '@codemirror/commands',
+        '@codemirror/autocomplete',
+        '@codemirror/lang-python',
+        '@codemirror/theme-one-dark',
+        'codemirror',
+        'vue-codemirror',
+      ],
     },
     server: {
       port: 5174,

@@ -65,7 +65,7 @@ class AgentChatRequest(BaseModel):
     system_prompt: Optional[str] = Field(None, description="可选覆盖系统提示词")
     page_context: Optional[str] = Field("", description="调用来源前端情境 (如 'strategy' 或 'market')")
     model: Optional[str] = Field(None, description="指定模型名称 (如 gemini-3.7-flash)")
-    provider: Optional[str] = Field("key", description="底层驱动类型 (固定 key)")
+    provider: Optional[str] = Field(None, description="底层驱动类型 ('key' 或 'cli')")
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="采样随机度")
     thinking_level: Optional[str] = Field("medium", description="思考程度 ('off' | 'low' | 'medium' | 'high')")
     project_id: Optional[str] = Field(None, description="所属项目 ID")
@@ -384,7 +384,7 @@ async def chat_stream(req: AgentChatRequest, auth: UserAuth = Depends(get_curren
     stream = quant_agent.chat_stream(
         messages=messages,
         model=req.model or cfg.default_model or "minimax/minimax-m3:free",
-        provider="key",  # 严格锁定 API Key 驱动模式
+        provider=req.provider or "key",
         system_prompt=req.system_prompt,
         page_context=page_ctx,
         temperature=temp,

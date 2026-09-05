@@ -14,10 +14,10 @@ class AIConfig(BaseSettings):
     HTTP_MAX_RETRIES: int = 2
 
     # CLI 命令行驱动配置
-    # 命令可执行程序名称或绝对路径 (例如 'claude', 'codex', 或本地自定义 agent cli)
-    CLI_EXECUTABLE: str = "claude"
-    # 参数模板：支持 {prompt} 占位符，若无 {prompt} 则通过标准输入 stdin 管道传入
-    CLI_ARGS: List[str] = ["-p", "{prompt}"]
+    # 命令可执行程序名称或绝对路径 (例如 'agy', 'claude', 'codex', 或本地自定义 agent cli)
+    CLI_EXECUTABLE: str = "agy"
+    # 参数模板：支持 {prompt} 占位符，-y (YOLO 模式自动执行无需交互确认)
+    CLI_ARGS: List[str] = ["-p", "{prompt}", "-y"]
     CLI_TIMEOUT: float = 120.0
     CLI_CWD: Optional[str] = None
 

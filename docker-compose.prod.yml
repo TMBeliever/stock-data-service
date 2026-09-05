@@ -66,7 +66,7 @@ services:
 
 
   # =========================================================================
-  # 3. AI 大模型推演底座与网关 (API Key 驱动)
+  # 3. AI 大模型推演底座与网关 (支持 API Key 与宿主机 agy CLI 双模驱动)
   # =========================================================================
   ai-core:
     build:
@@ -79,7 +79,17 @@ services:
     environment:
       - AI_OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://43.155.186.45:3000/v1}
       - AI_OPENAI_API_KEY=${OPENAI_API_KEY:-sk-W91gp63k2tmArgtL8wxIMoQaYj8CmFtumeF9T34xSpuIZj34}
-      - AI_DEFAULT_PROVIDER=key
+      - AI_DEFAULT_PROVIDER=${AI_DEFAULT_PROVIDER:-key}
+      - AI_CLI_EXECUTABLE=${AI_CLI_EXECUTABLE:-agy}
+    volumes:
+      # 挂载宿主机二进制工具目录，使容器可直接调用宿主机安装的 agy 及外部工具
+      - /usr/local:/host_usr_local:ro
+      - /usr/local/bin:/host_usr_local_bin:ro
+      - /usr/bin:/host_usr_bin:ro
+      # 挂载宿主机 /root 目录（包含 .gemini, .antigravity 认证凭据、.local/bin、.nvm）
+      - /root:/host_root:ro
+      # 挂载宿主机 /home 目录（支持普通用户凭据与环境探测）
+      - /home:/host_home:ro
     networks:
       - quant-net
 

@@ -9,6 +9,9 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
+    nodejs \
+    npm \
+    && (which node || ln -s $(which nodejs) /usr/local/bin/node 2>/dev/null || true) \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:0.4.29 /uv /bin/uv

@@ -13,14 +13,16 @@ DANGEROUS_COMMAND_SUBSTRINGS = [
     "> /dev/sda",
 ]
 
-@tool(name="run_command", description="安全执行系统 Shell 命令行并获取标准输出与错误信息，支持流式日志推送", category="shell")
+@tool(name="run_command", description="安全执行系统 Shell 命令行并获取标准输出与错误信息，支持流式日志推送与指定工作目录 (cwd)", category="shell")
 async def run_command(
     command: str,
+    cwd: Optional[str] = None,
     timeout: int = 60,
     on_progress: Optional[Callable[[str], Any]] = None
 ) -> str:
     """
     :param command: 待执行的终端命令字符串
+    :param cwd: 可选的工作目录路径 (若留空则在默认环境根目录运行)
     :param timeout: 超时秒数 (默认 60 秒)
     """
     for blocked in DANGEROUS_COMMAND_SUBSTRINGS:
@@ -31,7 +33,8 @@ async def run_command(
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd
         )
         
         stdout_lines: List[str] = []

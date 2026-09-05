@@ -31,20 +31,58 @@ DESTRUCTIVE_COMMAND_BLACKLIST = [
     "reboot -f",
 ]
 
+def map_host_path_to_container(path_str: str) -> str:
+    """
+    智能路径重映射：
+    若当前处于 Docker 容器内部，宿主机的 /root 挂载在 /host_root，/home 挂载在 /host_home。
+    自动将宿主机路径重映射为容器内真实可访问的有效路径。
+    """
+    if not path_str:
+        return path_str
+
+    clean_p = path_str.strip()
+    if clean_p.startswith("/root") and Path("/host_root").exists():
+        rel = clean_p[len("/root"):].lstrip("/\\")
+        candidate = Path("/host_root") / rel if rel else Path("/host_root")
+        if candidate.exists():
+            return str(candidate)
+    elif clean_p.startswith("/home") and Path("/host_home").exists():
+        rel = clean_p[len("/home"):].lstrip("/\\")
+        candidate = Path("/host_home") / rel if rel else Path("/host_home")
+        if candidate.exists():
+            return str(candidate)
+    return clean_p
+
 def _resolve_safe_path(rel_or_abs_path: str) -> Path:
-    """校验并转换安全工作区路径，防止路径遍历穿越攻击"""
+    """校验并转换安全工作区路径，防止路径遍历穿越攻击，同时支持挂载工程与宿主机探测目录"""
+    mapped = map_host_path_to_container(rel_or_abs_path)
     workspace = Path(agent_config.WORKSPACE_ROOT).resolve()
-    target = Path(rel_or_abs_path)
+    target = Path(mapped)
     if not target.is_absolute():
         target = (workspace / target).resolve()
     else:
         target = target.resolve()
 
-    # 路径安全检查：必须位于工作区范围内，或是系统临时安全目录
-    try:
-        target.relative_to(workspace)
-    except ValueError:
-        raise PermissionError(f"Access denied: Path '{rel_or_abs_path}' is outside workspace root '{workspace}'")
+    # 安全目录白名单列表 (包括应用工作区、数据持久卷、宿主机挂载点)
+    allowed_roots = [
+        workspace,
+        Path("/app/data").resolve() if Path("/app/data").exists() else None,
+        Path("/host_home").resolve() if Path("/host_home").exists() else None,
+        Path("/host_root").resolve() if Path("/host_root").exists() else None,
+    ]
+    allowed_roots = [r for r in allowed_roots if r is not None]
+
+    is_safe = False
+    for root in allowed_roots:
+        try:
+            target.relative_to(root)
+            is_safe = True
+            break
+        except ValueError:
+            continue
+
+    if not is_safe:
+        raise PermissionError(f"Access denied: Path '{rel_or_abs_path}' is outside permitted workspace roots")
     return target
 
 # ==========================================
@@ -391,7 +429,10 @@ async def admin_docker_manage(action: str, args: str = "", on_progress: Optional
     # compose 类命令需在宿主机项目目录下运行（容器内无法找到 docker-compose.prod.yml）
     if action.startswith("compose"):
         host_root = os.getenv("HOST_PROJECT_ROOT", "").strip()
-        if host_root and host_root != agent_config.WORKSPACE_ROOT:
+        mapped_host = map_host_path_to_container(host_root) if host_root else ""
+        if mapped_host and Path(mapped_host).exists():
+            command = f"cd {mapped_host} && {command}"
+        elif host_root and host_root != agent_config.WORKSPACE_ROOT:
             # 切换到宿主机项目目录执行 compose 命令
             command = f"cd {host_root} && {command}"
 
@@ -403,16 +444,18 @@ async def admin_docker_manage(action: str, args: str = "", on_progress: Optional
 
 @tool(
     name="admin_execute_shell",
-    description="【超级管理员专属】在部署服务器上执行系统运维 Shell 指令 (如 apt update, systemctl, git pull, uv sync, pnpm build, netstat 等)。内置灾难级高危命令拦截防护与流式日志分发。",
+    description="【超级管理员专属】在部署服务器或当前激活工程目录下执行系统运维 Shell 指令 (如 git status, git pull, uv sync, pnpm build, netstat 等)。支持传入 cwd 参数指定工程目录，内置宿主机路径自动重映射与破坏性指令拦截。",
     category="admin_devops"
 )
 async def admin_execute_shell(
     command: str,
+    cwd: Optional[str] = None,
     timeout: int = 120,
     on_progress: Optional[Callable[[str], Any]] = None
 ) -> str:
     """
     :param command: 待执行的终端命令字符串
+    :param cwd: 可选的工作目录绝对路径或相对路径 (若针对当前激活工程，请务必传入该工程路径)
     :param timeout: 超时秒数 (默认 120 秒)
     """
     cmd_lower = command.lower()
@@ -420,12 +463,22 @@ async def admin_execute_shell(
         if blocked in cmd_lower:
             return f"Security Intercepted: 命中灾难级系统破坏黑名单指令 '{blocked}'，已被安全熔断拦截！"
 
+    # 解析与转换目标工作目录 (支持宿主机挂载路径映射)
+    target_cwd = agent_config.WORKSPACE_ROOT
+    if cwd and cwd.strip():
+        mapped_cwd = map_host_path_to_container(cwd.strip())
+        p = Path(mapped_cwd)
+        if p.exists() and p.is_dir():
+            target_cwd = str(p.resolve())
+        else:
+            logger.warning("Specified cwd '%s' (mapped: '%s') does not exist, falling back to %s", cwd, mapped_cwd, target_cwd)
+
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=agent_config.WORKSPACE_ROOT
+            cwd=target_cwd
         )
 
         stdout_lines: List[str] = []
@@ -466,11 +519,32 @@ async def admin_execute_shell(
         stderr = "".join(stderr_lines).strip()
         exit_code = proc.returncode
 
-        output_parts = [f"=== Shell Exit Code: {exit_code} ==="]
+        output_parts = [
+            f"=== Shell Exit Code: {exit_code} ===",
+            f"Working Dir: {target_cwd}"
+        ]
         if stdout:
             output_parts.append(f"STDOUT:\n{stdout}")
         if stderr:
             output_parts.append(f"STDERR:\n{stderr}")
+
+        # 若为 Git 报错，附加针对性排查诊断，避免用户误解为缺少 git 命令
+        if "fatal: not a git repository" in stderr.lower():
+            output_parts.append(
+                "💡 [诊断提示]: Git 执行报错：当前工作目录不是 Git 仓库（缺少 .git 目录）。\n"
+                f"当前执行工作目录为: {target_cwd}\n"
+                "• 若该工程为直接上传的代码压缩包或未初始化目录，请先在该目录下执行 `git init` 或在宿主机上通过 `git clone` 检出。\n"
+                "• 若该工程是挂载的宿主机工程，请确认工作目录 cwd 是否正确指向了含有 .git 的实际工程根路径。"
+            )
+        elif "fatal: detected dubious ownership in repository" in stderr.lower():
+            output_parts.append(
+                "💡 [诊断提示]: Git 检测到目录属主不同（由于容器以 root 运行而宿主机文件为普通用户所有）。\n"
+                f"可通过执行 `git config --global --add safe.directory {target_cwd}` 解除安全限制。"
+            )
+        elif "read-only file system" in stderr.lower():
+            output_parts.append(
+                "💡 [诊断提示]: 当前挂载目录为只读文件系统 (:ro)，Git 无法写入元数据或更新文件。请在 docker-compose 中调整挂载权限为读写。"
+            )
 
         return "\n\n".join(output_parts)
     except Exception as e:

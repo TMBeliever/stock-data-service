@@ -53,10 +53,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # 会话历史树与挂载项目持久化卷
       - agent_workspace_storage:/app/data
-      # 挂载宿主机 /home 目录，支持普通用户部署工程探测
-      - /home:/host_home:ro
-      # 挂载宿主机 /root 目录，支持 root 用户部署工程探测（只读）
-      - /root:/host_root:ro
+      # 挂载宿主机 /home 目录，支持普通用户工程探测、代码编辑与 Git 协同
+      - /home:/host_home
+      # 挂载宿主机 /root 目录，支持 root 用户工程探测、代码编辑与 Git 协同
+      - /root:/host_root
     depends_on:
       - ai-core
       - quant-server

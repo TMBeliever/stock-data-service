@@ -3,6 +3,7 @@ import { ref, nextTick, watch } from 'vue'
 import { marked } from 'marked'
 import { useStrategyStore } from '@/stores/strategy'
 import { useAuthStore } from '@/stores/auth'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const strategyStore = useStrategyStore()
 const authStore = useAuthStore()
@@ -57,9 +58,13 @@ function handleQuickPrompt(promptText: string) {
   scrollToBottom()
 }
 
-function copyCode(code: string) {
-  navigator.clipboard.writeText(code)
-  showToast('📋 代码已复制到剪贴板')
+async function copyCode(code: string) {
+  const ok = await copyToClipboard(code)
+  if (ok) {
+    showToast('📋 代码已复制到剪贴板')
+  } else {
+    showToast('⚠️ 复制失败，请尝试手动选中文本复制')
+  }
 }
 
 function applyCode(code: string) {

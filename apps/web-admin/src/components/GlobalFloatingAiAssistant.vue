@@ -3,6 +3,12 @@ import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { renderMarkdown, highlightCodeSnippet } from '@/utils/markdown'
+import {
+  copyToClipboard,
+  formatToolchainMarkdown,
+  formatSingleToolCall,
+  formatFullMessageForCopy
+} from '@/utils/clipboard'
 import { useAiStore } from '@/stores/ai'
 import { useAuthStore } from '@/stores/auth'
 import { useStrategyStore } from '@/stores/strategy'
@@ -211,9 +217,43 @@ function onTextareaKeydown(e: KeyboardEvent) {
   }
 }
 
-function copyText(code: string) {
-  navigator.clipboard.writeText(code)
-  showToast('📋 已复制到剪贴板')
+async function copyText(code: string, successMsg = '📋 已复制到剪贴板') {
+  if (!code && code !== '') {
+    showToast('⚠️ 内容为空，无需复制')
+    return
+  }
+  const ok = await copyToClipboard(code)
+  if (ok) {
+    showToast(successMsg)
+  } else {
+    showToast('⚠️ 复制失败，请尝试手动选中文本复制')
+  }
+}
+
+async function copyToolchain(toolCalls: any[]) {
+  if (!toolCalls || toolCalls.length === 0) {
+    showToast('⚠️ 无工具链记录')
+    return
+  }
+  const md = formatToolchainMarkdown(toolCalls)
+  await copyText(md, `📋 已复制全部 ${toolCalls.length} 步工具链及执行结果`)
+}
+
+async function copySingleTool(tc: any) {
+  if (!tc) return
+  const md = formatSingleToolCall(tc)
+  const name = formatToolName(tc.name)
+  await copyText(md, `📋 已复制工具 [${name}] 执行详情`)
+}
+
+async function copyFullMessage(msg: any) {
+  if (!msg) return
+  const fullText = formatFullMessageForCopy(msg)
+  if (!fullText) {
+    showToast('⚠️ 消息内容为空')
+    return
+  }
+  await copyText(fullText, '📋 已复制完整回答 (包含工具链及推演结论)')
 }
 
 function applyCodeToEditor(code: string) {
@@ -1431,17 +1471,32 @@ onUnmounted(() => {
                       </div>
                     </div>
 
-                    <!-- 右侧折叠指示符 -->
-                    <div class="flex items-center space-x-1 text-zinc-400 text-[11px] group-hover:text-zinc-300 transition-colors">
-                      <span>{{ isToolchainExpanded(msg) ? '收起详情' : '展开详情' }}</span>
-                      <svg
-                        :class="['w-3.5 h-3.5 transition-transform duration-200', isToolchainExpanded(msg) ? 'rotate-180' : '']"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
+                    <!-- 右侧折叠指示符与复制按钮 -->
+                    <div class="flex items-center space-x-2 text-zinc-400 text-[11px]">
+                      <!-- 一键复制全部工具链 -->
+                      <button
+                        @click.stop="copyToolchain(msg.toolCalls)"
+                        class="px-2 py-0.5 rounded text-[10px] text-zinc-400 hover:text-white hover:bg-white/[0.08] transition-colors flex items-center space-x-1 cursor-pointer"
+                        title="一键复制全部工具调用参数与执行结果"
                       >
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                      </svg>
+                        <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                        <span>复制工具链</span>
+                      </button>
+
+                      <div class="flex items-center space-x-1 group-hover:text-zinc-300 transition-colors">
+                        <span>{{ isToolchainExpanded(msg) ? '收起详情' : '展开详情' }}</span>
+                        <svg
+                          :class="['w-3.5 h-3.5 transition-transform duration-200', isToolchainExpanded(msg) ? 'rotate-180' : '']"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
                     </div>
                   </div>
 
@@ -1463,7 +1518,7 @@ onUnmounted(() => {
                           <span class="text-zinc-500 text-[10px]">({{ tc.name }})</span>
                         </div>
 
-                        <!-- 单项状态标识 -->
+                        <!-- 单项状态标识与操作 -->
                         <div class="flex items-center space-x-1.5">
                           <span
                             v-if="tc.status === 'calling'"
@@ -1497,6 +1552,18 @@ onUnmounted(() => {
                           >
                             ✕ 异常
                           </span>
+
+                          <!-- 复制单项工具调用参数与结果 -->
+                          <button
+                            @click.stop="copySingleTool(tc)"
+                            class="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-white/[0.08] transition-colors cursor-pointer"
+                            title="复制该工具调用详情"
+                          >
+                            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                          </button>
                         </div>
                       </div>
 
@@ -1532,7 +1599,16 @@ onUnmounted(() => {
                         >
                           <div class="text-zinc-500 pb-1 border-b border-white/[0.04] flex items-center justify-between mb-1.5 text-[9px] select-none">
                             <span>&gt;_ 终端输出 (STDOUT/STDERR)</span>
-                            <span v-if="tc.status === 'calling'" class="text-amber-400 animate-pulse font-bold">● LIVE</span>
+                            <div class="flex items-center space-x-2">
+                              <span v-if="tc.status === 'calling'" class="text-amber-400 animate-pulse font-bold">● LIVE</span>
+                              <button
+                                @click.stop="copyText(tc.liveOutput || tc.outputPreview, '📋 终端输出已复制')"
+                                class="hover:text-zinc-200 transition-colors cursor-pointer flex items-center space-x-0.5 px-1.5 py-0.2 rounded hover:bg-white/[0.08]"
+                                title="复制终端完整输出"
+                              >
+                                <span>复制输出</span>
+                              </button>
+                            </div>
                           </div>
                           <span>{{ tc.liveOutput || tc.outputPreview }}</span>
                           <span v-if="tc.status === 'calling'" class="inline-block w-1.5 h-3 bg-emerald-400 ml-0.5 animate-pulse align-middle"></span>
@@ -1585,18 +1661,49 @@ onUnmounted(() => {
                 </div>
 
                 <!-- 消息操作条 (Codex 风格：紧凑贴合，鼠标悬停在消息块时展示时间与复制) -->
-                <div class="h-3.5 mt-0.5 flex items-center space-x-1.5 text-[10px] text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity duration-150 select-none">
+                <div class="h-4 mt-1 flex items-center space-x-2 text-[10px] text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity duration-150 select-none">
                   <span class="text-[10px] font-sans text-zinc-400 tracking-tight">{{ formatWeekdayTime(msg.timestamp) }}</span>
+
+                  <!-- 若消息包含工具链，提供一键复制完整记录（含工具链与输出） -->
                   <button
-                    @click="copyText(msg.content)"
-                    class="p-0.5 rounded hover:bg-white/[0.08] hover:text-white transition-colors cursor-pointer flex items-center space-x-1"
-                    title="复制回答内容"
+                    v-if="msg.toolCalls && msg.toolCalls.length > 0"
+                    @click="copyFullMessage(msg)"
+                    class="p-0.5 px-1.5 rounded hover:bg-white/[0.08] hover:text-white transition-colors cursor-pointer flex items-center space-x-1 text-purple-300 hover:text-purple-200"
+                    title="复制完整推演记录（包含工具链步骤、命令输出与结论）"
                   >
                     <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                     </svg>
-                    <span>复制</span>
+                    <span>复制完整记录</span>
+                  </button>
+
+                  <!-- 复制正文内容按钮 -->
+                  <button
+                    v-if="msg.content && msg.content.trim()"
+                    @click="copyText(msg.content, '📋 正文已复制到剪贴板')"
+                    class="p-0.5 px-1.5 rounded hover:bg-white/[0.08] hover:text-white transition-colors cursor-pointer flex items-center space-x-1"
+                    :title="(msg.toolCalls && msg.toolCalls.length > 0) ? '仅复制分析正文' : '复制回答内容'"
+                  >
+                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                    <span>{{ (msg.toolCalls && msg.toolCalls.length > 0) ? '仅复制正文' : '复制' }}</span>
+                  </button>
+
+                  <!-- 若仅有工具链而无正文，提供直接复制工具链按钮 -->
+                  <button
+                    v-else-if="msg.toolCalls && msg.toolCalls.length > 0"
+                    @click="copyToolchain(msg.toolCalls)"
+                    class="p-0.5 px-1.5 rounded hover:bg-white/[0.08] hover:text-white transition-colors cursor-pointer flex items-center space-x-1"
+                    title="复制工具链执行结果"
+                  >
+                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                    <span>复制工具链</span>
                   </button>
                 </div>
               </div>

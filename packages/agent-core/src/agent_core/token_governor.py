@@ -63,7 +63,7 @@ class TokenGovernor:
         omitted_chars = max(0, total_chars - len(head_text) - len(tail_text))
 
         notice = (
-            f"\n\n... [⚠️ TokenGovernor 截断: 中间省略 {omitted_lines} 行 / {omitted_chars} 字符; "
+            f"\n\n... [⚠️ Output truncated by TokenGovernor: 中间省略 {omitted_lines} 行 / {omitted_chars} 字符; "
             f"头部 {len(head_text)} 字符 + 尾部 {len(tail_text)} 字符, 最新数据已保留在末尾] ...\n\n"
         )
         return head_text + notice + tail_text
@@ -92,7 +92,7 @@ class TokenGovernor:
     def compact_history(self, messages: List[Message]) -> List[Message]:
         """
         智能历史轨迹压缩 v2：
-        - 保留：system prompt + 原始用户意图 + 最近 3 轮对话
+        - 保留：system prompt + 原始用户意图 + 最近 2 轮对话 (约 4 条消息)
         - 中间步骤：提取每个 tool_result 的关键摘要（不是全部丢弃！）
         - 防止模型因失忆而重复已完成的工作
 
@@ -100,13 +100,13 @@ class TokenGovernor:
         v1 只保留最近 4 条，中间所有工具结果全丢。
         v2 将中间工具结果提炼成结构化摘要，模型始终知道之前做了什么、得到了什么。
         """
-        if len(messages) <= 6:
+        if len(messages) <= 4:
             return messages
 
         system_msg = next((m for m in messages if m.role == "system"), None)
         first_user_msg = next((m for m in messages if m.role == "user"), None)
-        # 保留最近 3 轮（包含 assistant + tool 消息，约 6 条）
-        recent_messages = messages[-6:]
+        # 保留最近 2 轮（约 4 条）
+        recent_messages = messages[-4:]
 
         # 中间消息（除 system/first_user/recent 外）
         preserved_set = set()

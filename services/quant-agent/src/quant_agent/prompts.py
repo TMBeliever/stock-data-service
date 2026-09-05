@@ -75,6 +75,14 @@ def build_system_prompt(page_context: str = "", is_admin: bool = False, thinking
     elif page_context and "market" in page_context.lower():
         base += "\n\n【当前用户情境】: 用户正在查看全市场宏观与行业板块看板，优先提供估值分位、资金面流动性、宏观利率与板块轮动解读。"
 
+    if page_context and ("当前激活工程" in page_context or "物理工作目录" in page_context):
+        base += (
+            f"\n\n【当前挂载工程情境提示】:\n{page_context}\n"
+            "• 当用户要求执行代码更新 (git pull/status)、依赖安装 (uv/pnpm)、构建或脚本运行等工程相关命令时，"
+            "必须在 `admin_execute_shell` 或 `run_command` 的 `cwd` 参数中传入上述工程的物理工作目录（或使用 cd 进入该目录）。\n"
+            "• 若 Git 命令返回 `fatal: not a git repository`，说明该工程可能为直接导入的代码快照/压缩包，缺少 .git 版本库元数据，应明确向用户解释原因。"
+        )
+
     if is_admin:
         base += f"\n\n{SUPER_ADMIN_SYSTEM_INSTRUCTION}"
 

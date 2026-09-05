@@ -8,6 +8,7 @@ import type { EditorView } from '@codemirror/view'
 import { useStrategyStore, type UserStrategyItem } from '@/stores/strategy'
 import { useAuthStore } from '@/stores/auth'
 import { useAiStore } from '@/stores/ai'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const strategyStore = useStrategyStore()
 const authStore = useAuthStore()
@@ -208,9 +209,13 @@ const apiCheatSheet = [
   },
 ]
 
-function copyCode() {
-  navigator.clipboard.writeText(strategyStore.code)
-  showToast('📋 代码已复制到剪贴板')
+async function copyCode() {
+  const ok = await copyToClipboard(strategyStore.code)
+  if (ok) {
+    showToast('📋 代码已复制到剪贴板')
+  } else {
+    showToast('⚠️ 复制失败，请尝试手动选中文本复制')
+  }
 }
 
 // 快速新建空白策略

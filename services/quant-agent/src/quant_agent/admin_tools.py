@@ -6,6 +6,7 @@ import asyncio
 import logging
 import platform
 import py_compile
+import contextvars
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable
 import httpx
@@ -15,6 +16,9 @@ from agent_core.builtin_tools.shell import run_command
 from quant_agent.config import agent_config
 
 logger = logging.getLogger(__name__)
+
+# 当前激活工程物理工作目录上下文 (协程隔离)
+current_active_project_dir: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("current_active_project_dir", default=None)
 
 # 高危破坏性指令拦截黑名单 (杜绝清盘、清空文件系统、炸弹叉)
 DESTRUCTIVE_COMMAND_BLACKLIST = [
@@ -43,29 +47,53 @@ def map_host_path_to_container(path_str: str) -> str:
     clean_p = path_str.strip()
     if clean_p.startswith("/root") and Path("/host_root").exists():
         rel = clean_p[len("/root"):].lstrip("/\\")
-        candidate = Path("/host_root") / rel if rel else Path("/host_root")
-        if candidate.exists():
-            return str(candidate)
+        return str(Path("/host_root") / rel) if rel else "/host_root"
     elif clean_p.startswith("/home") and Path("/host_home").exists():
         rel = clean_p[len("/home"):].lstrip("/\\")
-        candidate = Path("/host_home") / rel if rel else Path("/host_home")
-        if candidate.exists():
-            return str(candidate)
+        return str(Path("/host_home") / rel) if rel else "/host_home"
     return clean_p
 
-def _resolve_safe_path(rel_or_abs_path: str) -> Path:
-    """校验并转换安全工作区路径，防止路径遍历穿越攻击，同时支持挂载工程与宿主机探测目录"""
+def _resolve_safe_path(rel_or_abs_path: str, project_dir: Optional[str] = None) -> Path:
+    """校验并转换安全工作区路径，防止路径遍历穿越攻击，优先查找当前激活工程及关联源码包"""
     mapped = map_host_path_to_container(rel_or_abs_path)
-    workspace = Path(agent_config.WORKSPACE_ROOT).resolve()
     target = Path(mapped)
+
+    active_proj = project_dir or current_active_project_dir.get()
+    mapped_proj = map_host_path_to_container(active_proj) if active_proj else None
+    workspace = Path(agent_config.WORKSPACE_ROOT).resolve()
+
     if not target.is_absolute():
-        target = (workspace / target).resolve()
+        # 1. 优先在当前激活工程目录下查找（如果存在）
+        if mapped_proj and (Path(mapped_proj) / target).exists():
+            target = (Path(mapped_proj) / target).resolve()
+        # 2. 尝试在 agent_config.WORKSPACE_ROOT 下查找
+        elif (workspace / target).exists():
+            target = (workspace / target).resolve()
+        # 3. 尝试在常见挂载根目录下探测
+        else:
+            found = False
+            for cand_root in [
+                "/host_root/stock-data-service",
+                "/host_root/quant-system",
+                "/host_root",
+                "/host_home",
+                "/app/data/codex_workspace/uploaded_projects"
+            ]:
+                cand_path = Path(cand_root) / target
+                if cand_path.exists():
+                    target = cand_path.resolve()
+                    found = True
+                    break
+            if not found:
+                base = Path(mapped_proj) if mapped_proj else workspace
+                target = (base / target).resolve()
     else:
         target = target.resolve()
 
-    # 安全目录白名单列表 (包括应用工作区、数据持久卷、宿主机挂载点)
+    # 安全目录白名单列表 (包括应用工作区、当前激活工程目录、数据持久卷、宿主机挂载点)
     allowed_roots = [
         workspace,
+        Path(mapped_proj).resolve() if mapped_proj and Path(mapped_proj).exists() else None,
         Path("/app/data").resolve() if Path("/app/data").exists() else None,
         Path("/host_home").resolve() if Path("/host_home").exists() else None,
         Path("/host_root").resolve() if Path("/host_root").exists() else None,
@@ -310,13 +338,21 @@ async def admin_run_tests(target: str = "packages/agent-core/tests", timeout: in
     :param target: 测试目标目录或文件 (如 'packages/agent-core/tests', 'services/quant-agent/tests', 'packages/stock-data/tests')
     :param timeout: 超时时间秒数 (默认 45)
     """
+    target_cwd = agent_config.WORKSPACE_ROOT
+    active_proj = current_active_project_dir.get()
+    if active_proj and active_proj.strip():
+        mapped_proj = map_host_path_to_container(active_proj.strip())
+        p = Path(mapped_proj)
+        if p.exists() and p.is_dir():
+            target_cwd = str(p.resolve())
+
     cmd = f"uv run pytest {target} -q --tb=short"
     try:
         proc = await asyncio.create_subprocess_shell(
             cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=agent_config.WORKSPACE_ROOT
+            cwd=target_cwd
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         out_text = stdout.decode("utf-8", errors="replace").strip()
@@ -463,8 +499,9 @@ async def admin_execute_shell(
         if blocked in cmd_lower:
             return f"Security Intercepted: 命中灾难级系统破坏黑名单指令 '{blocked}'，已被安全熔断拦截！"
 
-    # 解析与转换目标工作目录 (支持宿主机挂载路径映射)
+    # 解析与转换目标工作目录 (优先指定 cwd，其次当前激活工程，最后系统工作区)
     target_cwd = agent_config.WORKSPACE_ROOT
+    active_proj = current_active_project_dir.get()
     if cwd and cwd.strip():
         mapped_cwd = map_host_path_to_container(cwd.strip())
         p = Path(mapped_cwd)
@@ -472,6 +509,11 @@ async def admin_execute_shell(
             target_cwd = str(p.resolve())
         else:
             logger.warning("Specified cwd '%s' (mapped: '%s') does not exist, falling back to %s", cwd, mapped_cwd, target_cwd)
+    elif active_proj and active_proj.strip():
+        mapped_proj = map_host_path_to_container(active_proj.strip())
+        p = Path(mapped_proj)
+        if p.exists() and p.is_dir():
+            target_cwd = str(p.resolve())
 
     try:
         proc = await asyncio.create_subprocess_shell(

@@ -198,6 +198,91 @@ class ExtremeDipHeavyStrategy(BaseStrategy):
         elif curr_price > ma_val and pos.available_quantity > 0:
             self.order_target_percent(symbol, 0.20, reason="价格回归均线减仓止盈")
 '''
+    },
+    {
+        "name": "达利欧全球全天候大类资产配置策略 (Ray Dalio All-Weather)",
+        "description": "全球经典风险平价多资产配置，按30%股票、40%长债、15%中债、7.5%黄金、7.5%商品定期动态再平衡，穿越宏观经济四象限",
+        "symbol": "510300.SH.ETF",
+        "code": '''from quant_core.core.base_strategy import BaseStrategy
+from quant_core.core.models import Bar
+
+class AllWeatherStrategy(BaseStrategy):
+    """
+    达利欧全球全天候大类资产配置策略 (Ray Dalio All-Weather Portfolio):
+    - 股票权益 (30%): 捕捉经济繁荣增长红利 (如 510300 沪深300 / 标普500)
+    - 长期债券 (40%): 抵御经济衰退通缩危机 (如 511010 国债ETF)
+    - 中期纯债 (15%): 平滑组合净值波动与流动性
+    - 黄金资产 (7.5%): 抵御货币超发与通胀风险 (如 518880 黄金ETF)
+    - 大宗商品 (7.5%): 抵御恶性通货膨胀与供应链冲击
+    """
+    def __init__(
+        self,
+        stock_weight: float = 0.30,
+        long_bond_weight: float = 0.40,
+        inter_bond_weight: float = 0.15,
+        gold_weight: float = 0.075,
+        commodity_weight: float = 0.075,
+        rebalance_band: float = 0.03,
+        rebalance_interval: int = 20,
+        single_symbol_target: float = 0.40
+    ):
+        params = {
+            "stock_weight": stock_weight,
+            "long_bond_weight": long_bond_weight,
+            "inter_bond_weight": inter_bond_weight,
+            "gold_weight": gold_weight,
+            "commodity_weight": commodity_weight,
+            "rebalance_band": rebalance_band,
+            "rebalance_interval": rebalance_interval,
+            "single_symbol_target": single_symbol_target
+        }
+        super().__init__(name="RayDalioAllWeather", params=params)
+        self.stock_weight = stock_weight
+        self.long_bond_weight = long_bond_weight
+        self.inter_bond_weight = inter_bond_weight
+        self.gold_weight = gold_weight
+        self.commodity_weight = commodity_weight
+        self.rebalance_band = rebalance_band
+        self.rebalance_interval = rebalance_interval
+        self.single_symbol_target = single_symbol_target
+        self.counter = 0
+
+    def _determine_symbol_target_weight(self, symbol: str) -> float:
+        sym_lower = symbol.lower()
+        if any(kw in sym_lower for kw in ["518880", "159934", "gold", "黄金"]):
+            return self.gold_weight
+        elif any(kw in sym_lower for kw in ["511010", "511260", "bond", "国债"]):
+            return self.long_bond_weight
+        elif any(kw in sym_lower for kw in ["159981", "commodity", "豆粕", "商品"]):
+            return self.commodity_weight
+        elif any(kw in sym_lower for kw in ["510300", "510500", "stock", "etf", "300"]):
+            return self.stock_weight
+        return self.single_symbol_target
+
+    def on_bar(self, bar: Bar):
+        self.counter += 1
+        # 每隔固定周期进行组合再平衡 (或首次进场)
+        if self.counter % self.rebalance_interval != 0 and self.counter != 1:
+            return
+
+        portfolio = self.context.portfolio
+        total_equity = portfolio.total_equity
+        if total_equity <= 0:
+            return
+
+        target_pct = self._determine_symbol_target_weight(bar.symbol)
+        pos = portfolio.get_position(bar.symbol)
+        current_pct = pos.market_value / total_equity
+
+        # 首次建仓或偏离度突破容忍带宽时触发再平衡
+        if self.counter == 1 or abs(current_pct - target_pct) >= self.rebalance_band:
+            action = "全天候初始建仓" if self.counter == 1 else ("止盈降权" if current_pct > target_pct else "低位补齐增配")
+            self.order_target_percent(
+                bar.symbol,
+                target_pct,
+                reason=f"All-Weather {action} ({current_pct:.1%} -> {target_pct:.1%})"
+            )
+'''
     }
 ]
 

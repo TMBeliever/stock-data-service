@@ -19,10 +19,10 @@ class QuantAgent(BaseAgent):
     """
     def __init__(self):
         token_governor = TokenGovernor(
-            max_observation_chars=3500,
-            max_observation_lines=80,
-            compaction_step_threshold=6,
-            max_history_tokens_estimate=20000
+            max_observation_chars=4000,
+            max_observation_lines=120,
+            compaction_step_threshold=16,
+            max_history_tokens_estimate=32000
         )
 
         super().__init__(

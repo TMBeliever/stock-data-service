@@ -83,8 +83,8 @@ class TokenGovernor:
         return max(1, int(len(text) / 2.5))
 
     def needs_compaction(self, messages: List[Message], current_step: int) -> bool:
-        """判断是否需要触发历史轨迹压缩"""
-        if current_step >= self.compaction_step_threshold:
+        """判断是否需要触发历史轨迹压缩 (避免过早压缩失忆)"""
+        if current_step >= self.compaction_step_threshold and len(messages) >= 7:
             return True
         total_est = sum(self.estimate_tokens(m.content or "") for m in messages)
         return total_est > self.max_history_tokens_estimate
@@ -92,21 +92,21 @@ class TokenGovernor:
     def compact_history(self, messages: List[Message]) -> List[Message]:
         """
         智能历史轨迹压缩 v2：
-        - 保留：system prompt + 原始用户意图 + 最近 2 轮对话 (约 4 条消息)
-        - 中间步骤：提取每个 tool_result 的关键摘要（不是全部丢弃！）
-        - 防止模型因失忆而重复已完成的工作
-
-        关键改进（vs v1）：
-        v1 只保留最近 4 条，中间所有工具结果全丢。
-        v2 将中间工具结果提炼成结构化摘要，模型始终知道之前做了什么、得到了什么。
+        - 保留：system prompt + 原始用户意图 + 最近 2 轮对话完整闭环
+        - 中间步骤：提取每个 tool_result 的关键摘要并锚定原始用户任务，彻底消除失忆
+        - 规范消息角色顺序：避免连续 Assistant 消息或孤立 Tool 消息导致下游 LLM API 协议报错
         """
         if len(messages) <= 4:
             return messages
 
         system_msg = next((m for m in messages if m.role == "system"), None)
         first_user_msg = next((m for m in messages if m.role == "user"), None)
-        # 保留最近 2 轮（约 4 条）
-        recent_messages = messages[-4:]
+
+        # 确保 recent_messages 从一个完整轮次开始（若以 tool 开头，向前寻找其配对的 assistant）
+        cutoff_idx = max(1, len(messages) - 4)
+        while cutoff_idx > 0 and messages[cutoff_idx].role == "tool":
+            cutoff_idx -= 1
+        recent_messages = messages[cutoff_idx:]
 
         # 中间消息（除 system/first_user/recent 外）
         preserved_set = set()
@@ -126,29 +126,29 @@ class TokenGovernor:
         summary_points: List[str] = []
         for m in intermediate_messages:
             if m.role == "tool" and m.name:
-                # 提取工具结果的核心信息（前 150 字符 + 后 80 字符）
                 content = (m.content or "").strip()
                 if len(content) > 230:
                     snippet = content[:150] + "..." + content[-80:]
                 else:
                     snippet = content
-                # 清理换行，压缩成单行摘要
                 snippet_oneline = " | ".join(snippet.split("\n")[:3])
-                summary_points.append(f"- [工具 `{m.name}`] → {snippet_oneline[:200]}")
+                summary_points.append(f"- [已调用工具 `{m.name}`] → {snippet_oneline[:200]}")
             elif m.role == "assistant" and m.content:
                 snippet = m.content[:100].replace("\n", " ")
-                summary_points.append(f"- [模型分析] {snippet}...")
+                summary_points.append(f"- [已推演思考] {snippet}...")
 
-        # 最多保留 12 条摘要，超出部分取最近的
+        # 最多保留 12 条摘要
         if len(summary_points) > 12:
             omitted = len(summary_points) - 12
             summary_points = [f"  (另有 {omitted} 步中间记录已省略)"] + summary_points[-12:]
 
+        original_task = first_user_msg.content if first_user_msg and first_user_msg.content else "完成用户指定目标"
         summary_text = (
             "【历史上下文精简摘要 (Token Compaction v2)】\n"
-            "前序步骤已完成的关键工具调用与发现（摘要保留，防止重复操作）：\n"
+            "前序步骤已完成的关键工具调用与推演发现如下（保留以防止重复调用或失忆）：\n"
             + "\n".join(summary_points)
-            + "\n\n请基于以上已掌握的事实继续推进后续任务，不要重复上述步骤。"
+            + f"\n\n【核心任务锚定】当前正在坚决执行用户最初目标：『{original_task}』。\n"
+            "请严格基于上述前序已获取事实继续推进剩余工作，切勿重复上述已完成的指令。"
         )
 
         compacted: List[Message] = []
@@ -156,8 +156,18 @@ class TokenGovernor:
             compacted.append(system_msg)
         if first_user_msg and id(first_user_msg) not in {id(m) for m in compacted}:
             compacted.append(first_user_msg)
-        compacted.append(Message.assistant(content=summary_text))
-        compacted.extend(recent_messages)
+
+        # 检查 recent_messages[0] 是否为 assistant
+        # 若为 assistant，将 summary_text 融合进其思考内容头部，避免生成连续两条 assistant 消息
+        if recent_messages and recent_messages[0].role == "assistant":
+            first_recent = recent_messages[0]
+            merged_content = f"{summary_text}\n\n{first_recent.content or ''}".strip()
+            merged_recent = Message.assistant(content=merged_content, tool_calls=first_recent.tool_calls)
+            compacted.append(merged_recent)
+            compacted.extend(recent_messages[1:])
+        else:
+            compacted.append(Message.assistant(content=summary_text))
+            compacted.extend(recent_messages)
 
         logger.info(
             "TokenGovernor compaction: %d msgs → %d msgs (摘要保留 %d 步工具记录)",

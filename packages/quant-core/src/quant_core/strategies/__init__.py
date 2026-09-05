@@ -4,6 +4,7 @@ from quant_core.strategies.dividend_dca import SmartDividendDCAStrategy
 from quant_core.strategies.buy_and_hold import BuyAndHoldStrategy
 from quant_core.strategies.extreme_dip_heavy import ExtremeDipHeavyStrategy
 from quant_core.strategies.dynamic_rebalance import DynamicRebalanceStrategy
+from quant_core.strategies.all_weather import AllWeatherStrategy
 
 __all__ = [
     "DualMovingAverageStrategy",
@@ -12,6 +13,7 @@ __all__ = [
     "BuyAndHoldStrategy",
     "ExtremeDipHeavyStrategy",
     "DynamicRebalanceStrategy",
+    "AllWeatherStrategy",
 ]
 
 

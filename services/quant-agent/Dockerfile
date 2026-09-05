@@ -34,6 +34,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.4.29 /uv /bin/uv
 COPY pyproject.toml .
 COPY packages/ai-core packages/ai-core
 COPY packages/agent-core packages/agent-core
+COPY packages/quant-core packages/quant-core
 COPY packages/stock-data packages/stock-data
 COPY services/quant-agent services/quant-agent
 
@@ -41,6 +42,7 @@ COPY services/quant-agent services/quant-agent
 RUN uv pip install --system \
     -e packages/ai-core \
     -e packages/agent-core \
+    -e packages/quant-core \
     -e packages/stock-data \
     -e services/quant-agent
 

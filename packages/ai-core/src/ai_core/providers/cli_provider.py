@@ -121,17 +121,18 @@ class CLIProcessProvider(BaseAIProvider):
 
         # 针对不同 CLI 工具进行无头非交互模式安全自适应
         exe_lower = os.path.basename(resolved_exe).lower()
-        if "agy" in exe_lower or "gemini" in exe_lower:
-            # agy / gemini CLI: 保证带有 -y (YOLO 模式自动执行)，防止无头终端等待交互挂起
+        if "agy" in exe_lower or "claude" in exe_lower:
+            # agy / claude CLI: 自动注入 --dangerously-skip-permissions 防止无头终端等待交互挂起
+            if "--dangerously-skip-permissions" not in cmd_args:
+                cmd_args.append("--dangerously-skip-permissions")
+            if model and "--model" not in cmd_args and "-m" not in cmd_args:
+                cmd_args.extend(["--model", model])
+        elif "gemini" in exe_lower:
+            # gemini-cli node 包装器: 带有 -y (YOLO 模式自动执行)
             if "-y" not in cmd_args and "--yolo" not in cmd_args and "--approval-mode" not in cmd_args:
                 cmd_args.append("-y")
             if model and "-m" not in cmd_args and "--model" not in cmd_args:
                 cmd_args.extend(["-m", model])
-        elif "claude" in exe_lower:
-            if "--dangerously-skip-permissions" not in cmd_args:
-                cmd_args.append("--dangerously-skip-permissions")
-            if model and "--model" not in cmd_args:
-                cmd_args.extend(["--model", model])
 
         needs_stdin = not has_prompt_placeholder
         return cmd_args, needs_stdin

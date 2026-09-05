@@ -16,8 +16,8 @@ class AIConfig(BaseSettings):
     # CLI 命令行驱动配置
     # 命令可执行程序名称或绝对路径 (例如 'agy', 'claude', 'codex', 或本地自定义 agent cli)
     CLI_EXECUTABLE: str = "agy"
-    # 参数模板：支持 {prompt} 占位符，-y (YOLO 模式自动执行无需交互确认)
-    CLI_ARGS: List[str] = ["-p", "{prompt}", "-y"]
+    # 参数模板：支持 {prompt} 占位符，默认带上 --dangerously-skip-permissions 防止无头进程挂起
+    CLI_ARGS: List[str] = ["-p", "{prompt}", "--dangerously-skip-permissions"]
     CLI_TIMEOUT: float = 120.0
     CLI_CWD: Optional[str] = None
 

@@ -11,14 +11,14 @@ from ai_core.models import Message, AIResponse, ToolDefinition
 from ai_core.orchestrator import ai_orchestrator
 from ai_core.openai_api import openai_router
 from ai_core.anthropic_api import anthropic_router
-from ai_core.session_manager import session_worker_manager
+from ai_core.process_pool import prewarmed_process_pool
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期管理：启动空闲会话定时巡检，退出时释放所有会话资源"""
-    session_worker_manager.start_sweeper()
+    """应用生命周期管理：启动独占预热待命池巡检，退出时全量释放所有进程资源"""
+    prewarmed_process_pool.start()
     yield
-    await session_worker_manager.stop_sweeper()
+    await prewarmed_process_pool.shutdown()
 
 app = FastAPI(
     title="AI Core Service",

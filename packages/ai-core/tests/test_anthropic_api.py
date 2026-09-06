@@ -128,35 +128,60 @@ async def test_anthropic_messages_stream(monkeypatch):
         assert "Claude!" in raw_text
 
 @pytest.mark.asyncio
-async def test_anthropic_session_affinity_binding(monkeypatch):
-    """测试 Anthropic 请求能自动提取或根据首句生成 session_id 并绑定到 extra_kwargs"""
+async def test_anthropic_stateless_execution(monkeypatch):
+    """测试 Anthropic 接口完全无状态，不注入 session_id 累加历史"""
     captured_kwargs = {}
     async def mock_generate(*args, **kwargs):
         captured_kwargs.update(kwargs)
-        return AIResponse(content="ok", model="agy", provider_type="cli")
+        return AIResponse(content="stateless-ok", model="agy", provider_type="cli")
 
     from ai_core.orchestrator import ai_orchestrator
     monkeypatch.setattr(ai_orchestrator, "generate", mock_generate)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Case 1: 自动根据首句指纹生成 session_id
-        payload1 = {
+        payload = {
             "model": "claude-3-5-sonnet",
-            "messages": [{"role": "user", "content": "Conversation Topic Alpha"}],
+            "messages": [{"role": "user", "content": "Stateless question"}],
             "stream": False
         }
-        await client.post("/v1/messages", headers=VALID_ANTHROPIC_HEADER, json=payload1)
-        sess1 = captured_kwargs.get("session_id")
-        assert sess1 is not None
-        assert sess1.startswith("claude_")
+        resp = await client.post("/v1/messages", headers=VALID_ANTHROPIC_HEADER, json=payload)
+        assert resp.status_code == 200
+        # 确认完全无状态，未注入 session_id
+        assert captured_kwargs.get("session_id") is None
 
-        # Case 2: 携带 metadata.user_id
-        payload2 = {
-            "model": "claude-3-5-sonnet",
-            "messages": [{"role": "user", "content": "Another question"}],
-            "metadata": {"user_id": "claude_user_999"},
+@pytest.mark.asyncio
+async def test_anthropic_agt_model_routing(monkeypatch):
+    """测试 agt-* 模型矩阵及 Claude 原生模型通过 Anthropic 接口正确路由"""
+    captured_kwargs = {}
+    async def mock_generate(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return AIResponse(content="anthropic-agt", model="agy", provider_type="cli")
+
+    from ai_core.orchestrator import ai_orchestrator
+    monkeypatch.setattr(ai_orchestrator, "generate", mock_generate)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. 显式 agt-gemini-3.8-flash
+        payload1 = {
+            "model": "agt-gemini-3.8-flash",
+            "messages": [{"role": "user", "content": "Hello"}],
             "stream": False
         }
-        await client.post("/v1/messages", headers=VALID_ANTHROPIC_HEADER, json=payload2)
-        assert captured_kwargs.get("session_id") == "claude_user_999"
+        resp1 = await client.post("/v1/messages", headers=VALID_ANTHROPIC_HEADER, json=payload1)
+        assert resp1.status_code == 200
+        assert captured_kwargs.get("provider_type") == "cli"
+        assert captured_kwargs.get("model") == "gemini-3.8-flash"
+
+        # 2. 原生 Claude 请求自动映射到 claude-sonnet-4.6
+        payload2 = {
+            "model": "claude-3-7-sonnet-20250219",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": False
+        }
+        resp2 = await client.post("/v1/messages", headers=VALID_ANTHROPIC_HEADER, json=payload2)
+        assert resp2.status_code == 200
+        assert captured_kwargs.get("provider_type") == "cli"
+        assert captured_kwargs.get("model") == "claude-sonnet-4.6"
+

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from ai_core.config import ai_config
-from ai_core.models import Message, ToolDefinition
+from ai_core.models import Message, ToolDefinition, resolve_agt_model
 from ai_core.orchestrator import ai_orchestrator
 
 security = HTTPBearer(auto_error=False)
@@ -107,25 +107,19 @@ def _to_internal_messages(openai_msgs: List[OpenAIChatMessage]) -> List[Message]
     return msgs
 
 def _resolve_provider_and_kwargs(req: OpenAIChatCompletionRequest) -> tuple[str, Dict[str, Any]]:
-    """根据请求的模型名称与参数智能分流到 key 驱动或 cli 驱动"""
+    """根据请求的模型名称智能分流到 key 驱动或 agt cli 驱动"""
     model_name = (req.model or "").strip()
-    model_lower = model_name.lower()
     extra_kwargs: Dict[str, Any] = {}
 
     if req.temperature is not None:
         extra_kwargs["temperature"] = req.temperature
 
-    # 模型路由规则：包含 'agy' 或 'cli' 路由至 Antigravity CLI
-    if "agy" in model_lower or "cli" in model_lower:
-        provider_type = "cli"
+    provider_type, target_model = resolve_agt_model(model_name)
+    if provider_type == "cli":
         extra_kwargs["executable"] = "agy"
-        # 传递原始模型名称给 CLI (如果指定了非默认模型)
-        if model_name not in ["agy", "cli"]:
-            extra_kwargs["model"] = model_name
+        extra_kwargs["model"] = target_model
     else:
-        # 其他模型统一路由至 API Key 网关
-        provider_type = "key"
-        extra_kwargs["model"] = model_name or ai_config.OPENAI_MODEL
+        extra_kwargs["model"] = target_model or ai_config.OPENAI_MODEL
 
     return provider_type, extra_kwargs
 
@@ -134,37 +128,20 @@ def _resolve_provider_and_kwargs(req: OpenAIChatCompletionRequest) -> tuple[str,
 async def list_models():
     """
     OpenAI 标准模型列表端点：
-    供 Dify, NextChat, LangChain, ChatBox 等客户端探活与展示模型列表。
+    完整挂载 agt-* Antigravity 系列模型矩阵与外部 API-Key 模型列表。
     """
     created_ts = int(time.time())
     available_models = [
-        {
-            "id": "agy",
-            "object": "model",
-            "created": created_ts,
-            "owned_by": "google-antigravity",
-            "permission": [],
-            "root": "agy",
-            "parent": None
-        },
-        {
-            "id": "gemini-flash-lite-latest",
-            "object": "model",
-            "created": created_ts,
-            "owned_by": "openai-proxy",
-            "permission": [],
-            "root": "gemini-flash-lite-latest",
-            "parent": None
-        },
-        {
-            "id": "minimax/minimax-m3:free",
-            "object": "model",
-            "created": created_ts,
-            "owned_by": "openai-proxy",
-            "permission": [],
-            "root": "minimax/minimax-m3:free",
-            "parent": None
-        }
+        {"id": "agt-gemini-3.8-flash", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Gemini 3.8 Flash High Fast"},
+        {"id": "agt-gemini-3.7-flash", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Gemini 3.7 Flash Medium Fast"},
+        {"id": "agt-gemini-3.6-flash", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Gemini 3.6 Flash Medium Fast"},
+        {"id": "agt-gemini-3.1-pro", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Gemini 3.1 Pro Low"},
+        {"id": "agt-claude-sonnet-4.6", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Claude Sonnet 4.6 (Thinking)"},
+        {"id": "agt-claude-opus-4.6", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Claude Opus 4.6 (Thinking)"},
+        {"id": "agt-gpt-oss-120b", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "GPT-OSS 120B (Medium)"},
+        {"id": "agy", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Default AGY Model"},
+        {"id": "gemini-flash-lite-latest", "object": "model", "created": created_ts, "owned_by": "openai-proxy"},
+        {"id": "minimax/minimax-m3:free", "object": "model", "created": created_ts, "owned_by": "openai-proxy"}
     ]
     return {
         "object": "list",
@@ -187,14 +164,6 @@ async def chat_completions(req: OpenAIChatCompletionRequest):
     internal_messages = _to_internal_messages(req.messages)
     provider_type, extra_kwargs = _resolve_provider_and_kwargs(req)
 
-    # 提取或自动绑定 session_id (优先使用 user 字段，或首句指纹)
-    session_id = req.user
-    if not session_id and req.messages and len(req.messages) > 0:
-        first_content = req.messages[0].content or ""
-        if first_content:
-            session_id = f"openai_{hashlib.md5(first_content.encode('utf-8')).hexdigest()[:16]}"
-    if session_id:
-        extra_kwargs["session_id"] = session_id
 
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     created_ts = int(time.time())

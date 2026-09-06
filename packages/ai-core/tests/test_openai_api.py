@@ -142,35 +142,59 @@ async def test_openai_chat_completions_key_routing(monkeypatch):
         assert captured_kwargs.get("model") == "minimax/minimax-m3:free"
 
 @pytest.mark.asyncio
-async def test_openai_session_affinity_binding(monkeypatch):
-    """测试 OpenAI chat/completions 能够根据 user 字段或首句自动绑定 session_id"""
+async def test_openai_stateless_execution(monkeypatch):
+    """测试 OpenAI chat/completions 接口完全无状态，不注入 session_id 累加历史"""
     captured_kwargs = {}
     async def mock_generate(*args, **kwargs):
         captured_kwargs.update(kwargs)
-        return AIResponse(content="ok", model="agy", provider_type="cli")
+        return AIResponse(content="stateless-ok", model="agy", provider_type="cli")
 
     from ai_core.orchestrator import ai_orchestrator
     monkeypatch.setattr(ai_orchestrator, "generate", mock_generate)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Case 1: 携带 user 字段
-        payload1 = {
+        payload = {
             "model": "agy",
-            "messages": [{"role": "user", "content": "Question with user"}],
-            "user": "custom_user_123",
+            "messages": [{"role": "user", "content": "Stateless prompt"}],
             "stream": False
         }
-        await client.post("/v1/chat/completions", headers=VALID_AUTH_HEADER, json=payload1)
-        assert captured_kwargs.get("session_id") == "custom_user_123"
+        resp = await client.post("/v1/chat/completions", headers=VALID_AUTH_HEADER, json=payload)
+        assert resp.status_code == 200
+        assert captured_kwargs.get("session_id") is None
 
-        # Case 2: 未携带 user 字段，自动由首句指纹生成
-        payload2 = {
-            "model": "agy",
-            "messages": [{"role": "user", "content": "Topic fingerprint test"}],
+@pytest.mark.asyncio
+async def test_openai_agt_model_routing(monkeypatch):
+    """测试 agt-* 模型矩阵通过 OpenAI 接口正确路由至 CLI 对应模型"""
+    captured_kwargs = {}
+    async def mock_generate(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return AIResponse(content="agt-response", model="agy", provider_type="cli")
+
+    from ai_core.orchestrator import ai_orchestrator
+    monkeypatch.setattr(ai_orchestrator, "generate", mock_generate)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. 测试 agt-gemini-3.8-flash
+        payload = {
+            "model": "agt-gemini-3.8-flash",
+            "messages": [{"role": "user", "content": "Hello"}],
             "stream": False
         }
-        await client.post("/v1/chat/completions", headers=VALID_AUTH_HEADER, json=payload2)
-        sess2 = captured_kwargs.get("session_id")
-        assert sess2 is not None
-        assert sess2.startswith("openai_")
+        resp = await client.post("/v1/chat/completions", headers=VALID_AUTH_HEADER, json=payload)
+        assert resp.status_code == 200
+        assert captured_kwargs.get("provider_type") == "cli"
+        assert captured_kwargs.get("model") == "gemini-3.8-flash"
+
+        # 2. 测试 agt-claude-sonnet-4.6
+        payload2 = {
+            "model": "agt-claude-sonnet-4.6",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": False
+        }
+        resp2 = await client.post("/v1/chat/completions", headers=VALID_AUTH_HEADER, json=payload2)
+        assert resp2.status_code == 200
+        assert captured_kwargs.get("provider_type") == "cli"
+        assert captured_kwargs.get("model") == "claude-sonnet-4.6"
+

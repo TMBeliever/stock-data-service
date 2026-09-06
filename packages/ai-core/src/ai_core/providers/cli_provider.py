@@ -44,7 +44,6 @@ def resolve_executable_path(executable: str) -> str:
         f"/host_root/.cargo/bin/{exe_name}",
         f"/host_root/.npm-global/bin/{exe_name}",
     ]
-    # 支持通配符搜寻 nvm / home 目录
     wildcard_patterns = [
         f"/host_root/.nvm/**/bin/{exe_name}",
         f"/host_home/*/.local/bin/{exe_name}",
@@ -68,8 +67,8 @@ def resolve_executable_path(executable: str) -> str:
 class CLIProcessProvider(BaseAIProvider):
     """
     安全异步命令行 (CLI) 驱动：
-    通过操作系统异步子进程调度外部 CLI (如 Antigravity agy, Claude Code, Ollama 等)。
-    严格使用参数数组 (argv) 传递，杜绝 shell=True 注入隐患，支持实时管道流式输出。
+    通过独占预热待命池调度原生 CLI (如 Google agy / gemini-cli)。
+    彻底无状态 (Stateless)、用完即焚、零冷启动，杜绝任何工具拦截或会话串扰。
     """
     def __init__(
         self,
@@ -90,7 +89,7 @@ class CLIProcessProvider(BaseAIProvider):
         return "cli"
 
     def _format_messages_to_prompt(self, messages: List[Message]) -> str:
-        """将标准 Message 列表渲染为适合 CLI 消费的提示文本"""
+        """将标准 Message 列表渲染为适合 CLI 消费的纯文本提示词"""
         if len(messages) == 1 and messages[0].role == "user" and messages[0].content:
             return messages[0].content
 
@@ -104,14 +103,12 @@ class CLIProcessProvider(BaseAIProvider):
     def _build_command(
         self,
         prompt: str,
-        model: Optional[str] = None,
-        conversation_uuid: Optional[str] = None
+        model: Optional[str] = None
     ) -> tuple[List[str], bool]:
         """
         构建 argv 参数列表：
         返回 (cmd_args, needs_stdin_pipe)
-        自动解析可执行文件路径，若模板包含 {prompt}，则替换占位符直接作为命令行参数传参；
-        否则通过标准输入 stdin 管道传给程序。
+        彻底无状态：严禁注入 --conversation / -c / --session-id / --resume
         """
         resolved_exe = resolve_executable_path(self.executable)
         cmd_args: List[str] = [resolved_exe]
@@ -126,23 +123,17 @@ class CLIProcessProvider(BaseAIProvider):
 
         # 针对不同 CLI 工具进行无头非交互模式安全自适应
         exe_lower = os.path.basename(resolved_exe).lower()
-        if "agy" in exe_lower or "claude" in exe_lower:
-            # agy / claude CLI: 自动注入 --dangerously-skip-permissions 防止无头终端等待交互挂起
-            if "--dangerously-skip-permissions" not in cmd_args:
-                cmd_args.append("--dangerously-skip-permissions")
-            if model and "--model" not in cmd_args and "-m" not in cmd_args:
-                cmd_args.extend(["--model", model])
-            # 会话温备与原生多轮记忆注入
-            if conversation_uuid and "--conversation" not in cmd_args and "-c" not in cmd_args:
-                cmd_args.extend(["--conversation", conversation_uuid])
-        elif "gemini" in exe_lower:
-            # gemini-cli node 包装器: 带有 -y (YOLO 模式自动执行)
-            if "-y" not in cmd_args and "--yolo" not in cmd_args and "--approval-mode" not in cmd_args:
+        if "agy" in exe_lower or "gemini" in exe_lower:
+            # gemini / agy: 使用 -y 开启无头非交互模式，杜绝权限询问挂起
+            if "-y" not in cmd_args and "--yolo" not in cmd_args:
                 cmd_args.append("-y")
             if model and "-m" not in cmd_args and "--model" not in cmd_args:
                 cmd_args.extend(["-m", model])
-            if conversation_uuid and "--conversation" not in cmd_args:
-                cmd_args.extend(["--conversation", conversation_uuid])
+        elif "claude" in exe_lower:
+            if "--dangerously-skip-permissions" not in cmd_args:
+                cmd_args.append("--dangerously-skip-permissions")
+            if model and "--model" not in cmd_args:
+                cmd_args.extend(["--model", model])
 
         needs_stdin = not has_prompt_placeholder
         return cmd_args, needs_stdin
@@ -171,7 +162,7 @@ class CLIProcessProvider(BaseAIProvider):
 
         # 认证目录环境配置：确保容器内 /root/.gemini 与 /root/.antigravity 具备真实读写能力
         try:
-            from ai_core.session_manager import ensure_writable_gemini_environment
+            from ai_core.process_pool import ensure_writable_gemini_environment
             ensure_writable_gemini_environment()
         except Exception:
             pass
@@ -193,69 +184,75 @@ class CLIProcessProvider(BaseAIProvider):
         tools: Optional[List[ToolDefinition]] = None,
         **kwargs
     ) -> AIResponse:
-        """非流式调用 CLI 进程：等待进程执行完毕并捕获 stdout"""
-        session_id = kwargs.get("session_id")
-        worker = None
-        conv_uuid = None
-        if session_id:
-            from ai_core.session_manager import session_worker_manager
-            worker = await session_worker_manager.get_or_create_worker(session_id)
-            conv_uuid = worker.conversation_uuid
-
+        """非流式调用 CLI 进程：优先从预热池获取就绪 Worker，用完即焚"""
         prompt = self._format_messages_to_prompt(messages)
-        cmd_args, needs_stdin = self._build_command(
-            prompt,
-            model=kwargs.get("model"),
-            conversation_uuid=conv_uuid
-        )
         timeout = kwargs.get("timeout", self.timeout)
+        resolved_exe = resolve_executable_path(self.executable)
+        exe_lower = os.path.basename(resolved_exe).lower()
 
-        async def _execute():
-            stdin_dest = asyncio.subprocess.PIPE if needs_stdin else asyncio.subprocess.DEVNULL
-            proc = await asyncio.create_subprocess_exec(
-                *cmd_args,
-                stdin=stdin_dest,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.cwd,
+        # 针对默认 agy / gemini 走独占预热待命池，达到零冷启动
+        if ("agy" in exe_lower or "gemini" in exe_lower) and not kwargs.get("args_template"):
+            from ai_core.process_pool import prewarmed_process_pool
+            worker = await prewarmed_process_pool.acquire_worker(
+                executable=self.executable,
+                model=kwargs.get("model"),
                 env=self._get_env()
             )
-
             try:
-                stdin_data = prompt.encode("utf-8") if needs_stdin else None
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(input=stdin_data),
-                    timeout=timeout
+                content_text = await worker.execute(prompt, timeout=timeout)
+                return AIResponse(
+                    content=content_text,
+                    model=self.executable,
+                    provider_type="cli",
+                    finish_reason="stop",
+                    raw_response={"stdout": content_text}
                 )
-            except asyncio.TimeoutError:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-                raise TimeoutError(f"[CLIProcessProvider] 进程执行超时 (超限 {timeout}s): {cmd_args}")
+            finally:
+                await prewarmed_process_pool.release_worker(worker)
 
-            stdout_text = stdout_bytes.decode("utf-8", errors="replace").strip()
-            stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+        # 针对自定义 executable / 测试用例参数模板，走独立子进程
+        cmd_args, needs_stdin = self._build_command(
+            prompt,
+            model=kwargs.get("model")
+        )
+        stdin_dest = asyncio.subprocess.PIPE if needs_stdin else asyncio.subprocess.DEVNULL
+        proc = await asyncio.create_subprocess_exec(
+            *cmd_args,
+            stdin=stdin_dest,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=self.cwd,
+            env=self._get_env()
+        )
 
-            if proc.returncode != 0:
-                raise RuntimeError(
-                    f"[CLIProcessProvider] 进程异常退出 (退出码 {proc.returncode}):\n{stderr_text or stdout_text}"
-                )
+        try:
+            stdin_data = prompt.encode("utf-8") if needs_stdin else None
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(input=stdin_data),
+                timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise TimeoutError(f"[CLIProcessProvider] 进程执行超时 (超限 {timeout}s): {cmd_args}")
 
-            return AIResponse(
-                content=stdout_text,
-                model=self.executable,
-                provider_type="cli",
-                finish_reason="stop",
-                raw_response={"stdout": stdout_text, "stderr": stderr_text, "returncode": proc.returncode}
+        stdout_text = stdout_bytes.decode("utf-8", errors="replace").strip()
+        stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"[CLIProcessProvider] 进程异常退出 (退出码 {proc.returncode}):\n{stderr_text or stdout_text}"
             )
 
-        if worker:
-            async with worker.lock:
-                res = await _execute()
-                worker.touch()
-                return res
-        return await _execute()
+        return AIResponse(
+            content=stdout_text,
+            model=self.executable,
+            provider_type="cli",
+            finish_reason="stop",
+            raw_response={"stdout": stdout_text, "stderr": stderr_text, "returncode": proc.returncode}
+        )
 
     async def generate_stream(
         self,
@@ -263,73 +260,72 @@ class CLIProcessProvider(BaseAIProvider):
         tools: Optional[List[ToolDefinition]] = None,
         **kwargs
     ) -> AsyncGenerator[StreamChunk, None]:
-        """流式调用 CLI 进程：逐块从 stdout 管道读取输出并 yield"""
-        session_id = kwargs.get("session_id")
-        worker = None
-        conv_uuid = None
-        if session_id:
-            from ai_core.session_manager import session_worker_manager
-            worker = await session_worker_manager.get_or_create_worker(session_id)
-            conv_uuid = worker.conversation_uuid
-
+        """流式调用 CLI 进程：优先从预热池获取就绪 Worker，用完即焚"""
         prompt = self._format_messages_to_prompt(messages)
-        cmd_args, needs_stdin = self._build_command(
-            prompt,
-            model=kwargs.get("model"),
-            conversation_uuid=conv_uuid
-        )
         timeout = kwargs.get("timeout", self.timeout)
+        resolved_exe = resolve_executable_path(self.executable)
+        exe_lower = os.path.basename(resolved_exe).lower()
 
-        async def _stream_internal():
-            stdin_dest = asyncio.subprocess.PIPE if needs_stdin else asyncio.subprocess.DEVNULL
-            proc = await asyncio.create_subprocess_exec(
-                *cmd_args,
-                stdin=stdin_dest,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.cwd,
+        # 针对默认 agy / gemini 走独占预热待命池，达到零冷启动
+        if ("agy" in exe_lower or "gemini" in exe_lower) and not kwargs.get("args_template"):
+            from ai_core.process_pool import prewarmed_process_pool
+            worker = await prewarmed_process_pool.acquire_worker(
+                executable=self.executable,
+                model=kwargs.get("model"),
                 env=self._get_env()
             )
-
-            if needs_stdin and proc.stdin:
-                proc.stdin.write(prompt.encode("utf-8"))
-                await proc.stdin.drain()
-                proc.stdin.close()
-
-            async def read_stream():
-                if not proc.stdout:
-                    return
-                while True:
-                    line = await proc.stdout.readline()
-                    if not line:
-                        break
-                    text = line.decode("utf-8", errors="replace")
-                    yield StreamChunk(delta=text, role="assistant")
-
             try:
-                async for chunk in read_stream():
+                async for chunk in worker.execute_and_stream(prompt, timeout=timeout):
                     yield chunk
+            finally:
+                await prewarmed_process_pool.release_worker(worker)
+            return
 
-                await asyncio.wait_for(proc.wait(), timeout=timeout)
-            except asyncio.TimeoutError:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-                raise TimeoutError(f"[CLIProcessProvider] 进程执行超时 (超限 {timeout}s)")
+        # 针对自定义 executable / 测试用例参数模板，走独立子进程
+        cmd_args, needs_stdin = self._build_command(
+            prompt,
+            model=kwargs.get("model")
+        )
+        stdin_dest = asyncio.subprocess.PIPE if needs_stdin else asyncio.subprocess.DEVNULL
+        proc = await asyncio.create_subprocess_exec(
+            *cmd_args,
+            stdin=stdin_dest,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=self.cwd,
+            env=self._get_env()
+        )
 
-            if proc.returncode != 0:
-                stderr_bytes = await proc.stderr.read() if proc.stderr else b""
-                err = stderr_bytes.decode("utf-8", errors="replace").strip()
-                raise RuntimeError(f"[CLIProcessProvider Stream] 进程异常退出 ({proc.returncode}): {err}")
+        if needs_stdin and proc.stdin:
+            proc.stdin.write(prompt.encode("utf-8"))
+            await proc.stdin.drain()
+            proc.stdin.close()
 
-            yield StreamChunk(finish_reason="stop")
+        async def read_stream():
+            if not proc.stdout:
+                return
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace")
+                yield StreamChunk(delta=text, role="assistant")
 
-        if worker:
-            async with worker.lock:
-                async for chunk in _stream_internal():
-                    yield chunk
-                worker.touch()
-        else:
-            async for chunk in _stream_internal():
+        try:
+            async for chunk in read_stream():
                 yield chunk
+
+            await asyncio.wait_for(proc.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise TimeoutError(f"[CLIProcessProvider] 进程执行超时 (超限 {timeout}s)")
+
+        if proc.returncode != 0:
+            stderr_bytes = await proc.stderr.read() if proc.stderr else b""
+            err = stderr_bytes.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"[CLIProcessProvider Stream] 进程异常退出 ({proc.returncode}): {err}")
+
+        yield StreamChunk(finish_reason="stop")

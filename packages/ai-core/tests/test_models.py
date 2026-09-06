@@ -55,3 +55,31 @@ def test_stream_chunk_and_response():
     assert resp.content == "Final answer"
     assert resp.provider_type == "key"
     assert resp.usage.total_tokens == 30
+
+def test_resolve_agt_model():
+    from ai_core.models import resolve_agt_model
+
+    # 1. 显式 agt-* 家族
+    assert resolve_agt_model("agt-gemini-3.8-flash") == ("cli", "gemini-3.8-flash")
+    assert resolve_agt_model("agt-flash") == ("cli", "gemini-3.8-flash")
+    assert resolve_agt_model("agt-gemini-3.7-flash") == ("cli", "gemini-3.7-flash")
+    assert resolve_agt_model("agt-claude-sonnet-4.6") == ("cli", "claude-sonnet-4.6")
+    assert resolve_agt_model("agt-sonnet") == ("cli", "claude-sonnet-4.6")
+    assert resolve_agt_model("agt-claude-opus-4.6") == ("cli", "claude-opus-4.6")
+    assert resolve_agt_model("agt-opus") == ("cli", "claude-opus-4.6")
+    assert resolve_agt_model("agt-gpt-oss-120b") == ("cli", "gpt-oss-120b")
+
+    # 2. 原生 Claude 请求自动映射
+    assert resolve_agt_model("claude-3-5-sonnet-20241022") == ("cli", "claude-sonnet-4.6")
+    assert resolve_agt_model("claude-3-7-sonnet") == ("cli", "claude-sonnet-4.6")
+    assert resolve_agt_model("claude-3-opus-20240229") == ("cli", "claude-opus-4.6")
+
+    # 3. 宿主机别名与空值
+    assert resolve_agt_model("agy") == ("cli", "gemini-3.8-flash")
+    assert resolve_agt_model("") == ("cli", "gemini-3.8-flash")
+    assert resolve_agt_model(None) == ("cli", "gemini-3.8-flash")
+
+    # 4. 外部 API Key 模型
+    assert resolve_agt_model("minimax/minimax-m3:free") == ("key", "minimax/minimax-m3:free")
+    assert resolve_agt_model("gemini-flash-lite-latest") == ("key", "gemini-flash-lite-latest")
+

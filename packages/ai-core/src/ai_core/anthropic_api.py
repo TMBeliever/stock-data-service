@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from ai_core.config import ai_config
-from ai_core.models import Message
+from ai_core.models import Message, resolve_agt_model
 from ai_core.orchestrator import ai_orchestrator
 from ai_core.openai_api import verify_openai_api_key
 
@@ -77,23 +77,21 @@ def _to_internal_messages(req: AnthropicMessagesRequest) -> List[Message]:
 def _resolve_provider_and_kwargs(req: AnthropicMessagesRequest) -> tuple[str, Dict[str, Any]]:
     """
     模型驱动分流：
-    默认针对 Claude CLI 自动路由至宿主机 agy 驱动进行超强大脑推演；
-    若显式指定了 minimax 或其它非 claude/agy 模型，则路由至 key 网关。
+    支持 agt-* 模型矩阵、Claude 原生模型 (自动映射到 Antigravity 宿主机模型)、
+    以及指定外部 key 的模型。
     """
     model_name = (req.model or "").strip()
-    model_lower = model_name.lower()
     extra_kwargs: Dict[str, Any] = {}
 
     if req.temperature is not None:
         extra_kwargs["temperature"] = req.temperature
 
-    # 默认将 claude-*, agy, 或未指定模型统一调度至宿主机 agy
-    if "agy" in model_lower or "claude" in model_lower or not model_name:
-        provider_type = "cli"
+    provider_type, target_model = resolve_agt_model(model_name)
+    if provider_type == "cli":
         extra_kwargs["executable"] = "agy"
+        extra_kwargs["model"] = target_model
     else:
-        provider_type = "key"
-        extra_kwargs["model"] = model_name
+        extra_kwargs["model"] = target_model or ai_config.OPENAI_MODEL
 
     return provider_type, extra_kwargs
 
@@ -128,17 +126,6 @@ async def messages_completion(req: AnthropicMessagesRequest):
 
     internal_messages = _to_internal_messages(req)
     provider_type, extra_kwargs = _resolve_provider_and_kwargs(req)
-
-    # 提取或自动绑定 session_id (优先使用 metadata.user_id, 其次基于首句指纹)
-    session_id = None
-    if req.metadata and isinstance(req.metadata, dict):
-        session_id = req.metadata.get("user_id")
-    if not session_id and req.messages and len(req.messages) > 0:
-        first_text = _extract_text_content(req.messages[0].content)
-        if first_text:
-            session_id = f"claude_{hashlib.md5(first_text.encode('utf-8')).hexdigest()[:16]}"
-    if session_id:
-        extra_kwargs["session_id"] = session_id
 
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
 

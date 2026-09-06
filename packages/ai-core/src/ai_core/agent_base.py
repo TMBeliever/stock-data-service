@@ -46,7 +46,7 @@ class BaseAgent(ABC):
         self,
         provider: BaseAIProvider,
         system_prompt: Optional[str] = None,
-        max_steps: int = 10
+        max_steps: int = 0
     ):
         self.provider = provider
         self.max_steps = max_steps
@@ -122,11 +122,13 @@ class BaseAgent(ABC):
         )
 
     async def run(self, goal: str) -> str:
-        """启动自主智能体循环直至完成目标或达到最大步数"""
+        """启动自主智能体循环直至完成目标 (max_steps<=0 为无限制，对齐 DSH 自然终结)"""
         self.memory.add_user_message(goal)
 
-        for i in range(1, self.max_steps + 1):
-            step_res = await self.step(step_number=i)
+        step_num = 0
+        while self.max_steps <= 0 or step_num < self.max_steps:
+            step_num += 1
+            step_res = await self.step(step_number=step_num)
             if step_res.is_finished and step_res.final_answer is not None:
                 return step_res.final_answer
 

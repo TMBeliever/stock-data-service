@@ -309,14 +309,12 @@ class BaseAgent:
         tools = self.token_governor.sort_tools_for_caching(raw_tools)
 
         effective_max = max_steps_override if max_steps_override is not None else self.max_steps
-        is_unbounded = (effective_max <= 0)
-        # 极端防失控兜底熔断：无限制模式下默认 100 步作为安全网
-        runaway_ceiling = 100 if is_unbounded else effective_max
+        is_unbounded = (effective_max is None or effective_max <= 0)
 
         logger.info(
             "Agent '%s' starting: %d tools, max_steps=%s, mode=%s",
             self.name, len(tools),
-            f"unbounded (runaway_ceiling={runaway_ceiling})" if is_unbounded else f"{effective_max} steps",
+            "unbounded (natural completion, aligned with DSH)" if is_unbounded else f"{effective_max} steps",
             execution_mode
         )
 
@@ -332,7 +330,6 @@ class BaseAgent:
         # 3. 循环状态
         step = 0
         error_budget = 3
-        reflection_used = False
         self.repeat_guard.reset()
 
         # ── 0. 优先恢复用户授权的工具调用 ──
@@ -348,8 +345,8 @@ class BaseAgent:
             async for ev in self._execute_and_stream_tools([resume_tc], step, active_registry, history):
                 yield ev
 
-        # ── 主 ReAct 循环 ──
-        while step < runaway_ceiling:
+        # ── 主 ReAct 循环 (对标 DSH: 无人为步数硬顶，由模型自然输出最终回答或由用户打断/守卫防死循环) ──
+        while is_unbounded or step < effective_max:
             step += 1
 
             # Token 压缩检查
@@ -358,11 +355,18 @@ class BaseAgent:
 
             # ── 4. 调用模型 ──
             try:
-                ai_resp = await self._call_llm_generate(
-                    messages=history, tools=tools,
-                    model=model, provider=provider, temperature=temperature,
-                    reasoning_effort=thinking_level
-                )
+                import inspect
+                sig = inspect.signature(self._call_llm_generate)
+                call_kwargs = {
+                    "messages": history,
+                    "tools": tools,
+                    "model": model,
+                    "provider": provider,
+                    "temperature": temperature,
+                }
+                if "reasoning_effort" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                    call_kwargs["reasoning_effort"] = thinking_level
+                ai_resp = await self._call_llm_generate(**call_kwargs)
             except Exception as e:
                 err_msg = f"智能体推理异常: {str(e)}"
                 logger.error(err_msg)
@@ -480,67 +484,6 @@ class BaseAgent:
                             }, ensure_ascii=False)
                         }
 
-                # ── 错误检测 ──
-                recent_results = [m for m in history if m.role == "tool"][-len(parsed_calls):]
-                error_msgs = [
-                    m for m in recent_results
-                    if any(kw in (m.content or "") for kw in [
-                        "Error", "error", "failed", "denied", "not found",
-                        "No such", "cannot", "失败", "异常", "Permission", "Timeout"
-                    ])
-                ]
-
-                # 只有"本轮工具全部失败"才消耗错误预算
-                all_failed = len(error_msgs) > 0 and len(error_msgs) == len(parsed_calls)
-
-                if all_failed:
-                    error_budget -= 1
-
-                    if error_budget <= 0:
-                        if not reflection_used:
-                            # ── 给模型一次反思机会 ──
-                            reflection_used = True
-                            error_budget = 2  # 反思后再给 2 次预算
-                            error_summary = "\n".join([
-                                f"- 工具 `{m.name}`: {(m.content or '')[:250]}"
-                                for m in error_msgs
-                            ])
-                            history.append(Message.user(
-                                f"工具调用连续失败：\n{error_summary}\n\n"
-                                "请分析错误原因并决定下一步：\n"
-                                "1. 能换一种方式完成任务吗？（换工具/换参数）\n"
-                                "2. 如果是环境问题（权限/Docker/网络），请直接解释并给用户提供手动修复步骤，停止重试。\n"
-                                "3. 如果可以继续，请立即执行下一步。"
-                            ))
-                            yield {
-                                "event": "thought",
-                                "data": json.dumps({
-                                    "step": step,
-                                    "thought": "🔍 检测到连续工具失败，正在反思原因并调整策略..."
-                                }, ensure_ascii=False)
-                            }
-                            continue  # 让模型基于反思决定下一步
-
-                        else:
-                            # 已反思过，仍然失败 → 告知用户原因退出
-                            last_error = (error_msgs[-1].content or "")[:400]
-                            yield {
-                                "event": "message",
-                                "data": json.dumps({
-                                    "delta": (
-                                        "\n\n> ⚠️ **任务受阻**\n\n"
-                                        "经过分析和策略调整后，任务仍无法完成，运行环境存在系统级障碍。\n\n"
-                                        f"**最后错误**：\n```\n{last_error}\n```\n\n"
-                                        "**建议**：检查环境权限，或将错误信息提供给管理员处理。"
-                                    ),
-                                    "role": "assistant"
-                                }, ensure_ascii=False)
-                            }
-                            yield {"event": "done", "data": json.dumps({"status": "finished"})}
-                            return
-                else:
-                    error_budget = 3  # 有成功结果则重置预算
-
                 continue
 
             # ── 5B. 检查异常空回复或上游内容拦截 ──
@@ -617,25 +560,18 @@ class BaseAgent:
             yield {"event": "done", "data": json.dumps({"status": "finished"})}
             return
 
-        # 达到步数上限或极端防失控兜底
-        if is_unbounded:
-            warning_msg = (
-                f"\n\n> ⚠️ **触发极端防失控兜底 ({runaway_ceiling} 步)**\n\n"
-                "单次推演已达到系统极端安全上限（100 步）。为了保护您的计算资源与上下文，已自动暂停。\n"
-                "中间步骤已完整保存，您可以继续发送指令推进后续任务。"
-            )
-        else:
+        # 仅当显式设置了有限步数预算 (>0) 且被耗尽时，才向用户提示步数预算耗尽
+        if not is_unbounded and effective_max and step >= effective_max:
             warning_msg = (
                 f"\n\n> ⚠️ **步数上限 ({effective_max} 步)**\n\n"
-                "任务规模超出设定的单次执行预算。已完成的中间步骤已保存。\n"
+                "任务规模已达到您在系统设置中指定的单次执行预算。已完成的中间步骤已保存。\n"
                 "你可以继续追问，我会基于已有结果继续推进。"
             )
-
-        yield {
-            "event": "message",
-            "data": json.dumps({
-                "delta": warning_msg,
-                "role": "assistant"
-            }, ensure_ascii=False)
-        }
+            yield {
+                "event": "message",
+                "data": json.dumps({
+                    "delta": warning_msg,
+                    "role": "assistant"
+                }, ensure_ascii=False)
+            }
         yield {"event": "done", "data": json.dumps({"status": "finished"})}

@@ -174,6 +174,7 @@ class QuantAgent(BaseAgent):
             sensitive_tools=sensitive_tools,
             approved_tool_calls=approved_tool_calls,
             approved_tool_call=approved_tool_call,
+            thinking_level=thinking_level,
             max_steps_override=max_steps
         ):
             yield event

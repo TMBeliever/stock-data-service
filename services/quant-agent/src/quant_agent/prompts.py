@@ -113,8 +113,13 @@ SUPER_ADMIN_SYSTEM_INSTRUCTION = """
 
 QUANT_COPILOT_SYSTEM_PROMPT = SYSTEM_PROMPT_QUANT_COPILOT
 
-def build_system_prompt(page_context: str = "", is_admin: bool = False, thinking_level: str = "medium") -> str:
-    """根据前端页面情境、时间、身份权限与推演思考程度追加动态指令"""
+def build_system_prompt(
+    page_context: str = "",
+    is_admin: bool = False,
+    thinking_level: str = "medium",
+    scope: str = "quant"
+) -> str:
+    """根据前端页面情境、时间、身份权限、领域范围 (scope) 与推演思考程度追加动态指令"""
     import datetime
     today_str = datetime.datetime.now().strftime("%Y-%m-%d")
     base = f"{SYSTEM_PROMPT_QUANT_COPILOT}\n\n【系统当前锚定日期】: {today_str}。若用户未特别说明时间，所有最新数据查询均以此基准日期为准。"
@@ -139,15 +144,25 @@ def build_system_prompt(page_context: str = "", is_admin: bool = False, thinking
             "• 若 Git 命令返回 `fatal: not a git repository`，说明该工程可能为直接导入的代码快照/压缩包，缺少 .git 版本库元数据，应明确向用户解释原因。"
         )
 
-    if is_admin:
-        base += f"\n\n{SUPER_ADMIN_SYSTEM_INSTRUCTION}"
-    else:
+    if not is_admin:
         base += (
             "\n\n【权限模式 - 标准量化投研模式 (Standard Quant Mode)】:\n"
             "当前对话用户为普通用户或未登录访客 (Role: guest/user)。\n"
             "• 你拥有金融行情查询、多维数据计算、策略编写指导与沙箱回测能力。\n"
-            "• 你【没有】宿主机 Shell 终端执行、源码文件读写、微服务管理或 Docker 容器运维特权 (admin_devops 工具链已隐藏)。\n"
+            "• 你【没有】宿主机 Shell 终端执行、源码文件读写、微服务管理或 Docker 容器运维特权 (admin_devops 工具链已安全屏蔽)。\n"
             "• 若用户要求你执行系统命令 (如 ls/cd/git/docker/bash/shell) 或修改工程源码，请明确告知用户当前处于访客/标准用户模式，并提示用户：如需使用宿主机运维与系统级代码修改特权，请在右上角登录超级管理员账号。"
         )
+    else:
+        if scope == "quant":
+            base += (
+                "\n\n【当前激活领域工具箱 - 专属量化投研与资产回测模式 (Quant Domain Mode)】:\n"
+                "• 当前会话已智能收敛至量化投研与资产回测场景。你拥有全套金融行情工具、量化沙箱回测、用户自选组合与策略库查询工具。\n"
+                "• 系统运维工具 (admin_devops) 在当前会话中已自动屏蔽，免除工具噪音与上下文干扰。\n"
+                "• 核心准则：查询用户自选标的组合立即调用 `get_user_watchlists`，查询策略代码立即调用 `get_user_strategies`，执行回测调用 `run_backtest_fast`，绝对禁止尝试在本地源码文件中搜索用户资产！"
+            )
+        elif scope == "devops":
+            base += f"\n\n{SUPER_ADMIN_SYSTEM_INSTRUCTION}\n\n【当前激活领域工具箱 - DevOps 与系统运维专属模式 (DevOps Mode)】"
+        else: # "all"
+            base += f"\n\n{SUPER_ADMIN_SYSTEM_INSTRUCTION}\n\n【当前激活领域工具箱 - 全栈混合模式 (Full-Stack Mode)】"
 
     return base

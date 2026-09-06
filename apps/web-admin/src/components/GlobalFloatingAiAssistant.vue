@@ -1181,20 +1181,65 @@ onUnmounted(() => {
           </button>
 
           <div class="flex items-center space-x-1.5 text-xs">
-            <span class="font-bold text-white tracking-wide flex items-center space-x-1">
-              <span>📁</span>
-              <span>{{ codexStore.activeProject?.name || '项目' }}</span>
-            </span>
-            <span class="text-zinc-500">/</span>
-            <span class="text-zinc-300 font-medium truncate max-w-[240px]">
-              {{ codexStore.activeSession?.title || '新对话' }}
-            </span>
+            <template v-if="codexStore.assistantMode === 'quant' || !authStore.isAdmin">
+              <span class="font-bold text-white tracking-wide flex items-center space-x-1">
+                <span>📈</span>
+                <span>量化投研助手</span>
+              </span>
+              <span class="text-zinc-500">/</span>
+              <span class="text-zinc-300 font-medium truncate max-w-[180px]">
+                {{ codexStore.activeSession?.title || '新对话' }}
+              </span>
+            </template>
+            <template v-else>
+              <span class="font-bold text-white tracking-wide flex items-center space-x-1">
+                <span>💻</span>
+                <span>{{ codexStore.activeProject?.name || '项目' }}</span>
+              </span>
+              <span class="text-zinc-500">/</span>
+              <span class="text-zinc-300 font-medium truncate max-w-[180px]">
+                {{ codexStore.activeSession?.title || '新对话' }}
+              </span>
+            </template>
+
+            <!-- 模式切换开关（仅超管登录时支持投研与工程模式自由切换，普通用户严格默认投研模式） -->
+            <div
+              v-if="authStore.isAdmin"
+              class="flex items-center bg-black/40 p-0.5 rounded-lg border border-white/[0.08] text-[10px] ml-1.5"
+            >
+              <button
+                @click="codexStore.setAssistantMode('quant')"
+                :class="[
+                  'px-2 py-0.5 rounded transition-all flex items-center space-x-1 cursor-pointer',
+                  codexStore.assistantMode === 'quant'
+                    ? 'bg-purple-600/30 text-purple-200 font-semibold border border-purple-500/40 shadow-xs'
+                    : 'text-zinc-400 hover:text-zinc-200',
+                ]"
+                title="专属量化投研场景：免挂载项目，杜绝源码文件噪音，专注行情分析、自选组合与策略回测"
+              >
+                <span>📈</span>
+                <span>投研模式</span>
+              </button>
+              <button
+                @click="codexStore.setAssistantMode('devops')"
+                :class="[
+                  'px-2 py-0.5 rounded transition-all flex items-center space-x-1 cursor-pointer',
+                  codexStore.assistantMode === 'devops'
+                    ? 'bg-amber-600/30 text-amber-200 font-semibold border border-amber-500/40 shadow-xs'
+                    : 'text-zinc-400 hover:text-zinc-200',
+                ]"
+                title="工程开发与运维模式：挂载代码工程，支持终端 Shell、测试验证与系统维护"
+              >
+                <span>💻</span>
+                <span>工程模式</span>
+              </button>
+            </div>
 
             <!-- 权限角色标识 -->
             <span
               v-if="authStore.isAdmin"
               class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 font-mono"
-              title="当前已激活宿主机终端与系统源码修改等全部超级管理员特权"
+              title="当前已激活超级管理员特权"
             >
               ⚡ Super Admin
             </span>
@@ -1209,7 +1254,7 @@ onUnmounted(() => {
               v-else
               @click="authStore.openLogin()"
               class="px-1.5 py-0.2 rounded text-[9px] font-medium bg-white/[0.06] text-zinc-400 border border-white/[0.1] hover:text-white hover:bg-white/[0.1] cursor-pointer transition-colors"
-              title="点击登录以解锁超级管理员特权"
+              title="点击登录以解锁特权"
             >
               未登录 (访客)
             </button>
@@ -1285,10 +1330,54 @@ onUnmounted(() => {
               </span>
             </button>
 
-            <!-- 项目折叠列表区 -->
-            <div class="pt-2">
+            <!-- 场景 A：普通量化投研模式（无项目挂载、无代码工程杂音，仅展示极简纯粹的历史对话列表） -->
+            <div v-if="codexStore.assistantMode === 'quant' || !authStore.isAdmin" class="pt-2">
               <div class="flex items-center justify-between px-1 pb-1.5 text-[11px] font-semibold text-zinc-400">
-                <span>项目</span>
+                <span>历史对话</span>
+                <span class="text-[10px] text-zinc-500 font-mono">{{ codexStore.allSessions.length }} 个会话</span>
+              </div>
+
+              <!-- 历史对话会话列表 (纯净无项目噪音) -->
+              <div class="space-y-0.5 max-h-[calc(100vh-320px)] overflow-y-auto">
+                <div
+                  v-for="item in codexStore.allSessions"
+                  :key="item.session.id"
+                  @click="handleSelectSession(item.project.id, item.session.id)"
+                  :class="[
+                    'group/sess flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-all duration-150',
+                    codexStore.activeSessionId === item.session.id
+                      ? 'bg-white/[0.14] text-white font-medium shadow-xs'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]',
+                  ]"
+                  :title="item.session.title"
+                >
+                  <div class="flex items-center space-x-1.5 truncate flex-1 mr-1">
+                    <span class="text-xs text-zinc-500 group-hover/sess:text-zinc-300">💬</span>
+                    <span class="truncate">{{ item.session.title }}</span>
+                  </div>
+
+                  <!-- 删除会话按钮 (悬停出现) -->
+                  <button
+                    @click.stop="handleDeleteSession(item.project.id, item.session)"
+                    class="opacity-0 group-hover/sess:opacity-100 p-0.5 rounded hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all cursor-pointer shrink-0"
+                    title="删除该会话"
+                  >
+                    <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div v-if="codexStore.allSessions.length === 0" class="py-8 text-center text-zinc-500 text-xs">
+                  暂无历史对话
+                </div>
+              </div>
+            </div>
+
+            <!-- 场景 B：工程与系统运维模式（仅超管主动切换至工程模式时展示项目挂载、导入与代码树） -->
+            <div v-else class="pt-2">
+              <div class="flex items-center justify-between px-1 pb-1.5 text-[11px] font-semibold text-zinc-400">
+                <span>项目工程</span>
                 <button
                   @click="openProjectModal"
                   class="text-xs px-2 py-0.5 rounded text-amber-400 hover:bg-amber-500/10 transition-colors cursor-pointer flex items-center space-x-0.5 font-medium"

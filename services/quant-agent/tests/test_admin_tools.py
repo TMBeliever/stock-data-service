@@ -65,17 +65,35 @@ def test_dynamic_tool_registry_rbac():
     assert "admin_docker_manage" not in user_tool_names
     assert "admin_execute_shell" not in user_tool_names
 
-    # 超级管理员动态挂载 admin_devops 全套运维工具
-    admin_registry = quant_agent.get_active_tool_registry(is_admin=True)
-    admin_tool_names = [t.name for t in admin_registry.list_tools()]
-    assert "validate_strategy_code" in admin_tool_names
-    assert "admin_inspect_system_and_services" in admin_tool_names
-    assert "admin_read_source_code" in admin_tool_names
-    assert "admin_modify_source_code" in admin_tool_names
-    assert "admin_run_tests" in admin_tool_names
-    assert "admin_manage_service" in admin_tool_names
-    assert "admin_docker_manage" in admin_tool_names
-    assert "admin_execute_shell" in admin_tool_names
+    # 超级管理员在 quant 投研场景下：物理屏蔽 admin 工具，防止大模型幻觉与乱翻源码
+    admin_quant_reg = quant_agent.get_active_tool_registry(is_admin=True, scope="quant")
+    admin_quant_tools = [t.name for t in admin_quant_reg.list_tools()]
+    assert "validate_strategy_code" in admin_quant_tools
+    assert "get_user_watchlists" in admin_quant_tools
+    assert "get_user_strategies" in admin_quant_tools
+    assert "run_backtest_fast" in admin_quant_tools
+    assert "admin_inspect_system_and_services" not in admin_quant_tools
+    assert "admin_read_source_code" not in admin_quant_tools
+    assert "admin_execute_shell" not in admin_quant_tools
+
+    # 超级管理员在 devops 运维场景下：激活运维与 Shell 工具
+    admin_devops_reg = quant_agent.get_active_tool_registry(is_admin=True, scope="devops")
+    admin_devops_tools = [t.name for t in admin_devops_reg.list_tools()]
+    assert "admin_inspect_system_and_services" in admin_devops_tools
+    assert "admin_execute_shell" in admin_devops_tools
+    assert "validate_strategy_code" not in admin_devops_tools
+
+    # 超级管理员在 all 全栈模式下：全量工具融合
+    admin_all_reg = quant_agent.get_active_tool_registry(is_admin=True, scope="all")
+    admin_all_tools = [t.name for t in admin_all_reg.list_tools()]
+    assert "validate_strategy_code" in admin_all_tools
+    assert "admin_inspect_system_and_services" in admin_all_tools
+    assert "admin_read_source_code" in admin_all_tools
+    assert "admin_modify_source_code" in admin_all_tools
+    assert "admin_run_tests" in admin_all_tools
+    assert "admin_manage_service" in admin_all_tools
+    assert "admin_docker_manage" in admin_all_tools
+    assert "admin_execute_shell" in admin_all_tools
 
 @pytest.mark.asyncio
 async def test_admin_inspect_system_and_services():
@@ -126,3 +144,26 @@ async def test_admin_execute_shell_security():
     res_ok = await admin_execute_shell("echo 'antigravity_admin_test_passed'")
     assert "=== Shell Exit Code: 0 ===" in res_ok
     assert "antigravity_admin_test_passed" in res_ok
+
+def test_detect_intent_scope():
+    """测试意图路由器的智能分流能力"""
+    from quant_agent.agent_engine import detect_intent_scope
+
+    # 1. 普通用户永远锁定在 quant 场景
+    assert detect_intent_scope("重启 docker 容器", is_admin=False) == "quant"
+    assert detect_intent_scope("查看当前目录代码", is_admin=False) == "quant"
+
+    # 2. 超管在量化投研请求下：判定为 quant
+    assert detect_intent_scope("拿我的稳健组合去跑我的历史大底策略，20每年的", is_admin=True) == "quant"
+    assert detect_intent_scope("查询 510300 最新市盈率与 K 线", is_admin=True) == "quant"
+    assert detect_intent_scope("查看我的自选组合列表", is_admin=True) == "quant"
+
+    # 3. 超管在系统运维或源码修改请求下：判定为 devops
+    assert detect_intent_scope("检查 docker 状态并重启 quant-server", is_admin=True) == "devops"
+    assert detect_intent_scope("执行 git status 并修改 agent_engine.py", is_admin=True) == "devops"
+    assert detect_intent_scope("运行 pytest 测试集", is_admin=True) == "devops"
+
+    # 4. 显式指定的 agent_mode 优先
+    assert detect_intent_scope("任意消息", is_admin=True, agent_mode="devops") == "devops"
+    assert detect_intent_scope("任意消息", is_admin=True, agent_mode="quant") == "quant"
+    assert detect_intent_scope("任意消息", is_admin=True, agent_mode="all") == "all"

@@ -75,6 +75,7 @@ class AgentChatRequest(BaseModel):
     approved_tool_calls: Optional[List[str]] = Field(default_factory=list, description="用户已显式授权的 tool_call_id 列表")
     approved_tool_call: Optional[Dict[str, Any]] = Field(None, description="用户已授权立即执行的工具调用对象 {'id': ..., 'name': ..., 'arguments': ...}")
     max_steps: Optional[int] = Field(None, description="单次最大步数 (None 或 0 为无限制，对标 DSH)")
+    agent_mode: Optional[str] = Field("auto", description="场景运行模式 ('auto' | 'quant' | 'devops' | 'all')")
 
 
 
@@ -204,14 +205,19 @@ async def toggle_mcp_server(server_name: str, req: ToggleMcpRequest, auth: UserA
 
 
 @app.get("/api/v1/agent/tools", tags=["Tools"])
-async def list_available_tools(auth: UserAuth = Depends(get_current_auth)):
-    """获取智能体当前挂载的所有 MCP 与量化工具清单 (依据权限动态判定)"""
+async def list_available_tools(
+    scope: Optional[str] = Query(None, description="工具领域过滤 ('quant' | 'devops' | 'all')"),
+    auth: UserAuth = Depends(get_current_auth)
+):
+    """获取智能体当前挂载的所有 MCP 与量化工具清单 (支持按 quant / devops / all 领域过滤)"""
     await quant_agent.initialize_tools()
-    reg = quant_agent.get_active_tool_registry(is_admin=auth.is_admin)
+    target_scope = scope if scope in ("quant", "devops", "all") else ("all" if auth.is_admin else "quant")
+    reg = quant_agent.get_active_tool_registry(is_admin=auth.is_admin, scope=target_scope)
     defs = reg.to_definitions()
     return {
         "is_admin": auth.is_admin,
         "role": auth.role,
+        "scope": target_scope,
         "total": len(defs),
         "tools": [t.to_openai_dict() for t in defs]
     }
@@ -387,6 +393,7 @@ async def chat_stream(req: AgentChatRequest, auth: UserAuth = Depends(get_curren
         page_context=page_ctx,
         temperature=temp,
         is_admin=auth.is_admin,
+        agent_mode=req.agent_mode or "auto",
         execution_mode=exec_mode,
         sensitive_tools=cfg.sensitive_tools,
         approved_tool_calls=req.approved_tool_calls or [],

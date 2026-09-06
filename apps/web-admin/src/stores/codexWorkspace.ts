@@ -318,6 +318,31 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
   const loading = ref<boolean>(false)
   const abortController = ref<AbortController | null>(null)
 
+  const getInitialAssistantMode = (): 'quant' | 'devops' => {
+    try {
+      const val = localStorage.getItem('quant_assistant_mode')
+      if (val === 'devops' || val === 'quant') return val
+    } catch {}
+    return 'quant'
+  }
+  const assistantMode = ref<'quant' | 'devops'>(getInitialAssistantMode())
+
+  function setAssistantMode(mode: 'quant' | 'devops') {
+    assistantMode.value = mode
+    try {
+      localStorage.setItem('quant_assistant_mode', mode)
+    } catch {}
+  }
+
+  const allSessions = computed(() => {
+    const list: { project: CodexProject; session: CodexSession }[] = []
+    for (const p of projects.value) {
+      for (const s of p.sessions || []) {
+        list.push({ project: p, session: s })
+      }
+    }
+    return list.sort((a, b) => (b.session.updated_at || 0) - (a.session.updated_at || 0))
+  })
 
   const activeProject = computed(() => {
     return projects.value.find((p) => p.id === activeProjectId.value) || projects.value[0] || null
@@ -808,6 +833,7 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
         pageCtx = `【当前前端工作台上下文】激活策略: ${stratStore.name || '未命名'} | 当前选中标的: ${stratStore.symbol || '510300'} | 用户自选组合: ${watchlistsDesc || '无'}`
       }
 
+      const isQuant = assistantMode.value === 'quant'
       const resp = await fetch('/api/v1/agent/chat', {
         method: 'POST',
         headers: {
@@ -819,9 +845,10 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
           messages: history,
           model: aiModel.value,
           thinking_level: thinkingLevel.value,
-          project_id: curProj.id,
-          project_path: curProj.path,
-          host_type: curProj.host_type,
+          project_id: isQuant ? undefined : curProj.id,
+          project_path: isQuant ? undefined : curProj.path,
+          host_type: isQuant ? undefined : curProj.host_type,
+          agent_mode: isQuant ? 'quant' : 'devops',
           page_context: pageCtx,
           max_steps: 0,
           execution_mode: executionMode.value,
@@ -1069,6 +1096,9 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
     sendMessage,
     approveToolCall,
     rejectToolCall,
+    assistantMode,
+    setAssistantMode,
+    allSessions,
     stopStreaming,
   }
 })

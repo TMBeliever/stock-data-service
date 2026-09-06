@@ -147,6 +147,20 @@ class ToolRegistry:
         """导出为用于大模型上下文绑定的 ToolDefinition 列表"""
         return [t.to_tool_definition() for t in self.list_tools(category)]
 
+    def filter_by_categories(self, categories: List[str]) -> "ToolRegistry":
+        """根据允许的分类白名单筛选出子注册表"""
+        allowed = set(categories)
+        cloned = ToolRegistry()
+        cloned._tools = {k: v for k, v in self._tools.items() if v.category in allowed}
+        return cloned
+
+    def exclude_categories(self, categories: List[str]) -> "ToolRegistry":
+        """根据分类黑名单剔除工具并生成子注册表"""
+        blocked = set(categories)
+        cloned = ToolRegistry()
+        cloned._tools = {k: v for k, v in self._tools.items() if v.category not in blocked}
+        return cloned
+
     def copy(self) -> "ToolRegistry":
         """创建当前注册表的浅拷贝副本"""
         cloned = ToolRegistry()

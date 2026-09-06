@@ -220,3 +220,59 @@ async def test_process_pool_four_workers_concurrent(monkeypatch):
     assert results[3] == "OUTPUT_REQ_4"
 
     await pool.shutdown()
+
+@pytest.mark.asyncio
+async def test_process_pool_client_interrupt_and_retry(monkeypatch):
+    """测试客户端中途打断请求 (Ctrl+C / CancelledError) 后，进程被彻底杀死且重试时无残留污染"""
+    pool = PrewarmedProcessPool()
+    monkeypatch.setattr(ai_config, "CLI_STANDBY_POOL_SIZE", 2)
+    monkeypatch.setattr(ai_config, "CLI_MAX_CONCURRENCY", 4)
+    monkeypatch.setattr(ai_config, "CLI_SPAWN_STAGGER_DELAY", 0.05)
+
+    async def mock_spawn(*args, **kwargs):
+        code = (
+            "import sys, time\n"
+            "data = sys.stdin.read().strip()\n"
+            "time.sleep(0.5)\n"
+            "print('RES_' + data, flush=True)\n"
+        )
+        p = await asyncio.create_subprocess_exec(
+            sys.executable, "-c", code,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        return PrewarmedProcess(proc=p, created_at=time.time())
+
+    monkeypatch.setattr(pool, "_spawn_worker", mock_spawn)
+
+    # 1. 模拟第一个请求启动后，客户端中途打断 (Cancel)
+    worker1 = await pool.acquire_worker()
+    pid1 = worker1.proc.pid
+    assert worker1 in pool._active_processes
+
+    # 模拟客户端断开连接触发 CancelledError，finally 释放
+    try:
+        raise asyncio.CancelledError("User pressed Ctrl+C in Claude CLI")
+    except asyncio.CancelledError:
+        await pool.release_worker(worker1)
+
+    # 验证 worker1 已经被立即杀死并移出活跃集合
+    assert worker1 not in pool._active_processes
+    # 等待进程退出
+    await asyncio.sleep(0.1)
+    assert not worker1.is_alive
+
+    # 2. 模拟客户端紧接着重新发起请求
+    worker2 = await pool.acquire_worker()
+    pid2 = worker2.proc.pid
+    assert pid2 != pid1  # 必须是全新独立的子进程
+
+    try:
+        res = await worker2.execute("CLEAN_RETRY_PROMPT", timeout=5.0)
+        assert "RES_CLEAN_RETRY_PROMPT" in res
+    finally:
+        await pool.release_worker(worker2)
+
+    await pool.shutdown()
+

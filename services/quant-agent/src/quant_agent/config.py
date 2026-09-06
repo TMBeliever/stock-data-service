@@ -14,7 +14,7 @@ class AgentConfig(BaseSettings):
     AI_CORE_API_KEY: str = os.getenv("AI_CORE_API_KEY", "sk-quant-agy-8f92e10c74b6")
     
     # 默认模型 (统一由 ai-core 网关路由分流)
-    DEFAULT_MODEL: str = os.getenv("AI_MODEL", "agt-claude-sonnet-4.6")
+    DEFAULT_MODEL: str = os.getenv("AI_MODEL", "agt-gemini-3.8-flash")
     DEFAULT_PROVIDER: str = os.getenv("AI_PROVIDER", "cli")
     
     # 金融数据中台 stock-data 路径 (用于启动其 MCP 进程)

@@ -54,7 +54,7 @@ export const useAiStore = defineStore('ai', () => {
 
 
   // 2. 模型状态与对话记录
-  const aiModel = ref<string>('agt-claude-sonnet-4.6')
+  const aiModel = ref<string>('agt-gemini-3.8-flash')
   const isStreaming = ref(false)
   const abortController = ref<AbortController | null>(null)
 

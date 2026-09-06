@@ -131,20 +131,20 @@ export interface AvailableModelItem {
 // 统一大模型网关支持的真实可用模型列表 (涵盖 Antigravity 原生预热池模型与外部 Key 代理模型)
 export const AVAILABLE_MODELS: AvailableModelItem[] = [
   {
-    id: 'agt-claude-sonnet-4.6',
-    name: 'Claude 3.7 Sonnet (Thinking)',
-    series: 'Claude',
-    tag: '顶级推理',
-    description: 'Anthropic 前沿推理旗舰，具备深度思维链与高难度量化代码编写能力 (Antigravity 预热池直通)',
-    isDefault: true,
-  },
-  {
     id: 'agt-gemini-3.8-flash',
     name: 'Gemini 3.8 Flash (High)',
     series: 'Gemini',
-    tag: '最新旗舰',
-    description: 'Google 2026 前沿推理旗舰，毫秒级极速响应与全市场深度感知 (Antigravity 预热池直通)',
+    tag: '推荐默认',
+    description: 'Google 2026 前沿推理旗舰，毫秒级极速响应与全市场深度感知 (Antigravity 预热池直通，推荐默认)',
+    isDefault: true,
     isLatest: true,
+  },
+  {
+    id: 'agt-claude-sonnet-4.6',
+    name: 'Claude 3.7 Sonnet (Thinking)',
+    series: 'Claude',
+    tag: '深度推理',
+    description: 'Anthropic 前沿推理旗舰，具备深度思维链与高难度量化代码编写能力 (Antigravity 预热池直通)',
   },
   {
     id: 'agt-gemini-3.7-flash',
@@ -251,7 +251,7 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
         return val
       }
     } catch {}
-    return 'agt-claude-sonnet-4.6'
+    return 'agt-gemini-3.8-flash'
   }
 
   const getInitialThinkingLevel = (): ThinkingLevel => {

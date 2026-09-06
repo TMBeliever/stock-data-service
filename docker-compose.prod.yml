@@ -40,7 +40,7 @@ services:
       - ENVIRONMENT=production
       - AI_CORE_URL=http://ai-core:8070
       - AI_CORE_API_KEY=${AI_CORE_API_KEY:-sk-quant-agy-8f92e10c74b6}
-      - AI_MODEL=${AI_MODEL:-agt-claude-sonnet-4.6}
+      - AI_MODEL=${AI_MODEL:-agt-gemini-3.8-flash}
       - QUANT_SERVER_URL=http://quant-server:8080
       - STOCK_DATA_API_URL=http://stock-data:8000
       - COMMON_SERVER_URL=http://common-server:8090

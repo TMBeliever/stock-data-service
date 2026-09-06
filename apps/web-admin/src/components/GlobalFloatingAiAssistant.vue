@@ -921,8 +921,8 @@ function onTriggerMouseDown(e: MouseEvent) {
   hasTriggerMoved = false
   triggerMouseStartX = e.clientX
   triggerMouseStartY = e.clientY
-  triggerInitialX = triggerPos.value?.x ?? 1150
-  triggerInitialY = triggerPos.value?.y ?? 720
+  triggerInitialX = triggerPos.value?.x ?? (typeof window !== 'undefined' ? window.innerWidth - 232 : 1150)
+  triggerInitialY = triggerPos.value?.y ?? (typeof window !== 'undefined' ? window.innerHeight - 64 : 720)
 
   window.addEventListener('mousemove', onTriggerMouseMove)
   window.addEventListener('mouseup', onTriggerMouseUp)
@@ -937,12 +937,7 @@ function onTriggerMouseMove(e: MouseEvent) {
     hasTriggerMoved = true
   }
 
-  const maxX = Math.max(10, window.innerWidth - 200)
-  const maxY = Math.max(10, window.innerHeight - 56)
-  const newX = Math.min(Math.max(10, triggerInitialX + deltaX), maxX)
-  const newY = Math.min(Math.max(10, triggerInitialY + deltaY), maxY)
-
-  triggerPos.value = { x: newX, y: newY }
+  aiStore.updateTriggerPosition(triggerInitialX + deltaX, triggerInitialY + deltaY)
 }
 
 function onTriggerMouseUp() {
@@ -953,6 +948,19 @@ function onTriggerMouseUp() {
 
   if (!hasTriggerMoved && triggerPos.value) {
     aiStore.open(triggerPos.value)
+  }
+}
+
+// 视口改变时保证悬浮胶囊始终在安全屏幕内
+function onWindowResize() {
+  if (typeof window === 'undefined') return
+  const maxX = Math.max(10, window.innerWidth - 220)
+  const maxY = Math.max(10, window.innerHeight - 50)
+  if (triggerPos.value && (triggerPos.value.x > maxX || triggerPos.value.y > maxY)) {
+    aiStore.updateTriggerPosition(
+      Math.min(triggerPos.value.x, maxX),
+      Math.min(triggerPos.value.y, maxY)
+    )
   }
 }
 
@@ -981,6 +989,7 @@ function handleGlobalKeydown(e: KeyboardEvent) {
 onMounted(() => {
   window.addEventListener('keydown', handleGlobalKeydown)
   window.addEventListener('click', handleClickOutside)
+  window.addEventListener('resize', onWindowResize)
   codexStore.fetchProjects()
   fetchMcpServers()
 })
@@ -988,6 +997,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
   window.removeEventListener('click', handleClickOutside)
+  window.removeEventListener('resize', onWindowResize)
   window.removeEventListener('mousemove', onHeaderMouseMove)
   window.removeEventListener('mouseup', onHeaderMouseUp)
   window.removeEventListener('mousemove', onCornerMouseMove)
@@ -1012,28 +1022,30 @@ onUnmounted(() => {
           top: `${triggerPos?.y ?? 720}px`,
           zIndex: 9999,
         }"
-        class="group flex items-center space-x-2.5 pl-3 pr-3.5 py-2 rounded-full bg-[#13151b]/95 hover:bg-[#181a23] border border-white/[0.14] hover:border-purple-500/50 shadow-2xl shadow-black/80 hover:shadow-purple-500/20 backdrop-blur-2xl transition-shadow duration-200 cursor-grab active:cursor-grabbing select-none"
+        class="group flex items-center justify-between w-[216px] px-3 py-2 rounded-full bg-[#13151b]/95 hover:bg-[#181a23] border border-white/[0.14] hover:border-purple-500/50 shadow-2xl shadow-black/80 hover:shadow-purple-500/20 backdrop-blur-2xl transition-[box-shadow,border-color,background-color] duration-200 cursor-grab active:cursor-grabbing select-none"
         title="点击唤醒 Alpha 智能量化工作台 (⌘+J)，按住左键自由拖动"
       >
-        <div class="relative flex items-center justify-center w-7 h-7 rounded-xl bg-gradient-to-br from-purple-500/25 via-indigo-500/20 to-transparent border border-purple-500/30 text-sm shadow-sm group-hover:border-purple-400/60 transition-colors pointer-events-none">
-          <span>🤖</span>
-          <span
-            class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ring-2 ring-[#13151b]"
-            :class="codexStore.isStreaming ? 'bg-amber-400 animate-ping' : 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'"
-          ></span>
-        </div>
-
-        <div class="flex flex-col text-left pointer-events-none">
-          <div class="flex items-center space-x-1.5">
-            <span class="text-xs font-semibold text-zinc-100 group-hover:text-purple-300 transition-colors tracking-wide">Alpha Copilot</span>
+        <div class="flex items-center space-x-2.5 min-w-0">
+          <div class="relative flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-xl bg-gradient-to-br from-purple-500/25 via-indigo-500/20 to-transparent border border-purple-500/30 text-sm shadow-sm group-hover:border-purple-400/60 transition-colors pointer-events-none">
+            <span>🤖</span>
+            <span
+              class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ring-2 ring-[#13151b]"
+              :class="codexStore.isStreaming ? 'bg-amber-400 animate-ping' : 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'"
+            ></span>
           </div>
-          <span class="text-[9px] text-zinc-400 font-mono flex items-center space-x-1">
-            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse"></span>
-            <span>{{ codexStore.isStreaming ? 'Alpha 正在推演...' : '阿尔法投研工坊' }}</span>
-          </span>
+
+          <div class="flex flex-col text-left pointer-events-none min-w-0">
+            <div class="flex items-center space-x-1.5">
+              <span class="text-xs font-semibold text-zinc-100 group-hover:text-purple-300 transition-colors tracking-wide truncate">Alpha Copilot</span>
+            </div>
+            <span class="text-[9px] text-zinc-400 font-mono flex items-center space-x-1 truncate">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse flex-shrink-0"></span>
+              <span class="truncate">{{ codexStore.isStreaming ? 'Alpha 正在推演...' : '阿尔法投研工坊' }}</span>
+            </span>
+          </div>
         </div>
 
-        <div class="ml-1 pl-2 border-l border-white/[0.1] flex items-center pointer-events-none">
+        <div class="ml-1 pl-2 border-l border-white/[0.1] flex items-center flex-shrink-0 pointer-events-none">
           <kbd class="text-[10px] px-1.5 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.12] text-zinc-300 font-mono shadow-inner group-hover:border-purple-500/40 group-hover:text-purple-300 transition-colors">⌘J</kbd>
         </div>
       </div>

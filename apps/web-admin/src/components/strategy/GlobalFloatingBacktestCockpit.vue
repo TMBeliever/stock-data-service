@@ -146,8 +146,8 @@ function onTriggerMouseDown(e: MouseEvent) {
   hasTriggerMoved = false
   triggerMouseStartX = e.clientX
   triggerMouseStartY = e.clientY
-  triggerInitialX = strategyStore.cockpitTriggerPosition?.x ?? 880
-  triggerInitialY = strategyStore.cockpitTriggerPosition?.y ?? 720
+  triggerInitialX = strategyStore.cockpitTriggerPosition?.x ?? (typeof window !== 'undefined' ? window.innerWidth - 232 : 1150)
+  triggerInitialY = strategyStore.cockpitTriggerPosition?.y ?? (typeof window !== 'undefined' ? window.innerHeight - 118 : 660)
 
   window.addEventListener('mousemove', onTriggerMouseMove)
   window.addEventListener('mouseup', onTriggerMouseUp)
@@ -337,15 +337,30 @@ function onWindowClick(e: MouseEvent) {
   }
 }
 
+function onWindowResize() {
+  if (typeof window === 'undefined') return
+  const maxX = Math.max(10, window.innerWidth - 220)
+  const maxY = Math.max(10, window.innerHeight - 50)
+  const current = strategyStore.cockpitTriggerPosition
+  if (current && (current.x > maxX || current.y > maxY)) {
+    strategyStore.updateCockpitTriggerPosition(
+      Math.min(current.x, maxX),
+      Math.min(current.y, maxY)
+    )
+  }
+}
+
 onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('click', onWindowClick)
+  window.addEventListener('resize', onWindowResize)
   strategyStore.fetchUserWatchlists()
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('click', onWindowClick)
+  window.removeEventListener('resize', onWindowResize)
 })
 
 // 归档回测
@@ -497,35 +512,37 @@ const chartOption = computed(() => {
         @mousedown="onTriggerMouseDown"
         :style="{
           position: 'fixed',
-          left: `${strategyStore.cockpitTriggerPosition?.x ?? 880}px`,
-          top: `${strategyStore.cockpitTriggerPosition?.y ?? 720}px`,
+          left: `${strategyStore.cockpitTriggerPosition?.x ?? 1150}px`,
+          top: `${strategyStore.cockpitTriggerPosition?.y ?? 660}px`,
           zIndex: 9998,
         }"
-        class="group flex items-center space-x-2.5 pl-3 pr-3.5 py-2 rounded-full bg-[#13151b]/95 hover:bg-[#181a23] border border-white/[0.14] hover:border-amber-500/50 shadow-2xl shadow-black/80 hover:shadow-amber-500/20 backdrop-blur-2xl transition-shadow duration-200 cursor-grab active:cursor-grabbing select-none"
+        class="group flex items-center justify-between w-[216px] px-3 py-2 rounded-full bg-[#13151b]/95 hover:bg-[#181a23] border border-white/[0.14] hover:border-amber-500/50 shadow-2xl shadow-black/80 hover:shadow-amber-500/20 backdrop-blur-2xl transition-[box-shadow,border-color,background-color] duration-200 cursor-grab active:cursor-grabbing select-none"
         title="点击呼出量化回测工作舱 (⌘+B)，按住左键自由拖动"
       >
-        <div class="relative flex items-center justify-center w-7 h-7 rounded-xl bg-gradient-to-br from-amber-500/25 via-red-500/20 to-transparent border border-amber-500/30 text-sm shadow-sm group-hover:border-amber-400/60 transition-colors pointer-events-none">
-          <span class="text-amber-400">⚡</span>
-          <span
-            v-if="strategyStore.isBacktesting"
-            class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-400 animate-ping ring-2 ring-[#13151b]"
-          ></span>
-        </div>
-
-        <div class="flex flex-col text-left pointer-events-none">
-          <div class="flex items-center space-x-1.5">
-            <span class="text-xs font-semibold text-zinc-100 group-hover:text-amber-300 transition-colors tracking-wide">量化回测工作舱</span>
-          </div>
-          <span class="text-[9px] text-zinc-400 font-mono flex items-center space-x-1">
+        <div class="flex items-center space-x-2.5 min-w-0">
+          <div class="relative flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-xl bg-gradient-to-br from-amber-500/25 via-red-500/20 to-transparent border border-amber-500/30 text-sm shadow-sm group-hover:border-amber-400/60 transition-colors pointer-events-none">
+            <span class="text-amber-400">⚡</span>
             <span
-              class="w-1.5 h-1.5 rounded-full inline-block"
-              :class="strategyStore.isBacktesting ? 'bg-amber-400 animate-pulse' : 'bg-red-400 shadow-[0_0_8px_rgba(248,113,113,0.8)]'"
+              v-if="strategyStore.isBacktesting"
+              class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-400 animate-ping ring-2 ring-[#13151b]"
             ></span>
-            <span>{{ strategyStore.isBacktesting ? '沙箱撮合推演中...' : '极客事件驱动引擎' }}</span>
-          </span>
+          </div>
+
+          <div class="flex flex-col text-left pointer-events-none min-w-0">
+            <div class="flex items-center space-x-1.5">
+              <span class="text-xs font-semibold text-zinc-100 group-hover:text-amber-300 transition-colors tracking-wide truncate">量化回测工作舱</span>
+            </div>
+            <span class="text-[9px] text-zinc-400 font-mono flex items-center space-x-1 truncate">
+              <span
+                class="w-1.5 h-1.5 rounded-full inline-block flex-shrink-0"
+                :class="strategyStore.isBacktesting ? 'bg-amber-400 animate-pulse' : 'bg-red-400 shadow-[0_0_8px_rgba(248,113,113,0.8)]'"
+              ></span>
+              <span class="truncate">{{ strategyStore.isBacktesting ? '沙箱撮合推演中...' : '极客事件驱动引擎' }}</span>
+            </span>
+          </div>
         </div>
 
-        <div class="ml-1 pl-2 border-l border-white/[0.1] flex items-center pointer-events-none">
+        <div class="ml-1 pl-2 border-l border-white/[0.1] flex items-center flex-shrink-0 pointer-events-none">
           <kbd class="text-[10px] px-1.5 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.12] text-zinc-300 font-mono shadow-inner group-hover:border-amber-500/40 group-hover:text-amber-300 transition-colors">⌘B</kbd>
         </div>
       </div>

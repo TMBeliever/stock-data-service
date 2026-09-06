@@ -74,14 +74,46 @@ export const useAiStore = defineStore('ai', () => {
     return match ? match[1].trim() : null
   }
 
-  // 悬浮胶囊的位置（默认右下角，支持全屏自由拖动）
-  const triggerPosition = ref({
-    x: typeof window !== 'undefined' ? Math.max(20, window.innerWidth - 220) : 1150,
-    y: typeof window !== 'undefined' ? Math.max(20, window.innerHeight - 70) : 720,
-  })
+  // 悬浮胶囊的位置（默认右下角，支持全屏自由拖动与持久化）
+  const AI_TRIGGER_POS_KEY = 'quantscope_ai_trigger_pos_v2'
+
+  function getDefaultAiTriggerPos() {
+    return {
+      x: typeof window !== 'undefined' ? Math.max(16, window.innerWidth - 232) : 1150,
+      y: typeof window !== 'undefined' ? Math.max(16, window.innerHeight - 64) : 720,
+    }
+  }
+
+  function loadSavedAiTriggerPosition() {
+    try {
+      const raw = localStorage.getItem(AI_TRIGGER_POS_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+          return parsed
+        }
+      }
+      localStorage.removeItem('quantscope_ai_trigger_pos')
+    } catch {}
+    return getDefaultAiTriggerPos()
+  }
+
+  const triggerPosition = ref(loadSavedAiTriggerPosition())
+
+  function updateTriggerPosition(x: number, y: number) {
+    if (typeof window === 'undefined') return
+    const maxX = Math.max(10, window.innerWidth - 220)
+    const maxY = Math.max(10, window.innerHeight - 50)
+    const clampedX = Math.min(Math.max(10, x), maxX)
+    const clampedY = Math.min(Math.max(10, y), maxY)
+    triggerPosition.value = { x: clampedX, y: clampedY }
+    try {
+      localStorage.setItem(AI_TRIGGER_POS_KEY, JSON.stringify(triggerPosition.value))
+    } catch {}
+  }
 
   // 计算紧贴悬浮球展开的最佳视口坐标
-  function calculatePositionNear(anchor?: { x: number; y: number }, capsuleW = 190, capsuleH = 44) {
+  function calculatePositionNear(anchor?: { x: number; y: number }, capsuleW = 216, capsuleH = 44) {
     if (typeof window === 'undefined') return { x: 900, y: 85 }
 
     const targetAnchor = anchor || triggerPosition.value
@@ -500,6 +532,7 @@ ${contextSnippet}`
     open,
     close,
     updatePosition,
+    updateTriggerPosition,
     updateSize,
     updateGeometry,
     getQuickPromptsForRoute,

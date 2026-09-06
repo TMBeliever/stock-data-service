@@ -448,26 +448,36 @@ export const useStrategyStore = defineStore('strategy', () => {
   // 悬浮回测工作舱 (Floating Backtest Cockpit) 几何尺寸与状态
   const POS_KEY = 'quantscope_backtest_window_pos'
   const SIZE_KEY = 'quantscope_backtest_window_size'
-  const TRIGGER_POS_KEY = 'quantscope_backtest_trigger_pos'
+  const TRIGGER_POS_KEY = 'quantscope_backtest_trigger_pos_v2'
   const isBacktestCockpitOpen = ref(false)
+
+  function getDefaultCockpitTriggerPos() {
+    return {
+      x: typeof window !== 'undefined' ? Math.max(16, window.innerWidth - 232) : 1150,
+      y: typeof window !== 'undefined' ? Math.max(16, window.innerHeight - 118) : 660,
+    }
+  }
 
   function loadSavedTriggerPosition() {
     try {
       const raw = localStorage.getItem(TRIGGER_POS_KEY)
-      if (raw) return JSON.parse(raw)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+          return parsed
+        }
+      }
+      localStorage.removeItem('quantscope_backtest_trigger_pos')
     } catch {}
-    return {
-      x: typeof window !== 'undefined' ? Math.max(20, window.innerWidth - 440) : 880,
-      y: typeof window !== 'undefined' ? Math.max(20, window.innerHeight - 70) : 720,
-    }
+    return getDefaultCockpitTriggerPos()
   }
 
   const cockpitTriggerPosition = ref(loadSavedTriggerPosition())
 
   function updateCockpitTriggerPosition(x: number, y: number) {
     if (typeof window === 'undefined') return
-    const maxX = Math.max(10, window.innerWidth - 180)
-    const maxY = Math.max(10, window.innerHeight - 56)
+    const maxX = Math.max(10, window.innerWidth - 220)
+    const maxY = Math.max(10, window.innerHeight - 50)
     const clampedX = Math.min(Math.max(10, x), maxX)
     const clampedY = Math.min(Math.max(10, y), maxY)
     cockpitTriggerPosition.value = { x: clampedX, y: clampedY }
@@ -556,7 +566,7 @@ export const useStrategyStore = defineStore('strategy', () => {
 
     // AI 助手未打开：若传入胶囊坐标，在胶囊旁边/上方优雅展开
     if (anchorPos) {
-      let x = anchorPos.x + 190 - cockpitW
+      let x = anchorPos.x + 216 - cockpitW
       let y = anchorPos.y - cockpitH - 12
       if (anchorPos.x <= screenW / 2) {
         x = anchorPos.x

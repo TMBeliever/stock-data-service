@@ -185,6 +185,22 @@ class WorkspaceManager:
     ) -> Project:
         proj_id = f"proj_{uuid.uuid4().hex[:8]}"
         m_name = machine_name or ("本机环境" if host_type == "local" else "部署服务器节点")
+        welcome_content = (
+            f"你好！我是你的 **Quant Copilot & 全栈工程智能体**。\n\n"
+            f"已挂载当前项目：**`{name.strip()}`** (`{path.strip()}`)\n\n"
+            f"你可以随时向我下发以下任务：\n"
+            f"- 📊 **行情数据洞察**：全市场股票/ETF 实时报价、历史 K 线与估值分位数分析\n"
+            f"- 💡 **策略代码构建**：基于 QuantCore 2.0 规范编写金叉死叉、动量突破、均值回归量化策略\n"
+            f"- ⚡ **沙箱极速回测**：毫秒级多指标回测验证（夏普比率、最大回撤、胜率诊断）\n"
+            f"- 🛠️ **全栈运维控制**：容器管理、微服务健康体检、工程源码安全修改与测试运行\n\n"
+            f"请输入你的问题或量化需求开始对话！"
+        )
+        welcome_msg = SessionMessage(
+            id=f"msg_welcome_{uuid.uuid4().hex[:8]}",
+            role="assistant",
+            content=welcome_content,
+            timestamp=time.time()
+        )
         new_proj = Project(
             id=proj_id,
             name=name.strip(),
@@ -197,7 +213,8 @@ class WorkspaceManager:
                 ProjectSession(
                     project_id=proj_id,
                     title="新对话",
-                    last_snippet="欢迎使用 Codex 工作台，请输入您的问题开始！"
+                    last_snippet="你好！我是你的 Quant Copilot，随时为你提供行情分析、策略编写与系统运维支持。",
+                    messages=[welcome_msg]
                 )
             ]
         )
@@ -216,10 +233,27 @@ class WorkspaceManager:
         proj = self._projects.get(project_id)
         if not proj:
             return None
+        welcome_content = (
+            f"你好！我是你的 **Quant Copilot & 全栈工程智能体**。\n\n"
+            f"已挂载当前项目：**`{proj.name}`** (`{proj.path}`)\n\n"
+            f"你可以随时向我下发以下任务：\n"
+            f"- 📊 **行情数据洞察**：全市场股票/ETF 实时报价、历史 K 线与估值分位数分析\n"
+            f"- 💡 **策略代码构建**：基于 QuantCore 2.0 规范编写金叉死叉、动量突破、均值回归量化策略\n"
+            f"- ⚡ **沙箱极速回测**：毫秒级多指标回测验证（夏普比率、最大回撤、胜率诊断）\n"
+            f"- 🛠️ **全栈运维控制**：容器管理、微服务健康体检、工程源码安全修改与测试运行\n\n"
+            f"请输入你的问题或量化需求开始对话！"
+        )
+        welcome_msg = SessionMessage(
+            id=f"msg_welcome_{uuid.uuid4().hex[:8]}",
+            role="assistant",
+            content=welcome_content,
+            timestamp=time.time()
+        )
         sess = ProjectSession(
             project_id=project_id,
             title=title.strip() or "新对话",
-            last_snippet=""
+            last_snippet="你好！我是你的 Quant Copilot，随时为你提供行情分析、策略编写与系统运维支持。",
+            messages=[welcome_msg]
         )
         proj.sessions.insert(0, sess)
         self._save()

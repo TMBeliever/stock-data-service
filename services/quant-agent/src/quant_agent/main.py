@@ -246,8 +246,6 @@ async def create_project(req: CreateProjectRequest, auth: UserAuth = Depends(get
 @app.delete("/api/v1/agent/projects/{project_id}", tags=["Codex Workspace"])
 async def delete_project(project_id: str, auth: UserAuth = Depends(get_current_auth)):
     """移除挂载的工程项目"""
-    if not auth.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="移除挂载工程需要超级管理员权限 (Super Admin required)")
     ok = project_manager.delete_project(project_id)
     if not ok:
         raise HTTPException(status_code=404, detail="项目不存在")

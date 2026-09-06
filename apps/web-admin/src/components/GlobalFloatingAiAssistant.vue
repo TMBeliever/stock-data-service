@@ -19,6 +19,8 @@ import {
   type FileSystemBrowseResult,
   type FileSystemItem,
   type DiscoveredProjectItem,
+  type CodexProject,
+  type CodexSession,
   AVAILABLE_MODELS,
   THINKING_LEVEL_OPTIONS,
 } from '@/stores/codexWorkspace'
@@ -516,6 +518,41 @@ async function handleNewChat(projectId?: string) {
   }
 }
 
+async function handleDeleteProject(proj: CodexProject) {
+  if (codexStore.projects.length <= 1) {
+    showToast('⚠️ 至少保留一个工程项目，不可全部移除')
+    return
+  }
+  if (!confirm(`确定要解除挂载项目「${proj.name}」吗？\n（仅解除挂载列表，不会物理删除磁盘上的源码文件）`)) {
+    return
+  }
+  const ok = await codexStore.deleteProject(proj.id)
+  if (ok) {
+    showToast(`✓ 已成功移除项目「${proj.name}」`)
+  } else {
+    showToast('❌ 移除项目失败')
+  }
+}
+
+async function handleDeleteSession(projectId: string, sess: CodexSession) {
+  if (!confirm(`确定要删除会话「${sess.title}」吗？`)) {
+    return
+  }
+  const ok = await codexStore.deleteSession(projectId, sess.id)
+  if (ok) {
+    showToast(`✓ 已删除会话「${sess.title}」`)
+  } else {
+    showToast('❌ 删除会话失败')
+  }
+}
+
+function handleSendSuggestion(text: string) {
+  inputPrompt.value = text
+  nextTick(() => {
+    handleSend()
+  })
+}
+
 // -------------------------------------------------------------
 // 权限安全模式选择 (Tooltip / Popover 形式切换)
 // -------------------------------------------------------------
@@ -976,10 +1013,25 @@ function onWindowResize() {
   }
 }
 
-// 全局快捷键支持 (⌘+J / Ctrl+J 呼出/收起，Esc 中断推演)
+// 全局快捷键支持 (⌘+L / Ctrl+L / 单键 L 呼出/收起，Esc 中断推演)
 function handleGlobalKeydown(e: KeyboardEvent) {
   if (e.defaultPrevented) return
-  if ((e.metaKey || e.ctrlKey) && (e.key?.toLowerCase() === 'j' || e.code === 'KeyJ')) {
+
+  // 1. 组合键 ⌘+L 或 Ctrl+L
+  const isCmdL = (e.metaKey || e.ctrlKey) && (e.key?.toLowerCase() === 'l' || e.code === 'KeyL')
+
+  // 2. 单键 L（在非文本编辑态时直接单按呼出）
+  const activeEl = document.activeElement as HTMLElement | null
+  const isTyping = activeEl && (
+    activeEl.tagName === 'INPUT' ||
+    activeEl.tagName === 'TEXTAREA' ||
+    activeEl.tagName === 'SELECT' ||
+    activeEl.isContentEditable ||
+    activeEl.closest('.monaco-editor')
+  )
+  const isSingleL = !e.metaKey && !e.ctrlKey && !e.altKey && !isTyping && (e.key?.toLowerCase() === 'l' || e.code === 'KeyL')
+
+  if (isCmdL || isSingleL) {
     e.preventDefault()
     aiStore.toggleOpen(triggerPos.value)
     return
@@ -1036,7 +1088,7 @@ onUnmounted(() => {
           zIndex: 9999,
         }"
         class="group flex items-center justify-between w-[216px] px-3 py-2 rounded-full bg-[#13151b]/95 hover:bg-[#181a23] border border-white/[0.14] hover:border-purple-500/50 shadow-2xl shadow-black/80 hover:shadow-purple-500/20 backdrop-blur-2xl transition-[box-shadow,border-color,background-color] duration-200 cursor-grab active:cursor-grabbing select-none"
-        title="点击唤醒 Alpha 智能量化工作台 (⌘+J)，按住左键自由拖动"
+        title="点击唤醒 Alpha 智能量化工作台 (快捷键 ⌘L / L)，按住左键自由拖动"
       >
         <div class="flex items-center space-x-2.5 min-w-0">
           <div class="relative flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-xl bg-gradient-to-br from-purple-500/25 via-indigo-500/20 to-transparent border border-purple-500/30 text-sm shadow-sm group-hover:border-purple-400/60 transition-colors pointer-events-none">
@@ -1059,7 +1111,7 @@ onUnmounted(() => {
         </div>
 
         <div class="ml-1 pl-2 border-l border-white/[0.1] flex items-center flex-shrink-0 pointer-events-none">
-          <kbd class="text-[10px] px-1.5 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.12] text-zinc-300 font-mono shadow-inner group-hover:border-purple-500/40 group-hover:text-purple-300 transition-colors">⌘J</kbd>
+          <kbd class="text-[10px] px-1.5 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.12] text-zinc-300 font-mono shadow-inner group-hover:border-purple-500/40 group-hover:text-purple-300 transition-colors">⌘L</kbd>
         </div>
       </div>
     </transition>
@@ -1243,18 +1295,31 @@ onUnmounted(() => {
                       <span class="truncate">{{ proj.name }}</span>
                     </div>
 
-                    <span
-                      v-if="proj.host_type === 'remote'"
-                      class="px-1 py-0.1 rounded text-[8px] font-mono bg-purple-500/15 text-purple-300 border border-purple-500/20"
-                    >
-                      部署机
-                    </span>
-                    <span
-                      v-else
-                      class="px-1 py-0.1 rounded text-[8px] font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/20"
-                    >
-                      本机
-                    </span>
+                    <div class="flex items-center space-x-1 shrink-0">
+                      <span
+                        v-if="proj.host_type === 'remote'"
+                        class="px-1 py-0.1 rounded text-[8px] font-mono bg-purple-500/15 text-purple-300 border border-purple-500/20"
+                      >
+                        部署机
+                      </span>
+                      <span
+                        v-else
+                        class="px-1 py-0.1 rounded text-[8px] font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/20"
+                      >
+                        本机
+                      </span>
+
+                      <!-- 移除挂载项目按钮 (悬停出现) -->
+                      <button
+                        @click.stop="handleDeleteProject(proj)"
+                        class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all cursor-pointer"
+                        title="解除该项目挂载"
+                      >
+                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
 
                   <!-- 展开的项目会话列表 (灰色高亮胶囊) -->
@@ -1264,21 +1329,33 @@ onUnmounted(() => {
                       :key="sess.id"
                       @click="handleSelectSession(proj.id, sess.id)"
                       :class="[
-                        'px-2 py-1 rounded-lg text-[11px] cursor-pointer truncate transition-all duration-150',
+                        'group/sess flex items-center justify-between px-2 py-1 rounded-lg text-[11px] cursor-pointer transition-all duration-150',
                         codexStore.activeProjectId === proj.id && codexStore.activeSessionId === sess.id
                           ? 'bg-white/[0.14] text-white font-medium shadow-xs'
                           : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]',
                       ]"
                       :title="sess.title"
                     >
-                      {{ sess.title }}
+                      <span class="truncate flex-1 mr-1">{{ sess.title }}</span>
+
+                      <!-- 删除会话按钮 (悬停出现) -->
+                      <button
+                        @click.stop="handleDeleteSession(proj.id, sess)"
+                        class="opacity-0 group-hover/sess:opacity-100 p-0.5 rounded hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all cursor-pointer shrink-0"
+                        title="删除该会话"
+                      >
+                        <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
                     </div>
 
                     <button
                       @click="handleNewChat(proj.id)"
-                      class="w-full text-left px-2 py-0.5 text-[10px] text-zinc-400 hover:text-purple-300 cursor-pointer"
+                      class="w-full text-left px-2 py-0.5 text-[10px] text-zinc-400 hover:text-purple-300 cursor-pointer flex items-center space-x-1"
                     >
-                      ＋ 新建任务
+                      <span>＋</span>
+                      <span>新建任务会话</span>
                     </button>
                   </div>
                 </div>
@@ -1376,10 +1453,91 @@ onUnmounted(() => {
             @scroll="handleChatScroll"
             class="flex-1 overflow-y-auto px-5 py-3 space-y-2.5 select-text text-xs leading-relaxed"
           >
+            <!-- 新会话欢迎界面 (当当前会话为空时呈现极客量化欢迎词与快捷卡片) -->
             <div
-              v-for="msg in codexStore.currentMessages"
-              :key="msg.id"
+              v-if="!codexStore.currentMessages || codexStore.currentMessages.length === 0"
+              class="h-full flex flex-col items-center justify-center text-center p-6 space-y-5 max-w-xl mx-auto select-none"
             >
+              <div class="space-y-2.5">
+                <div class="w-12 h-12 mx-auto rounded-2xl bg-gradient-to-tr from-purple-600/30 via-amber-500/20 to-blue-500/20 border border-white/10 flex items-center justify-center text-2xl shadow-lg shadow-purple-500/10">
+                  ⚡
+                </div>
+                <div>
+                  <h3 class="text-sm font-bold text-white tracking-wide">
+                    Quant Copilot · 全栈工程智能体
+                  </h3>
+                  <p class="text-[11px] text-zinc-400 mt-1">
+                    当前挂载工程：<span class="text-amber-300 font-mono font-medium">{{ codexStore.activeProject?.name || '量化工作台' }}</span>
+                    <span v-if="codexStore.activeProject?.path" class="text-zinc-500 font-mono text-[10px] ml-1">({{ codexStore.activeProject.path }})</span>
+                  </p>
+                </div>
+                <div class="text-[11px] text-zinc-400 leading-relaxed max-w-md mx-auto">
+                  你好！我是你的量化投研与策略工程助手。具备全市场行情研判、QuantCore 2.0 策略极速回测与全栈运维权限。你可以随心向我提问，或点击下方快捷卡片开启推演：
+                </div>
+              </div>
+
+              <!-- 4 大常用快捷启动卡片 -->
+              <div class="grid grid-cols-2 gap-2.5 w-full text-left">
+                <button
+                  @click="handleSendSuggestion('查询 510300 沪深300 ETF 的实时行情与最新估值分位数')"
+                  class="p-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/[0.08] hover:border-amber-500/40 transition-all duration-200 cursor-pointer group"
+                >
+                  <div class="flex items-center space-x-1.5 text-amber-300 font-semibold text-xs mb-1">
+                    <span>📊</span>
+                    <span class="group-hover:text-amber-200">行情快照与估值</span>
+                  </div>
+                  <div class="text-[10px] text-zinc-400 line-clamp-2">
+                    查询 510300 沪深300 ETF 实时行情与估值分位数
+                  </div>
+                </button>
+
+                <button
+                  @click="handleSendSuggestion('帮我基于双均线金叉死叉编写一个符合 QuantCore 2.0 规范的 Python 量化策略')"
+                  class="p-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/[0.08] hover:border-purple-500/40 transition-all duration-200 cursor-pointer group"
+                >
+                  <div class="flex items-center space-x-1.5 text-purple-300 font-semibold text-xs mb-1">
+                    <span>💡</span>
+                    <span class="group-hover:text-purple-200">生成双均线策略</span>
+                  </div>
+                  <div class="text-[10px] text-zinc-400 line-clamp-2">
+                    编写金叉买入死叉平仓的标准流式量化策略代码
+                  </div>
+                </button>
+
+                <button
+                  @click="handleSendSuggestion('在量化沙箱中极速运行一次 510300 的双均线策略回测，并给出夏普比率与最大回撤')"
+                  class="p-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/[0.08] hover:border-emerald-500/40 transition-all duration-200 cursor-pointer group"
+                >
+                  <div class="flex items-center space-x-1.5 text-emerald-300 font-semibold text-xs mb-1">
+                    <span>🧪</span>
+                    <span class="group-hover:text-emerald-200">沙箱极速回测</span>
+                  </div>
+                  <div class="text-[10px] text-zinc-400 line-clamp-2">
+                    毫秒级执行历史回测，评估年化收益与最大回撤
+                  </div>
+                </button>
+
+                <button
+                  @click="handleSendSuggestion('执行 admin_inspect_system_and_services，全面体检当前服务器系统资源与各微服务状态')"
+                  class="p-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/[0.08] hover:border-blue-500/40 transition-all duration-200 cursor-pointer group"
+                >
+                  <div class="flex items-center space-x-1.5 text-blue-300 font-semibold text-xs mb-1">
+                    <span>🛠️</span>
+                    <span class="group-hover:text-blue-200">微服务全景体检</span>
+                  </div>
+                  <div class="text-[10px] text-zinc-400 line-clamp-2">
+                    诊断 CPU/内存、Docker 容器与 6 大微服务健康度
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <!-- 消息流列表 -->
+            <template v-else>
+              <div
+                v-for="msg in codexStore.currentMessages"
+                :key="msg.id"
+              >
               <!-- 用户消息 (Codex 风格：气泡圆润，鼠标悬停下方呈现时间、复制与修改重写) -->
               <div v-if="msg.role === 'user'" class="flex flex-col items-end group">
                 <div class="max-w-[85%] px-3.5 py-1.5 rounded-2xl bg-white/[0.08] border border-white/[0.1] text-zinc-100 text-xs shadow-xs select-text leading-relaxed">
@@ -1765,6 +1923,7 @@ onUnmounted(() => {
                 </div>
               </div>
             </div>
+            </template>
 
             <!-- 推演动态提示 -->
             <div v-if="codexStore.isStreaming && !activeRunningTool" class="flex items-center space-x-2 text-xs text-amber-400 font-mono py-1">

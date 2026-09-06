@@ -53,7 +53,7 @@ const systemCommands: SystemCommandItem[] = [
     title: '唤起 Alpha Copilot 智能助手',
     subtitle: '全站全局 AI 助手，自然语言推演策略、行情异动归因与代码生成',
     icon: '🤖',
-    badge: '⌘J',
+    badge: '⌘L',
     action: () => aiStore.open(),
   },
   {

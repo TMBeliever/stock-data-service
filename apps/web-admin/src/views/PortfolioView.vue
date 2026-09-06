@@ -69,24 +69,32 @@ watch(
   { immediate: true, deep: true }
 )
 
-// 批量加载当前组合内标的的实时行情
+// 批量加载当前组合与持仓标的的实时行情
 async function loadWatchlistQuotes() {
-  if (!currentWatchlist.value || !currentWatchlist.value.symbols.length) return
+  const wlSymbols = currentWatchlist.value?.symbols || []
+  const holdingSymbols = strategyStore.userHoldings.map((h) => h.symbol)
+  const allNeeded = Array.from(new Set([...wlSymbols, ...holdingSymbols]))
+  if (allNeeded.length === 0) return
+
   isQuotesLoading.value = true
   try {
-    const symbols = currentWatchlist.value.symbols
-    // 利用 marketStore 的批量搜索拉取快照
-    const res = await marketStore.searchSymbols('', 'all', 50)
-    const map: Record<string, SymbolItem> = {}
-    // 对每个 symbol 查询或从 search 结果映射
-    for (const sym of symbols) {
-      const found = res.find((r) => r.symbol === sym || r.ticker === sym.split('.')[0])
-      if (found) {
-        map[sym] = found
-      } else {
-        // 单独查询一次详情补全
-        const detail = await marketStore.fetchSymbolDetail(sym)
-        if (detail) map[sym] = detail
+    // 并行并发拉取所需标的行情详情，消除串行阻塞与无效全市场搜索
+    const results = await Promise.all(
+      allNeeded.map(async (sym) => {
+        try {
+          const detail = await marketStore.fetchSymbolDetail(sym)
+          return { sym, detail }
+        } catch {
+          return { sym, detail: null }
+        }
+      })
+    )
+    const map: Record<string, SymbolItem> = { ...watchlistSymbolsQuotes.value }
+    for (const r of results) {
+      if (r.detail) {
+        map[r.sym] = r.detail
+        const ticker = r.sym.split('.')[0]
+        if (ticker) map[ticker] = r.detail
       }
     }
     watchlistSymbolsQuotes.value = map

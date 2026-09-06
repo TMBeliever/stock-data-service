@@ -578,6 +578,24 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
       if (res.ok) {
         const data = await res.json()
         const newSess: CodexSession = data.session
+        newSess.messages = (newSess.messages || []).map((m: any): CodexMessage => ({
+          id: m.id || `msg_${Date.now()}`,
+          role: m.role,
+          content: m.content || '',
+          timestamp: m.timestamp || Date.now(),
+          cards: m.cards || [],
+          toolCalls: m.toolCalls || (m.tool_calls || []).map((tc: any) => ({
+            id: tc.id || tc.name,
+            name: tc.name,
+            arguments: tc.arguments,
+            outputPreview: tc.output_preview || tc.outputPreview,
+            status: tc.status || 'done',
+            step: tc.step,
+          })),
+          thought: m.thought,
+          waitingApproval: m.waitingApproval,
+          guardAlerts: m.guardAlerts || [],
+        }))
         const targetProj = projects.value.find((p) => p.id === targetProjId)
         if (targetProj) {
           targetProj.sessions.unshift(newSess)
@@ -607,7 +625,10 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
         const targetProj = projects.value.find((p) => p.id === projectId)
         if (targetProj) {
           targetProj.sessions = targetProj.sessions.filter((s) => s.id !== sessionId)
-          if (activeSessionId.value === sessionId && targetProj.sessions.length > 0) {
+          if (targetProj.sessions.length === 0) {
+            // 若删除后无会话，立即为项目自动开辟一个新会话，防止进入空状态
+            await createSession(projectId)
+          } else if (activeSessionId.value === sessionId) {
             activeSessionId.value = targetProj.sessions[0].id
             _persistActiveIds()
           }

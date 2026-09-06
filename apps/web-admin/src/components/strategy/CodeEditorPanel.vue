@@ -634,11 +634,11 @@ onUnmounted(() => {
           @click="aiStore.toggleOpen()"
           :class="aiStore.isOpen ? 'bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border-amber-500/40 shadow-sm' : 'bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border-white/[0.08]'"
           class="px-2.5 py-1 rounded-lg border text-xs transition-all flex items-center space-x-1.5 cursor-pointer group"
-          title="唤出全站 AI 策略助手 (⌘+J)"
+          title="唤出全站 AI 策略助手 (⌘+L)"
         >
           <span>✨</span>
           <span>AI 助手</span>
-          <span class="text-[10px] text-zinc-500 font-mono hidden md:inline">⌘J</span>
+          <span class="text-[10px] text-zinc-500 font-mono hidden md:inline">⌘L</span>
         </button>
 
         <!-- 常用 API 片段速查表按钮 -->

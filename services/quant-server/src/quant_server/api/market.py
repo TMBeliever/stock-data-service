@@ -252,80 +252,48 @@ def _fetch_live_snapshots(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         if ticker not in query_symbols:
             query_symbols.append(ticker)
 
-    # 1. 尝试调用基础数据服务
+    # 1. 尝试批量调用基础数据中台快照接口
     base_url = quant_config.DATA_SERVICE_HTTP.rstrip("/")
     url = f"{base_url}/api/v1/snapshot"
     try:
-        sym_str = ",".join(query_symbols[:30])
-        with httpx.Client(timeout=4.0) as client:
-            resp = client.get(url, params={"symbols": sym_str})
-            if resp.status_code == 200:
-                items = resp.json().get("data", [])
-                for item in items:
-                    sym = item.get("symbol")
-                    ticker = item.get("ticker")
-                    if sym:
-                        results[sym] = item
-                    if ticker and ticker not in results:
-                        results[ticker] = item
+        # 提取 6 位纯数字代码及原标的代码，并分批查询 (每批最多 60 只)
+        all_tickers = []
+        for s in query_symbols:
+            t = s.split(".")[0]
+            if t not in all_tickers:
+                all_tickers.append(t)
+            if s not in all_tickers:
+                all_tickers.append(s)
+
+        chunk_size = 50
+        for i in range(0, len(all_tickers), chunk_size):
+            chunk = all_tickers[i:i + chunk_size]
+            sym_str = ",".join(chunk)
+            try:
+                with httpx.Client(timeout=2.0) as client:
+                    resp = client.get(url, params={"symbols": sym_str})
+                    if resp.status_code == 200:
+                        items = resp.json().get("data", [])
+                        for item in items:
+                            sym = item.get("symbol")
+                            ticker = item.get("ticker")
+                            if sym:
+                                results[sym] = item
+                            if ticker and ticker not in results:
+                                results[ticker] = item
+            except Exception:
+                pass
     except Exception:
         pass
 
-    # 2. 对缺失快照的标的，尝试从本地 Parquet 文件的最后几条 Bar 提取最新收盘价和涨跌幅
+    # 2. 补齐别名映射 (根据 symbol 与 ticker 映射到 results)
     for orig_sym in symbols:
         norm_sym = norm_map.get(orig_sym, orig_sym)
         ticker = orig_sym.split(".")[0]
-        # 如果 orig_sym 或 norm_sym 或 ticker 已有快照，建立别名
         existing = results.get(orig_sym) or results.get(norm_sym) or results.get(ticker)
         if existing:
             results[orig_sym] = existing
             results[norm_sym] = existing
-            continue
-
-        for query_target in (norm_sym, orig_sym):
-            try:
-                bars = data_client.get_bars(query_target, period="1d", adjust="raw")
-                if bars and len(bars) >= 1:
-                    last = bars[-1]
-                    last_date = datetime.datetime.fromtimestamp(
-                        last.timestamp / 1000, tz=datetime.timezone(datetime.timedelta(hours=8))
-                    ).strftime("%Y-%m-%d")
-                    prev = None
-                    for b in reversed(bars[:-1]):
-                        b_date = datetime.datetime.fromtimestamp(
-                            b.timestamp / 1000, tz=datetime.timezone(datetime.timedelta(hours=8))
-                        ).strftime("%Y-%m-%d")
-                        if b_date != last_date:
-                            prev = b
-                            break
-                    if prev is None:
-                        prev = bars[-2] if len(bars) >= 2 else last
-
-                    chg = last.close - prev.close
-                    pct = round((chg / prev.close) * 100, 2) if prev.close > 0 else 0.0
-
-                    meta_match = next((s for s in BUILTIN_SYMBOLS if s["symbol"] == norm_sym or s.get("ticker") == ticker), None)
-                    sym_name = meta_match["name"] if meta_match else ticker
-
-                    snap_obj = {
-                        "symbol": norm_sym,
-                        "ticker": ticker,
-                        "name": sym_name,
-                        "latest_price": round(last.close, 3),
-                        "change": round(chg, 3),
-                        "pct_change": pct,
-                        "open": round(last.open, 3),
-                        "high": round(last.high, 3),
-                        "low": round(last.low, 3),
-                        "pre_close": round(prev.close, 3),
-                        "volume": last.volume,
-                        "amount": last.amount,
-                    }
-                    results[orig_sym] = snap_obj
-                    results[norm_sym] = snap_obj
-                    break
-            except Exception:
-                pass
 
     return results
 

@@ -146,7 +146,7 @@ export const AVAILABLE_MODELS: AvailableModelItem[] = [
   },
   {
     id: 'agt-claude-sonnet-4.6',
-    name: 'Claude 3.7 Sonnet (AGY)',
+    name: 'Claude Sonnet 4.6 (AGY)',
     series: 'Claude',
     tag: 'AGY·深度推理',
     description: 'Anthropic 前沿推理旗舰，具备深度思维链与高难度量化代码编写能力 (AGY 独占预热池直通)',
@@ -162,7 +162,7 @@ export const AVAILABLE_MODELS: AvailableModelItem[] = [
   },
   {
     id: 'agt-claude-opus-4.6',
-    name: 'Claude 3.7 Opus (AGY)',
+    name: 'Claude Opus 4.6 (AGY)',
     series: 'Claude',
     tag: 'AGY·全能架构',
     description: '超强全能综合架构模型，复杂量化系统设计与回测分析 (AGY 独占预热池直通)',

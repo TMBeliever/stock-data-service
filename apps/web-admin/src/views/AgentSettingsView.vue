@@ -410,7 +410,7 @@ onMounted(() => {
             >
               <option value="minimax/minimax-m3:free">MiniMax M3 (Free 官方渠道 · 推荐)</option>
               <option value="gemini-flash-lite-latest">Gemini 2.0 Flash Lite (极速低时延)</option>
-              <option value="claude">Claude 3.7 Sonnet (深度长文本逻辑推理 · VIP)</option>
+              <option value="claude">Claude Sonnet 4.6 (深度长文本逻辑推理 · VIP)</option>
               <option value="deepseek">DeepSeek V3 / R1 本机蒸馏</option>
             </select>
           </div>

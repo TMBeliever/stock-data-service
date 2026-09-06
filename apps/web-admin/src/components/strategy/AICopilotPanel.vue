@@ -104,7 +104,7 @@ async function handleActivateVip() {
     if (ok) {
       strategyStore.aiModel = 'claude'
       showVipModal.value = false
-      showToast('🎉 VIP 会员激活成功！已解锁 Claude 3.7 本机深度推理引擎！')
+      showToast('🎉 VIP 会员激活成功！已解锁 Claude Sonnet 4.6 本机深度推理引擎！')
     } else {
       alert('激活失败，请检查网络后重试')
     }
@@ -287,7 +287,7 @@ async function handleActivateVip() {
       <div class="flex items-center justify-between text-[10px] text-zinc-500 mt-1 px-1">
         <span>按 Enter 发送</span>
         <span class="flex items-center space-x-1">
-          <span v-if="strategyStore.aiModel === 'claude'" class="text-purple-400">👑 由 Claude 3.7 本机深度推理引擎驱动</span>
+          <span v-if="strategyStore.aiModel === 'claude'" class="text-purple-400">👑 由 Claude Sonnet 4.6 本机深度推理引擎驱动</span>
           <span v-else class="text-amber-400">⚡ 由 Gemini 3.7 闪电引擎驱动</span>
         </span>
       </div>
@@ -307,7 +307,7 @@ async function handleActivateVip() {
             </div>
             <div>
               <h3 class="text-sm font-bold text-white">解锁 VIP 专属深度推理模型</h3>
-              <p class="text-[11px] text-zinc-400">Claude 3.7 Sonnet 本机安全推理与无限投研特权</p>
+              <p class="text-[11px] text-zinc-400">Claude Sonnet 4.6 本机安全推理与无限投研特权</p>
             </div>
           </div>
           <button
@@ -323,7 +323,7 @@ async function handleActivateVip() {
           <div class="p-3 rounded-xl bg-amber-500/5 border border-amber-500/15 flex items-start space-x-2.5">
             <span class="text-base">🧠</span>
             <div>
-              <div class="font-bold text-amber-300">Claude 3.7 本机安全深度推理</div>
+              <div class="font-bold text-amber-300">Claude Sonnet 4.6 本机安全深度推理</div>
               <p class="text-[11px] text-zinc-400 mt-0.5">
                 基于本机独立 CLI 与专用硬件直连，具备超强 AST 语法树解析与多因子数学逻辑推演，代码准确率大幅提升。
               </p>

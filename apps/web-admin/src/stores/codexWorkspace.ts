@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { useStrategyStore } from '@/stores/strategy'
 
 export interface ProjectCardItem {
   type: string
@@ -802,7 +803,7 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
       let pageCtx = ''
       if (stratStore.name || stratStore.symbol || (stratStore.userWatchlists && stratStore.userWatchlists.length > 0)) {
         const watchlistsDesc = (stratStore.userWatchlists || [])
-          .map((w) => `${w.name}: [${(w.symbols || []).join(', ')}]`)
+          .map((w: any) => `${w.name}: [${(w.symbols || []).join(', ')}]`)
           .join('; ')
         pageCtx = `【当前前端工作台上下文】激活策略: ${stratStore.name || '未命名'} | 当前选中标的: ${stratStore.symbol || '510300'} | 用户自选组合: ${watchlistsDesc || '无'}`
       }

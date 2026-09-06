@@ -2,7 +2,8 @@ import json
 import time
 import uuid
 from typing import Optional, List, Dict, Any, AsyncGenerator
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Header, Depends, Query, Security, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -10,7 +11,47 @@ from ai_core.config import ai_config
 from ai_core.models import Message, ToolDefinition
 from ai_core.orchestrator import ai_orchestrator
 
-openai_router = APIRouter(tags=["OpenAI Compatible API"])
+security = HTTPBearer(auto_error=False)
+
+def verify_openai_api_key(
+    auth_cred: Optional[HTTPAuthorizationCredentials] = Security(security),
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="x-api-key"),
+    api_key: Optional[str] = Query(None)
+) -> str:
+    """严格鉴权：校验调用方是否持有授权的固定 API Key"""
+    token = None
+    if auth_cred and auth_cred.credentials:
+        token = auth_cred.credentials.strip()
+    elif authorization:
+        if authorization.lower().startswith("bearer "):
+            token = authorization[7:].strip()
+        else:
+            token = authorization.strip()
+    elif x_api_key:
+        token = x_api_key.strip()
+    elif api_key:
+        token = api_key.strip()
+
+    expected_key = getattr(ai_config, "GATEWAY_API_KEY", "sk-quant-agy-8f92e10c74b6")
+    if not token or token != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": {
+                    "message": "Incorrect API key provided. You must provide a valid API key.",
+                    "type": "invalid_request_error",
+                    "param": None,
+                    "code": "invalid_api_key"
+                }
+            }
+        )
+    return token
+
+openai_router = APIRouter(
+    tags=["OpenAI Compatible API"],
+    dependencies=[Depends(verify_openai_api_key)]
+)
 
 class OpenAIChatMessage(BaseModel):
     """OpenAI 标准对话消息格式"""

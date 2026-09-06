@@ -3,13 +3,36 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 from ai_core.service import app
 from ai_core.models import AIResponse, StreamChunk
+from ai_core.config import ai_config
+
+VALID_AUTH_HEADER = {"Authorization": f"Bearer {ai_config.GATEWAY_API_KEY}"}
+
+@pytest.mark.asyncio
+async def test_openai_unauthorized_rejection():
+    """测试未携带有效 API Key 时被 401 拦截拒绝"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. 完全不带 Authorization 头
+        resp = await client.get("/v1/models")
+        assert resp.status_code == 401
+        data = resp.json()
+        assert "error" in data["detail"]
+        assert data["detail"]["error"]["code"] == "invalid_api_key"
+
+        # 2. 携带错误的 API Key
+        resp2 = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer sk-wrong-key"},
+            json={"model": "agy", "messages": [{"role": "user", "content": "hi"}]}
+        )
+        assert resp2.status_code == 401
 
 @pytest.mark.asyncio
 async def test_openai_list_models():
-    """测试 OpenAI /v1/models 兼容模型列表端点"""
+    """测试携带正确 API Key 访问 /v1/models"""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/v1/models")
+        resp = await client.get("/v1/models", headers=VALID_AUTH_HEADER)
         assert resp.status_code == 200
         data = resp.json()
         assert data["object"] == "list"
@@ -43,7 +66,7 @@ async def test_openai_chat_completions_non_stream(monkeypatch):
             "stream": False,
             "temperature": 0.5
         }
-        resp = await client.post("/v1/chat/completions", json=payload)
+        resp = await client.post("/v1/chat/completions", headers=VALID_AUTH_HEADER, json=payload)
         assert resp.status_code == 200
         data = resp.json()
 
@@ -81,7 +104,7 @@ async def test_openai_chat_completions_stream(monkeypatch):
             ],
             "stream": True
         }
-        resp = await client.post("/v1/chat/completions", json=payload)
+        resp = await client.post("/v1/chat/completions", headers=VALID_AUTH_HEADER, json=payload)
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers.get("content-type", "")
 
@@ -113,7 +136,7 @@ async def test_openai_chat_completions_key_routing(monkeypatch):
             "messages": [{"role": "user", "content": "Hello"}],
             "stream": False
         }
-        resp = await client.post("/v1/chat/completions", json=payload)
+        resp = await client.post("/v1/chat/completions", headers=VALID_AUTH_HEADER, json=payload)
         assert resp.status_code == 200
         assert captured_kwargs.get("provider_type") == "key"
         assert captured_kwargs.get("model") == "minimax/minimax-m3:free"

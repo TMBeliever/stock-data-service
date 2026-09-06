@@ -21,6 +21,9 @@ class AIConfig(BaseSettings):
     CLI_TIMEOUT: float = 120.0
     CLI_CWD: Optional[str] = None
 
+    # 对外 OpenAI 兼容接口固定安全鉴权密钥 (仅授权持有该 key 的客户端调用)
+    GATEWAY_API_KEY: str = "sk-quant-agy-8f92e10c74b6"
+
     model_config = SettingsConfigDict(env_prefix="AI_", case_sensitive=False)
 
 ai_config = AIConfig()

@@ -386,6 +386,8 @@ class BaseAgent:
                 for i, c in enumerate(raw_tool_calls):
                     fn = c.get("function") or {}
                     t_name = c.get("name") or fn.get("name", "")
+                    if not t_name:
+                        continue
                     raw_args = c.get("arguments") or fn.get("arguments", {})
                     if isinstance(raw_args, str):
                         try:
@@ -401,24 +403,45 @@ class BaseAgent:
                         raw_arguments=raw_args if isinstance(raw_args, str) else json.dumps(args_dict, ensure_ascii=False)
                     ))
 
-                history.append(Message.assistant(content=resp_content, tool_calls=parsed_calls))
+                # 严格校验：过滤出真实挂载在 active_registry 中的工具
+                valid_calls = [tc for tc in parsed_calls if active_registry.get_tool(tc.name) is not None]
+                unmounted_calls = [tc for tc in parsed_calls if active_registry.get_tool(tc.name) is None]
 
-                # 生成 Thought
-                if resp_content.strip():
-                    step_thought = resp_content.strip()
+                if unmounted_calls:
+                    logger.warning("Filtering out unmounted/phantom tool calls: %s", [tc.name for tc in unmounted_calls])
+
+                # 若模型调用的所有工具均未挂载，则绝不显示工具调用，直接让模型文本回答
+                if not valid_calls:
+                    if resp_content and resp_content.strip():
+                        logger.info("No valid mounted tools, but model generated text; proceeding to text output.")
+                        # 留空 raw_tool_calls 让控制流自然下沉至 5C 流式输出文本
+                    else:
+                        logger.info("No valid mounted tools and no text; prompting model for direct answer.")
+                        history.append(Message.user(
+                            f"【系统提示】所尝试调用的工具（{', '.join(tc.name for tc in unmounted_calls)}）当前未挂载。"
+                            "请直接基于你所掌握的通用金融/量化知识及上下文进行回答，不要尝试调用任何工具。"
+                        ))
+                        continue
                 else:
-                    tool_descs = []
-                    for tc in parsed_calls:
-                        t_obj = active_registry.get_tool(tc.name)
-                        desc = t_obj.description.strip().split('\n')[0][:28] if t_obj else tc.name
-                        tool_descs.append(f"【{desc}】")
-                    parallel_hint = "（并行）" if len(parsed_calls) > 1 else ""
-                    step_thought = f"第 {step} 步 {parallel_hint}：{'、'.join(tool_descs[:4])}{'...' if len(tool_descs) > 4 else ''}"
+                    parsed_calls = valid_calls
+                    history.append(Message.assistant(content=resp_content, tool_calls=parsed_calls))
 
-                yield {
-                    "event": "thought",
-                    "data": json.dumps({"step": step, "thought": step_thought}, ensure_ascii=False)
-                }
+                    # 生成 Thought
+                    if resp_content.strip():
+                        step_thought = resp_content.strip()
+                    else:
+                        tool_descs = []
+                        for tc in parsed_calls:
+                            t_obj = active_registry.get_tool(tc.name)
+                            desc = t_obj.description.strip().split('\n')[0][:28] if t_obj else tc.name
+                            tool_descs.append(f"【{desc}】")
+                        parallel_hint = "（并行）" if len(parsed_calls) > 1 else ""
+                        step_thought = f"第 {step} 步 {parallel_hint}：{'、'.join(tool_descs[:4])}{'...' if len(tool_descs) > 4 else ''}"
+
+                    yield {
+                        "event": "thought",
+                        "data": json.dumps({"step": step, "thought": step_thought}, ensure_ascii=False)
+                    }
 
                 # 权限检查（遇到需要授权的工具立即挂起，等用户确认）
                 for tc in parsed_calls:

@@ -154,14 +154,18 @@ export function formatSingleToolCall(tc: any, index?: number): string {
  * 将整条消息的工具链转换为美观规范的 Markdown
  */
 export function formatToolchainMarkdown(toolCalls: any[]): string {
-  if (!toolCalls || toolCalls.length === 0) return ''
+  const validCalls = (toolCalls || []).filter((tc) => {
+    const out = (tc.liveOutput || tc.outputPreview || '').toLowerCase()
+    return !out.includes('not found in registry') && !out.includes('not registered or not mounted')
+  })
+  if (!validCalls || validCalls.length === 0) return ''
 
   const lines: string[] = [
-    `## 🛠️ 工具链执行流程记录 (共 ${toolCalls.length} 步)`,
+    `## 🛠️ 工具链执行流程记录 (共 ${validCalls.length} 步)`,
     ''
   ]
 
-  toolCalls.forEach((tc, idx) => {
+  validCalls.forEach((tc, idx) => {
     lines.push(formatSingleToolCall(tc, idx + 1))
   })
 

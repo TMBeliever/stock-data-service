@@ -1,8 +1,16 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { useModalLayer } from '@/stores/modalManager'
 
 const authStore = useAuthStore()
+
+// 接入统一弹窗层级治理
+const { zIndex, focusModal } = useModalLayer(
+  'auth-modal',
+  () => authStore.authModalVisible,
+  () => authStore.closeAuthModal()
+)
 
 const usernameInput = ref('')
 const passwordInput = ref('')
@@ -32,20 +40,6 @@ async function handleSubmit() {
     await authStore.register(usernameInput.value, passwordInput.value, emailInput.value)
   }
 }
-
-function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && authStore.authModalVisible) {
-    authStore.closeAuthModal()
-  }
-}
-
-onMounted(() => {
-  window.addEventListener('keydown', handleKeydown)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleKeydown)
-})
 </script>
 
 <template>
@@ -53,8 +47,10 @@ onUnmounted(() => {
     <transition name="modal-fade">
       <div
         v-if="authStore.authModalVisible"
-        class="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md"
+        :style="{ zIndex }"
+        class="fixed inset-0 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md select-none"
         @click.self="authStore.closeAuthModal"
+        @mousedown="focusModal"
       >
         <div
           class="relative w-full max-w-sm rounded-2xl bg-[#121216] border border-white/10 shadow-2xl p-6 overflow-hidden transform transition-all"

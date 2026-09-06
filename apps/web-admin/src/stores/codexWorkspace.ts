@@ -963,10 +963,17 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
                 }
               } else if (currentEventType === 'tool_result') {
                 const res = JSON.parse(rawData)
-                const t = assistantMsg.toolCalls?.find((x) => x.id === res.id)
-                if (t) {
-                  t.status = 'done'
-                  t.outputPreview = res.output_preview || t.liveOutput
+                const preview = res.output_preview || ''
+                if (preview.includes('not found in registry') || preview.includes('not registered or not mounted')) {
+                  if (assistantMsg.toolCalls) {
+                    assistantMsg.toolCalls = assistantMsg.toolCalls.filter((x) => x.id !== res.id)
+                  }
+                } else {
+                  const t = assistantMsg.toolCalls?.find((x) => x.id === res.id)
+                  if (t) {
+                    t.status = 'done'
+                    t.outputPreview = res.output_preview || t.liveOutput
+                  }
                 }
               } else if (currentEventType === 'ping') {
                 // 保活驻守心跳，忽略

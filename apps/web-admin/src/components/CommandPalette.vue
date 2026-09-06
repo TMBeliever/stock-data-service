@@ -281,6 +281,14 @@ function scrollToActiveItem() {
   })
 }
 
+import { useModalLayer } from '@/stores/modalManager'
+
+const { zIndex, focusModal } = useModalLayer(
+  'command-palette',
+  () => props.show,
+  () => emit('close')
+)
+
 onMounted(() => {
   window.addEventListener('keydown', onKeyDown)
 })
@@ -295,8 +303,10 @@ onUnmounted(() => {
     <transition name="fade">
       <div
         v-if="show"
-        class="fixed inset-0 z-50 flex items-start justify-center pt-20 px-4 bg-black/65 backdrop-blur-md transition-all duration-200"
+        :style="{ zIndex }"
+        class="fixed inset-0 flex items-start justify-center pt-20 px-4 bg-black/75 backdrop-blur-md transition-all duration-200 select-none"
         @click.self="emit('close')"
+        @mousedown="focusModal"
       >
         <div
           class="w-full max-w-2xl bg-[#121216]/95 border border-white/[0.14] rounded-2xl shadow-2xl shadow-black/80 overflow-hidden flex flex-col backdrop-filter backdrop-blur-2xl animate-in fade-in zoom-in-95 duration-150"

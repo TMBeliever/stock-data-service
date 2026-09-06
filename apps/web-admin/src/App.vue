@@ -8,12 +8,24 @@ import GlobalFloatingBacktestCockpit from '@/components/strategy/GlobalFloatingB
 import { useAuthStore } from '@/stores/auth'
 import { useAiStore } from '@/stores/ai'
 
+import { useModalManagerStore } from '@/stores/modalManager'
+
 const authStore = useAuthStore()
 const aiStore = useAiStore()
+const modalManager = useModalManagerStore()
 const showPalette = ref(false)
 
 function onGlobalKeydown(e: KeyboardEvent) {
   if (e.defaultPrevented) return
+
+  // 0. ESC 键全局调度：若当前有打开的弹窗，优先依栈顶次序逐层关闭最新/最顶层弹窗
+  if (e.key === 'Escape') {
+    const handled = modalManager.handleEscKey()
+    if (handled) {
+      e.preventDefault()
+      return
+    }
+  }
 
   // 1. ⌘+K 全局检索与命令面板
   if ((e.metaKey || e.ctrlKey) && (e.key?.toLowerCase() === 'k' || e.code === 'KeyK')) {

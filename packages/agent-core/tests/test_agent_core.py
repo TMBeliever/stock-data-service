@@ -342,4 +342,60 @@ async def test_base_agent_calls_openai_completions_endpoint(monkeypatch):
     assert result["tool_calls"][0]["function"]["name"] == "mock_tool"
 
 
+@pytest.mark.asyncio
+async def test_unmounted_tool_call_is_never_emitted():
+    """测试未挂载/未注册的工具调用绝不向用户展示，直接由模型纯文本回答"""
+    registry = ToolRegistry()
+
+    @tool(name="mounted_tool", description="已挂载的工具")
+    def mounted_tool(q: str) -> str:
+        return f"Result: {q}"
+
+    registry.register(mounted_tool)
+    agent = BaseAgent(name="FilterAgent", tool_registry=registry)
+
+    step_count = 0
+    async def mock_llm_generate(messages, tools, model=None, provider=None, temperature=None):
+        nonlocal step_count
+        step_count += 1
+        # 第一步：模型幻觉输出了一个未挂载的工具 get_realtime_quote
+        if step_count == 1:
+            return {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_unmounted_1",
+                        "name": "get_realtime_quote",
+                        "arguments": {"symbol": "600036"}
+                    }
+                ]
+            }
+        # 第二步：提示未挂载后，模型直接以文本正常回答
+        return {
+            "content": "招商银行（600036）是一家领先的商业银行，当前未挂载实时行情。",
+            "tool_calls": []
+        }
+
+    agent._call_llm_generate = mock_llm_generate
+
+    events = []
+    async for event in agent.stream_chat(prompt="查询招行当前股价"):
+        events.append(event)
+
+    event_names = [e["event"] for e in events]
+
+    # 核心断言：绝不向前端推送 tool_call 或报错 tool_result
+    assert "tool_call" not in event_names
+    assert "tool_result" not in event_names
+    assert "message" in event_names
+
+    # 验证最终文本正常输出
+    full_text = "".join(
+        json.loads(e["data"]).get("delta", "")
+        for e in events
+        if e["event"] == "message"
+    )
+    assert "招商银行" in full_text
+
+
 

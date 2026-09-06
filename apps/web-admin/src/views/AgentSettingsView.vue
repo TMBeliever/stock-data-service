@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { useAgentSettingsStore, type ExecutionMode, type McpServerItem } from '@/stores/agentSettings'
 import { useAuthStore } from '@/stores/auth'
 
+import { useModalLayer } from '@/stores/modalManager'
+
 const router = useRouter()
 const settingsStore = useAgentSettingsStore()
 const authStore = useAuthStore()
@@ -11,6 +13,11 @@ const authStore = useAuthStore()
 const activeTab = ref<'permissions' | 'mcp' | 'runtime'>('permissions')
 const showAddMcpModal = ref(false)
 const toastMsg = ref('')
+
+// 统一弹窗层级管理
+const { zIndex: addMcpZIndex } = useModalLayer('add-custom-mcp-modal', showAddMcpModal, () => {
+  showAddMcpModal.value = false
+})
 
 // 分层解耦服务器引用
 const stockServer = computed(() =>
@@ -40,6 +47,11 @@ const adminServer = computed(() =>
 
 // MCP 完整能力详情弹窗
 const detailModalServer = ref<any>(null)
+const isDetailOpen = computed(() => !!detailModalServer.value)
+const { zIndex: detailModalZIndex } = useModalLayer('mcp-capability-detail-modal', isDetailOpen, () => {
+  detailModalServer.value = null
+})
+
 function openDetailModal(server: any) {
   detailModalServer.value = server
 }
@@ -671,108 +683,7 @@ onMounted(() => {
         </div>
 
         <!-- ======================================================= -->
-        <!-- 3. 扩展与第三方 MCP 服务 (other / 之后加载的) -->
-        <!-- ======================================================= -->
-        <div class="space-y-3.5">
-          <div class="flex items-center justify-between px-1">
-            <h3 class="text-sm font-bold text-amber-400 flex items-center space-x-2">
-              <span>🧩</span>
-              <span>扩展与第三方 MCP 服务 (other)</span>
-            </h3>
-            <span class="text-[11px] font-mono text-zinc-500">{{ customServers.length }} 个外部扩展服务</span>
-          </div>
-
-          <div v-if="customServers.length > 0" class="space-y-3">
-            <div
-              v-for="server in customServers"
-              :key="server.name"
-              class="p-5 rounded-2xl bg-[#141418] border border-amber-500/20 shadow-sm space-y-4"
-            >
-              <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-white/[0.06]">
-                <div class="space-y-1">
-                  <div class="flex items-center space-x-2.5">
-                    <span class="text-base">🚀</span>
-                    <span class="font-bold text-sm text-white">{{ server.name }}</span>
-                    <span
-                      class="px-2 py-0.5 rounded text-[10px] font-mono font-bold"
-                      :class="server.status === 'CONNECTED' ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30' : 'bg-zinc-500/15 text-zinc-400 border border-zinc-500/30'"
-                    >
-                      ● {{ server.status }}
-                    </span>
-                    <span class="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono">
-                      {{ server.type === 'http' ? '远程 HTTP' : '本地命令行 (Stdio)' }}
-                    </span>
-                  </div>
-                  <p class="text-xs text-zinc-400">{{ server.description || '自定义扩展 MCP' }}</p>
-                  <div class="text-[11px] font-mono text-zinc-500">
-                    端点/命令: {{ server.url || (server.command + ' ' + (server.args || []).join(' ')) }}
-                  </div>
-                </div>
-
-                <div class="flex items-center space-x-3 shrink-0">
-                  <button
-                    @click="openDetailModal(server)"
-                    class="px-2.5 py-1 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-medium cursor-pointer transition-colors"
-                  >
-                    📖 查看能力
-                  </button>
-                  <button
-                    @click="handleToggleMcp(server)"
-                    :class="[
-                      'w-11 h-6 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-200',
-                      server.enabled ? 'bg-amber-500' : 'bg-zinc-700',
-                    ]"
-                  >
-                    <div
-                      :class="[
-                        'bg-white w-5 h-5 rounded-full shadow-md transform transition-transform duration-200',
-                        server.enabled ? 'translate-x-5' : 'translate-x-0',
-                      ]"
-                    ></div>
-                  </button>
-                </div>
-              </div>
-
-              <!-- 工具列表 -->
-              <div v-if="server.tools && server.tools.length > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
-                <div
-                  v-for="tool in server.tools"
-                  :key="tool.name"
-                  class="p-3 rounded-xl bg-white/[0.02] border border-amber-500/20 space-y-2"
-                >
-                  <div class="flex items-center justify-between">
-                    <span class="font-mono text-xs text-amber-300 font-bold">{{ tool.name }}</span>
-                    <button
-                      @click.stop="handleToggleTool(server, tool)"
-                      :class="[
-                        'w-8 h-4.5 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-200',
-                        tool.enabled ? 'bg-amber-500' : 'bg-zinc-700'
-                      ]"
-                    >
-                      <div
-                        :class="[
-                          'bg-white w-3.5 h-3.5 rounded-full shadow-sm transform transition-transform duration-200',
-                          tool.enabled ? 'translate-x-3.5' : 'translate-x-0'
-                        ]"
-                      ></div>
-                    </button>
-                  </div>
-                  <p class="text-[11px] text-zinc-300">{{ tool.description }}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div
-            v-else
-            class="p-6 rounded-2xl bg-[#141418] border border-dashed border-white/[0.08] text-center text-xs text-zinc-500 space-y-1.5"
-          >
-            <div class="text-sm">暂无第三方扩展 MCP 服务</div>
-            <div class="text-[11px] text-zinc-500">点击右上角「＋ 添加自定义 MCP」可接入外部天气、研报、知识库或自建脚本服务</div>
-          </div>
-        </div>
-
-        <!-- ======================================================= -->
-        <!-- 4. 超级管理员系统级运维工具调用 (admin) -->
+        <!-- 3. 超级管理员系统级运维工具调用 (admin) -->
         <!-- ======================================================= -->
         <div v-if="authStore.isAdmin" class="space-y-3.5">
           <div class="flex items-center justify-between px-1">
@@ -906,6 +817,107 @@ onMounted(() => {
             </div>
           </div>
         </div>
+
+        <!-- ======================================================= -->
+        <!-- 4. 扩展与第三方 MCP 服务 (other / 之后加载的，排在最后) -->
+        <!-- ======================================================= -->
+        <div class="space-y-3.5">
+          <div class="flex items-center justify-between px-1">
+            <h3 class="text-sm font-bold text-amber-400 flex items-center space-x-2">
+              <span>🧩</span>
+              <span>扩展与第三方 MCP 服务 (other)</span>
+            </h3>
+            <span class="text-[11px] font-mono text-zinc-500">{{ customServers.length }} 个外部扩展服务</span>
+          </div>
+
+          <div v-if="customServers.length > 0" class="space-y-3">
+            <div
+              v-for="server in customServers"
+              :key="server.name"
+              class="p-5 rounded-2xl bg-[#141418] border border-amber-500/20 shadow-sm space-y-4"
+            >
+              <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-white/[0.06]">
+                <div class="space-y-1">
+                  <div class="flex items-center space-x-2.5">
+                    <span class="text-base">🚀</span>
+                    <span class="font-bold text-sm text-white">{{ server.name }}</span>
+                    <span
+                      class="px-2 py-0.5 rounded text-[10px] font-mono font-bold"
+                      :class="server.status === 'CONNECTED' ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30' : 'bg-zinc-500/15 text-zinc-400 border border-zinc-500/30'"
+                    >
+                      ● {{ server.status }}
+                    </span>
+                    <span class="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono">
+                      {{ server.type === 'http' ? '远程 HTTP' : '本地命令行 (Stdio)' }}
+                    </span>
+                  </div>
+                  <p class="text-xs text-zinc-400">{{ server.description || '自定义扩展 MCP' }}</p>
+                  <div class="text-[11px] font-mono text-zinc-500">
+                    端点/命令: {{ server.url || (server.command + ' ' + (server.args || []).join(' ')) }}
+                  </div>
+                </div>
+
+                <div class="flex items-center space-x-3 shrink-0">
+                  <button
+                    @click="openDetailModal(server)"
+                    class="px-2.5 py-1 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-medium cursor-pointer transition-colors"
+                  >
+                    📖 查看能力
+                  </button>
+                  <button
+                    @click="handleToggleMcp(server)"
+                    :class="[
+                      'w-11 h-6 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-200',
+                      server.enabled ? 'bg-amber-500' : 'bg-zinc-700',
+                    ]"
+                  >
+                    <div
+                      :class="[
+                        'bg-white w-5 h-5 rounded-full shadow-md transform transition-transform duration-200',
+                        server.enabled ? 'translate-x-5' : 'translate-x-0',
+                      ]"
+                    ></div>
+                  </button>
+                </div>
+              </div>
+
+              <!-- 工具列表 -->
+              <div v-if="server.tools && server.tools.length > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+                <div
+                  v-for="tool in server.tools"
+                  :key="tool.name"
+                  class="p-3 rounded-xl bg-white/[0.02] border border-amber-500/20 space-y-2"
+                >
+                  <div class="flex items-center justify-between">
+                    <span class="font-mono text-xs text-amber-300 font-bold">{{ tool.name }}</span>
+                    <button
+                      @click.stop="handleToggleTool(server, tool)"
+                      :class="[
+                        'w-8 h-4.5 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-200',
+                        tool.enabled ? 'bg-amber-500' : 'bg-zinc-700'
+                      ]"
+                    >
+                      <div
+                        :class="[
+                          'bg-white w-3.5 h-3.5 rounded-full shadow-sm transform transition-transform duration-200',
+                          tool.enabled ? 'translate-x-3.5' : 'translate-x-0'
+                        ]"
+                      ></div>
+                    </button>
+                  </div>
+                  <p class="text-[11px] text-zinc-300">{{ tool.description }}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div
+            v-else
+            class="p-6 rounded-2xl bg-[#141418] border border-dashed border-white/[0.08] text-center text-xs text-zinc-500 space-y-1.5"
+          >
+            <div class="text-sm">暂无第三方扩展 MCP 服务</div>
+            <div class="text-[11px] text-zinc-500">点击右上角「＋ 添加自定义 MCP」可接入外部天气、研报、知识库或自建脚本服务</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1022,7 +1034,8 @@ onMounted(() => {
     <!-- 添加自定义 MCP 模态窗 -->
     <div
       v-if="showAddMcpModal"
-      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-fade"
+      class="fixed inset-0 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-fade"
+      :style="{ zIndex: addMcpZIndex }"
     >
       <div class="w-full max-w-md rounded-2xl bg-[#141418] border border-white/[0.12] shadow-2xl p-5 space-y-4">
         <div class="flex items-center justify-between">
@@ -1103,7 +1116,8 @@ onMounted(() => {
     <!-- 模态框: MCP 服务详细能力架构与白皮书 (detailModalServer) -->
     <div
       v-if="detailModalServer"
-      class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4"
+      class="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4"
+      :style="{ zIndex: detailModalZIndex }"
     >
       <div class="bg-[#181924] border border-white/[0.12] rounded-3xl w-full max-w-3xl max-h-[88vh] overflow-hidden flex flex-col shadow-2xl">
         <!-- 头部 -->

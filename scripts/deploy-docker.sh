@@ -19,6 +19,7 @@ ALL_SERVICES=(
     "quant-server"
     "common-server"
     "quant-agent"
+    "mcp-gateway"
     "web-admin"
 )
 
@@ -72,6 +73,9 @@ get_service_watch_paths() {
         quant-agent)
             echo "services/quant-agent packages/agent-core packages/ai-core packages/quant-core packages/stock-data pyproject.toml"
             ;;
+        mcp-gateway)
+            echo "services/mcp-gateway packages/stock-data pyproject.toml"
+            ;;
         ai-core)
             echo "packages/ai-core"
             ;;
@@ -99,6 +103,9 @@ get_service_health_endpoint() {
             ;;
         quant-agent)
             echo "http://127.0.0.1:8060/health"
+            ;;
+        mcp-gateway)
+            echo "http://127.0.0.1:8050/health"
             ;;
         ai-core)
             echo "http://127.0.0.1:8070/health"
@@ -361,6 +368,7 @@ show_status() {
     echo -e "${GREEN}  🎉 Quant System 生产环境各微服务访问入口：                   ${RESET}"
     echo -e "${GREEN}  - 🌐 前端 Web 控制台:    http://<服务器IP>:${WEB_PORT:-80}/         ${RESET}"
     echo -e "${GREEN}  - 🤖 Quant Agent 中枢:   http://<服务器IP>:8060/health      ${RESET}"
+    echo -e "${GREEN}  - 🔌 MCP 数据网关:       http://<服务器IP>:${WEB_PORT:-80}/mcp        ${RESET}"
     echo -e "${GREEN}  - 🧠 AI 模型网关:        http://<服务器IP>:8070/health      ${RESET}"
     echo -e "${GREEN}  - ⚡ 量化回测中枢:       http://<服务器IP>:8080/health      ${RESET}"
     echo -e "${GREEN}  - 👤 用户中心与策略库:   http://<服务器IP>:8090/health      ${RESET}"

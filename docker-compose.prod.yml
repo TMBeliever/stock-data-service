@@ -16,6 +16,7 @@ services:
       - quant-server
       - common-server
       - stock-data
+      - mcp-gateway
     networks:
       - quant-net
 
@@ -36,6 +37,8 @@ services:
         exec uvicorn quant_agent.main:app --host 0.0.0.0 --port 8060 --workers 1
     ports:
       - "8060:8060"
+    depends_on:
+      - mcp-gateway
     environment:
       - ENVIRONMENT=production
       - AI_CORE_URL=http://ai-core:8070
@@ -44,6 +47,7 @@ services:
       - QUANT_SERVER_URL=http://quant-server:8080
       - STOCK_DATA_API_URL=http://stock-data:8000
       - COMMON_SERVER_URL=http://common-server:8090
+      - MCP_GATEWAY_URL=http://mcp-gateway:8050/mcp
       - STOCK_DATA_DIR=/app/packages/stock-data
       - WORKSPACE_ROOT=/app
       # 宿主机项目根路径（docker compose 命令需要用到）

@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=ghcr.io/astral-sh/uv:0.4.29 /uv /bin/uv
 
 COPY services/mcp-gateway/pyproject.toml services/mcp-gateway/pyproject.toml
+COPY services/mcp-gateway/README.md* services/mcp-gateway/
 COPY services/mcp-gateway/src services/mcp-gateway/src
 
 RUN uv pip install --system -e services/mcp-gateway

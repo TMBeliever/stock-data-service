@@ -102,8 +102,11 @@ async def debug_tools_endpoint(request: Request) -> JSONResponse:
 # ── 构建 Starlette App ────────────────────────────────────────────────────────
 # 使用 custom_starlette_routes 将 /health 和 /debug 嵌入 MCP 的 Starlette app 中，
 # 这样 MCP 自己管理 lifespan（session_manager.run()），我们只加额外路由
+from mcp.server.streamable_http_manager import StreamableHTTPASGIApp
+
 _custom_routes = [
     Route("/health", health_endpoint, methods=["GET", "HEAD"]),
+    Route("/mcp/health", health_endpoint, methods=["GET", "HEAD"]),
     Route("/debug/tools", debug_tools_endpoint, methods=["GET"]),
 ]
 
@@ -115,6 +118,12 @@ _starlette_app = mcp._lowlevel_server.streamable_http_app(
     custom_starlette_routes=_custom_routes,
     host="0.0.0.0",                   # 允许外部连接（不限 127.0.0.1）
 )
+
+# 允许 /mcp/、/mcp/stock、/mcp/user 等别名直接路由至 MCP session manager
+_mcp_asgi = StreamableHTTPASGIApp(mcp._lowlevel_server._session_manager)
+_starlette_app.routes.append(Route("/mcp/", endpoint=_mcp_asgi, methods=["GET", "POST"]))
+_starlette_app.routes.append(Route("/mcp/stock", endpoint=_mcp_asgi, methods=["GET", "POST"]))
+_starlette_app.routes.append(Route("/mcp/user", endpoint=_mcp_asgi, methods=["GET", "POST"]))
 
 # Token 透传 Middleware 包装整个 app
 app = TokenInjectMiddleware(_starlette_app)

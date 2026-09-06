@@ -25,12 +25,23 @@ import {
   THINKING_LEVEL_OPTIONS,
 } from '@/stores/codexWorkspace'
 import ProjectModal from '@/components/ProjectModal.vue'
+import { useModalLayer } from '@/stores/modalManager'
 
 const router = useRouter()
 const aiStore = useAiStore()
 const authStore = useAuthStore()
 const strategyStore = useStrategyStore()
 const codexStore = useCodexWorkspaceStore()
+
+// 接入统一弹窗与工作台层级调度治理，确保后打开或点击的 AI 助手在最顶层
+const isAiOpen = computed(() => aiStore.isOpen)
+const { zIndex: aiWindowZIndex, focusModal: focusAiWindow } = useModalLayer(
+  'ai-assistant-window',
+  isAiOpen,
+  () => {
+    aiStore.close()
+  }
+)
 
 const chatContainer = ref<HTMLDivElement | null>(null)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
@@ -1028,13 +1039,14 @@ onUnmounted(() => {
     <!-- ========================================================================= -->
     <div
       v-if="aiStore.isOpen"
+      @mousedown.capture="focusAiWindow"
       :style="{
         position: 'fixed',
         left: `${aiStore.position.x}px`,
         top: `${aiStore.position.y}px`,
         width: `${aiStore.size.width}px`,
         height: `${aiStore.size.height}px`,
-        zIndex: 9999,
+        zIndex: aiWindowZIndex,
       }"
       class="bg-[#14151b]/95 border border-white/[0.14] rounded-2xl shadow-2xl flex flex-col backdrop-blur-2xl select-none overflow-hidden"
     >

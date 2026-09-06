@@ -6,11 +6,22 @@ import EChartWrapper from '@/components/EChartWrapper.vue'
 import { useStrategyStore, type UserBacktestItem } from '@/stores/strategy'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
+import { useModalLayer } from '@/stores/modalManager'
 
 const router = useRouter()
 const strategyStore = useStrategyStore()
 const marketStore = useMarketStore()
 const authStore = useAuthStore()
+
+// 接入统一弹窗与工作舱层级调度治理，确保后打开或点击的工作舱在最顶层
+const isCockpitOpen = computed(() => strategyStore.isBacktestCockpitOpen)
+const { zIndex: cockpitZIndex, focusModal: focusCockpit } = useModalLayer(
+  'backtest-cockpit-window',
+  isCockpitOpen,
+  () => {
+    strategyStore.isBacktestCockpitOpen = false
+  }
+)
 
 const { cockpitPosition: cockpitPos, cockpitSize } = storeToRefs(strategyStore)
 
@@ -587,9 +598,10 @@ const chartOption = computed(() => {
     <!-- ========================================================================= -->
     <div
       v-if="strategyStore.isBacktestCockpitOpen"
+      @mousedown.capture="focusCockpit"
       :style="isMaximized
-        ? { position: 'fixed', left: '16px', top: '16px', width: 'calc(100vw - 32px)', height: 'calc(100vh - 32px)', zIndex: 9999 }
-        : { position: 'fixed', left: `${cockpitPos?.x ?? 40}px`, top: `${cockpitPos?.y ?? 70}px`, width: `${cockpitSize?.width ?? 920}px`, height: `${cockpitSize?.height ?? 680}px`, zIndex: 9999 }"
+        ? { position: 'fixed', left: '16px', top: '16px', width: 'calc(100vw - 32px)', height: 'calc(100vh - 32px)', zIndex: cockpitZIndex }
+        : { position: 'fixed', left: `${cockpitPos?.x ?? 40}px`, top: `${cockpitPos?.y ?? 70}px`, width: `${cockpitSize?.width ?? 920}px`, height: `${cockpitSize?.height ?? 680}px`, zIndex: cockpitZIndex }"
       class="bg-[#101218]/96 backdrop-blur-3xl border border-white/[0.14] rounded-2xl shadow-[0_30px_90px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden animate-fadeIn select-none"
     >
       <!-- 2.1 顶部拖拽标题栏 (Header Drag Bar - 窗口控制与 AI 助手完全统一，居于最右) -->

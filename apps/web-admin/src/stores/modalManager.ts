@@ -121,7 +121,6 @@ export function useModalLayer(
   onClose?: () => void
 ) {
   const modalManager = useModalManagerStore()
-  const zIndex = ref(modalManager.BASE_Z_INDEX)
 
   const isVisible = typeof isOpen === 'function' ? computed(isOpen) : isOpen
 
@@ -129,7 +128,7 @@ export function useModalLayer(
     isVisible,
     (val) => {
       if (val) {
-        zIndex.value = modalManager.registerModal(id, onClose)
+        modalManager.registerModal(id, onClose)
       } else {
         modalManager.unregisterModal(id)
       }
@@ -142,8 +141,10 @@ export function useModalLayer(
   })
 
   function focusModal() {
-    zIndex.value = modalManager.bringToFront(id)
+    modalManager.bringToFront(id)
   }
+
+  const zIndex = computed(() => modalManager.getZIndex(id))
 
   return {
     zIndex,

@@ -1,4 +1,5 @@
 import json
+import asyncio
 import pytest
 from httpx import AsyncClient, ASGITransport
 from ai_core.service import app
@@ -197,4 +198,48 @@ async def test_openai_agt_model_routing(monkeypatch):
         assert resp2.status_code == 200
         assert captured_kwargs.get("provider_type") == "cli"
         assert captured_kwargs.get("model") == "claude-sonnet-4.6"
+
+@pytest.mark.asyncio
+async def test_openai_client_disconnect_cancels_and_cleans_worker(monkeypatch):
+    """验证 OpenAI 客户端中途断开 SSE 连接时，底层 Worker 被即时彻底清理并销毁"""
+    import sys
+    from ai_core.process_pool import prewarmed_process_pool, PrewarmedProcess
+
+    code = (
+        "import sys, time\n"
+        "sys.stdin.read()\n"
+        "for i in range(100):\n"
+        "    print(f'TOKEN_{i}', flush=True)\n"
+        "    time.sleep(0.1)\n"
+    )
+    async def mock_spawn(*args, **kwargs):
+        p = await asyncio.create_subprocess_exec(
+            sys.executable, "-c", code,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        return PrewarmedProcess(proc=p, created_at=0.0)
+
+    monkeypatch.setattr(prewarmed_process_pool, "_spawn_worker", mock_spawn)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with client.stream(
+            "POST", "/v1/chat/completions",
+            headers=VALID_AUTH_HEADER,
+            json={
+                "model": "agt-gemini-3.8-flash",
+                "messages": [{"role": "user", "content": "test"}],
+                "stream": True
+            }
+        ) as response:
+            assert response.status_code == 200
+            async for line in response.aiter_lines():
+                if "TOKEN_" in line:
+                    break
+
+    await asyncio.sleep(0.2)
+    assert len(prewarmed_process_pool._active_processes) == 0
+
 

@@ -1,4 +1,5 @@
 import json
+import asyncio
 import pytest
 from httpx import AsyncClient, ASGITransport
 from ai_core.service import app
@@ -184,4 +185,54 @@ async def test_anthropic_agt_model_routing(monkeypatch):
         assert resp2.status_code == 200
         assert captured_kwargs.get("provider_type") == "cli"
         assert captured_kwargs.get("model") == "claude-sonnet-4.6"
+
+@pytest.mark.asyncio
+async def test_anthropic_client_disconnect_cancels_and_cleans_worker(monkeypatch):
+    """验证客户端中途断开 SSE 连接时 (如 Ctrl+C)，ASGI 层触发取消并立即强杀清理底层 Worker"""
+    import sys
+    from ai_core.process_pool import prewarmed_process_pool, PrewarmedProcess
+
+    # 模拟一个持续输出慢速 Chunk 的子进程
+    code = (
+        "import sys, time\n"
+        "sys.stdin.read()\n"
+        "for i in range(100):\n"
+        "    print(f'TOKEN_{i}', flush=True)\n"
+        "    time.sleep(0.1)\n"
+    )
+    async def mock_spawn(*args, **kwargs):
+        p = await asyncio.create_subprocess_exec(
+            sys.executable, "-c", code,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        return PrewarmedProcess(proc=p, created_at=0.0)
+
+    monkeypatch.setattr(prewarmed_process_pool, "_spawn_worker", mock_spawn)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 建立流式连接并在接收到第一个 token 后主动跳出断开连接 (模拟 Ctrl+C)
+        async with client.stream(
+            "POST", "/v1/messages",
+            headers=VALID_ANTHROPIC_HEADER,
+            json={
+                "model": "agt-gemini-3.8-flash",
+                "messages": [{"role": "user", "content": "test"}],
+                "stream": True
+            }
+        ) as response:
+            assert response.status_code == 200
+            async for line in response.aiter_lines():
+                if "TOKEN_" in line:
+                    break
+        # 客户端连接已关闭，断开信号传递到服务端
+
+    # 稍作等待让事件循环处理 ASGI Disconnect
+    await asyncio.sleep(0.2)
+
+    # 验证活跃进程集合已被完全清空，无任何僵尸进程滞留
+    assert len(prewarmed_process_pool._active_processes) == 0
+
 

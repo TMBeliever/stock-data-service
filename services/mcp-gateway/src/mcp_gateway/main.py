@@ -5,20 +5,28 @@ MCP Gateway — 统一 MCP 数据网关
 供 quant-agent 以 HTTP MCPClient 统一接入，彻底废弃 stdio 进程 fork 模式。
 
 端点：
-  GET  /health         — 健康探针
-  GET  /mcp/tools      — 调试：列出所有已注册工具
-  POST /mcp            — MCP Streamable HTTP 主端点（供 MCPHttpClient 接入）
+  GET  /health         — 健康探针（JSON）
+  GET  /debug/tools    — 调试：列出所有已注册工具（JSON）
+  *    /mcp            — MCP Streamable HTTP 主端点（供 MCPHttpClient 接入）
 
 Token 透传：
-  请求携带 X-User-Token header → contextvars 注入 → user_data 工具转发给 common-server
-"""
-import logging
-from contextlib import asynccontextmanager
-from contextvars import copy_context
+  请求携带 X-User-Token header → ASGI middleware → contextvars 注入
+  → user_data 工具在调用 common-server 时自动携带 JWT
 
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+架构说明：
+  MCPServer.streamable_http_app() 接受 custom_starlette_routes 参数，
+  可以在 MCP Starlette 内部直接加入额外路由（/health、/debug 等）。
+  整个 Starlette app 作为 uvicorn 主 app 运行，lifespan 由 MCP 管理。
+  TokenInjectMiddleware 包装整个 app，注入 contextvars token。
+"""
+import json
+import logging
+from typing import Callable
+
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+from starlette.types import ASGIApp, Receive, Scope, Send
 from mcp.server.mcpserver import MCPServer
 
 from mcp_gateway.config import gateway_config
@@ -36,50 +44,37 @@ logger = logging.getLogger(__name__)
 mcp = MCPServer("quant-mcp-gateway")
 register_stock_tools(mcp)
 register_user_tools(mcp)
-logger.info("MCP Gateway: registered %d tools total", len(mcp._tool_manager._tools))
+_tool_count = len(mcp._tool_manager._tools)
+logger.info("MCP Gateway: registered %d tools total", _tool_count)
 
 
-# ── FastAPI App ───────────────────────────────────────────────────────────────
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info(
-        "MCP Gateway starting on :%d | stock-data=%s | common-server=%s",
-        gateway_config.PORT,
-        gateway_config.STOCK_DATA_URL,
-        gateway_config.COMMON_SERVER_URL,
-    )
-    yield
-    # 关闭时清理 HTTP 连接池
-    from mcp_gateway.tools import stock_data as sd_module
-    from mcp_gateway.tools import user_data as ud_module
-    if sd_module._http_client and not sd_module._http_client.is_closed:
-        await sd_module._http_client.aclose()
-    if ud_module._http_client and not ud_module._http_client.is_closed:
-        await ud_module._http_client.aclose()
-    logger.info("MCP Gateway shutdown complete")
+# ── Token 透传 ASGI Middleware ────────────────────────────────────────────────
+class TokenInjectMiddleware:
+    """
+    从 ASGI scope 的 headers 中提取 X-User-Token，注入 contextvars，
+    令 user_data 工具在调用 common-server 时自动携带 JWT。
+    """
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] in ("http", "websocket"):
+            headers = dict(scope.get("headers", []))
+            token = headers.get(b"x-user-token", b"").decode("utf-8", errors="ignore")
+            ctx_token = current_user_token.set(token)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                current_user_token.reset(ctx_token)
+        else:
+            await self.app(scope, receive, send)
 
 
-app = FastAPI(
-    title="Quant MCP Gateway",
-    description="Unified MCP HTTP Gateway — aggregates stock-data, common-server and future services",
-    version="1.0.0",
-    lifespan=lifespan,
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-# ── 健康探针 ──────────────────────────────────────────────────────────────────
-@app.get("/health", tags=["System"])
-async def health_check():
+# ── 自定义路由处理器 ──────────────────────────────────────────────────────────
+async def health_endpoint(request: Request) -> JSONResponse:
+    """健康探针"""
     tools = list(mcp._tool_manager._tools.keys())
-    return {
+    return JSONResponse({
         "status": "healthy",
         "service": "mcp-gateway",
         "port": gateway_config.PORT,
@@ -90,44 +85,49 @@ async def health_check():
         },
         "tools_count": len(tools),
         "tools": tools,
-    }
+    })
 
 
-# ── 调试端点：工具列表 ────────────────────────────────────────────────────────
-@app.get("/mcp/tools", tags=["MCP Debug"])
-async def list_tools():
-    """列出所有已注册 MCP 工具及描述（调试用）"""
+async def debug_tools_endpoint(request: Request) -> JSONResponse:
+    """调试：列出所有已注册 MCP 工具"""
     tools = []
     for name, tool in mcp._tool_manager._tools.items():
         tools.append({
             "name": name,
             "description": (tool.description or "")[:120],
         })
-    return {"total": len(tools), "tools": tools}
+    return JSONResponse({"total": len(tools), "tools": tools})
 
 
-# ── MCP Streamable HTTP 主端点 ────────────────────────────────────────────────
-@app.api_route("/mcp", methods=["GET", "POST", "DELETE"], tags=["MCP"])
-async def mcp_endpoint(request: Request):
-    """
-    MCP Streamable HTTP 主端点。
-    支持 token 透传：从 X-User-Token header 读取用户 JWT，
-    通过 contextvars 注入，user_data 工具在调用 common-server 时自动携带。
-    """
-    # 从请求 header 提取并注入用户 token
-    user_token = request.headers.get("X-User-Token", "")
-    token = current_user_token.set(user_token)
+# ── 构建 Starlette App ────────────────────────────────────────────────────────
+# 使用 custom_starlette_routes 将 /health 和 /debug 嵌入 MCP 的 Starlette app 中，
+# 这样 MCP 自己管理 lifespan（session_manager.run()），我们只加额外路由
+_custom_routes = [
+    Route("/health", health_endpoint, methods=["GET", "HEAD"]),
+    Route("/debug/tools", debug_tools_endpoint, methods=["GET"]),
+]
 
-    try:
-        # 将请求交给 MCP Server 的 Streamable HTTP 处理器
-        handler = mcp.streamable_http_app()
-        return await handler(request.scope, request.receive, request._send)
-    finally:
-        current_user_token.reset(token)
+# streamable_http_app 通过 lowlevel server 调用以支持 custom_starlette_routes
+# MCPServer.streamable_http_app() 不暴露此参数，直接访问 _lowlevel_server
+_starlette_app = mcp._lowlevel_server.streamable_http_app(
+    streamable_http_path="/mcp",
+    stateless_http=True,              # 无状态：每次请求独立，适合网关场景
+    custom_starlette_routes=_custom_routes,
+    host="0.0.0.0",                   # 允许外部连接（不限 127.0.0.1）
+)
+
+# Token 透传 Middleware 包装整个 app
+app = TokenInjectMiddleware(_starlette_app)
 
 
 if __name__ == "__main__":
     import uvicorn
+    logger.info(
+        "MCP Gateway starting on :%d | stock-data=%s | common-server=%s",
+        gateway_config.PORT,
+        gateway_config.STOCK_DATA_URL,
+        gateway_config.COMMON_SERVER_URL,
+    )
     uvicorn.run(
         "mcp_gateway.main:app",
         host=gateway_config.HOST,

@@ -1,4 +1,2 @@
-from mcp_gateway.main import app
-from mcp_gateway.config import gateway_config
-
-__all__ = ["app", "gateway_config"]
+# mcp_gateway package
+# main app is imported lazily to avoid circular imports during module loading

@@ -169,7 +169,7 @@ class MCPHttpClient:
             async with httpx.AsyncClient(headers=self._extra_headers()) as http_client:
                 async with streamable_http_client(
                     self.url, http_client=http_client
-                ) as (read_stream, write_stream, _):
+                ) as (read_stream, write_stream):   # mcp 2.x 返回 2 个值
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
                         mcp_tools_res = await session.list_tools()
@@ -191,7 +191,7 @@ class MCPHttpClient:
                             len(tools), self.server_name, self.url
                         )
                         return tools
-        except Exception as e:
+        except BaseException as e:  # ExceptionGroup (anyio TaskGroup) 不被 except Exception 捕获
             logger.error("MCPHttpClient: failed to discover tools from '%s': %s", self.url, e)
             return []
 
@@ -201,7 +201,7 @@ class MCPHttpClient:
             async with httpx.AsyncClient(headers=self._extra_headers()) as http_client:
                 async with streamable_http_client(
                     self.url, http_client=http_client
-                ) as (read_stream, write_stream, _):
+                ) as (read_stream, write_stream):   # mcp 2.x 返回 2 个值
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
                         res = await session.call_tool(name=name, arguments=arguments)
@@ -221,7 +221,7 @@ class MCPHttpClient:
                             return json.loads(combined)
                         except Exception:
                             return combined
-        except Exception as e:
+        except BaseException as e:  # ExceptionGroup (anyio TaskGroup) 不被 except Exception 捕获
             logger.error(
                 "MCPHttpClient: tool '%s' call failed on '%s': %s",
                 name, self.url, e

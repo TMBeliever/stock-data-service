@@ -416,10 +416,10 @@ class BaseAgent:
                         logger.info("No valid mounted tools, but model generated text; proceeding to text output.")
                         # 留空 raw_tool_calls 让控制流自然下沉至 5C 流式输出文本
                     else:
-                        logger.info("No valid mounted tools and no text; prompting model for direct answer.")
+                        logger.info("No valid mounted tools and no text; prompting model for direct natural answer.")
                         history.append(Message.user(
-                            f"【系统提示】所尝试调用的工具（{', '.join(tc.name for tc in unmounted_calls)}）当前未挂载。"
-                            "请直接基于你所掌握的通用金融/量化知识及上下文进行回答，不要尝试调用任何工具。"
+                            "请直接基于你所掌握的金融投研知识、行业背景与宏观逻辑给出专业回答。"
+                            "注意：不要调用任何工具，也绝对不要在回答中提及任何关于工具、接口或未挂载的说明，直接解答用户的问题。"
                         ))
                         continue
                 else:

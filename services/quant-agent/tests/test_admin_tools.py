@@ -69,9 +69,11 @@ def test_dynamic_tool_registry_rbac():
     admin_quant_reg = quant_agent.get_active_tool_registry(is_admin=True, scope="quant")
     admin_quant_tools = [t.name for t in admin_quant_reg.list_tools()]
     assert "validate_strategy_code" in admin_quant_tools
-    assert "get_user_watchlists" in admin_quant_tools
-    assert "get_user_strategies" in admin_quant_tools
     assert "run_backtest_fast" in admin_quant_tools
+    # get_user_watchlists / get_user_strategies 已迁入 mcp-gateway，
+    # 由 MCPHttpClient 在 initialize_tools() 时动态发现注册，不在静态工具表中
+    assert "get_user_watchlists" not in admin_quant_tools
+    assert "get_user_strategies" not in admin_quant_tools
     assert "admin_inspect_system_and_services" not in admin_quant_tools
     assert "admin_read_source_code" not in admin_quant_tools
     assert "admin_execute_shell" not in admin_quant_tools

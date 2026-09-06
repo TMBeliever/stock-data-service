@@ -4,7 +4,7 @@ import datetime
 import httpx
 from typing import List, Dict, Any, Optional, AsyncGenerator
 
-from agent_core import BaseAgent, BaseTool, ToolRegistry, TokenGovernor, MCPClient, tool
+from agent_core import BaseAgent, BaseTool, ToolRegistry, TokenGovernor, MCPHttpClient, tool
 from ai_core.models import Message, ToolDefinition
 
 from quant_agent.config import agent_config
@@ -104,22 +104,28 @@ class QuantAgent(BaseAgent):
         )
 
         self._tools_initialized = False
-        self._mcp_client = MCPClient(
-            command="uv",
-            args=["run", "python", "mcp_server.py"],
-            cwd=agent_config.STOCK_DATA_DIR,
-            server_name="stock-data-mcp",
-            category="quant"
+        # HTTP MCP 客户端，连接统一 MCP 数据网关（无进程 fork）
+        self._mcp_client = MCPHttpClient(
+            url=agent_config.MCP_GATEWAY_URL,
+            server_name="mcp-gateway",
+            category="quant",
+            # 动态获取当前请求用户 token，配合网关 token 透传
+            token_getter=lambda: current_user_token.get(),
         )
 
         # 超级管理员专属 DevOps 运维工具注册表
         self._admin_tool_registry = get_admin_tool_registry()
 
-        # 注册内部沙箱量化工具
+        # 注册内部沙箱量化工具（直接调用 quant-server，不经过网关）
         self._register_internal_quant_tools()
 
+
     def _register_internal_quant_tools(self):
-        """挂载 quant-server 策略诊断与沙箱极速回测专属工具"""
+        """
+        挂载 quant-server 策略诊断与沙箱极速回测专属工具。
+        注意：行情数据（get_realtime_quote 等）与用户数据（get_user_watchlists / get_user_strategies）
+        已统一迁移至 mcp-gateway，由 MCPHttpClient 动态发现，无需在此内联定义。
+        """
 
         @tool(
             name="validate_strategy_code",
@@ -137,89 +143,6 @@ class QuantAgent(BaseAgent):
                     return json.dumps(resp.json(), ensure_ascii=False)
             except Exception as e:
                 return json.dumps({"is_valid": False, "error": f"Sandbox service unavailable: {str(e)}"}, ensure_ascii=False)
-
-        @tool(
-            name="get_user_watchlists",
-            description="【核心投研数据工具】获取当前用户在平台保存的所有自选股票池与投资组合列表 (User Watchlists)。\n"
-                        "返回各组合名称（如 '稳健组合'、'高股息资产'、'核心资产'）、包含的标的代码列表 (symbols 如 ['510300.SH.ETF', '510500.SH.ETF']) 以及创建时间。\n"
-                        "【重要准则】：当用户提及'我的组合'、'我的自选'、'稳健组合'或要求对特定组合进行回测/分析时，必须立即且优先调用本工具获取真实标的代码，绝对禁止翻看项目源码！",
-            category="quant"
-        )
-        async def get_user_watchlists() -> str:
-            token = current_user_token.get()
-            headers = {"X-Internal-Service": "quant-agent"}
-            if token:
-                headers["Authorization"] = token if token.startswith("Bearer ") else f"Bearer {token}"
-            url = f"{agent_config.COMMON_SERVER_URL}/api/v1/user/watchlists"
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.get(url, headers=headers)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        return json.dumps({
-                            "status": "success",
-                            "total": len(data),
-                            "watchlists": data
-                        }, ensure_ascii=False)
-                    return json.dumps({"status": "failed", "code": resp.status_code, "detail": resp.text}, ensure_ascii=False)
-            except Exception as e:
-                return json.dumps({"status": "error", "error": f"用户组合服务不可用: {str(e)}"}, ensure_ascii=False)
-
-        @tool(
-            name="get_user_strategies",
-            description="【核心策略库工具】获取当前用户个人策略库中保存的自定义量化策略清单与 Python 源码。\n"
-                        "支持按策略名称关键词模糊查询（如 '历史大底'、'双均线'、'网格'）。\n"
-                        "返回匹配策略的名称 (name)、目标标的 (symbol)、策略说明与可直接运行的 Python 源码 (code)。\n"
-                        "【重要准则】：当用户提到'我的策略'、'跑我的历史大底策略'时，必须立即调用本工具获取代码，严禁去文件系统或项目源码库搜索！",
-            category="quant"
-        )
-        async def get_user_strategies(keyword: Optional[str] = None, include_code: bool = False) -> str:
-            token = current_user_token.get()
-            headers = {"X-Internal-Service": "quant-agent"}
-            if token:
-                headers["Authorization"] = token if token.startswith("Bearer ") else f"Bearer {token}"
-            url = f"{agent_config.COMMON_SERVER_URL}/api/v1/user/strategies"
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.get(url, headers=headers)
-                    if resp.status_code == 200:
-                        strategies = resp.json()
-                        if keyword and str(keyword).strip():
-                            kw = str(keyword).strip().lower()
-                            strategies = [
-                                s for s in strategies
-                                if kw in s.get("name", "").lower() or kw in (s.get("description") or "").lower()
-                            ]
-                        
-                        # 智能紧凑投影：如果指定了关键词且匹配数 <= 2，或者只有 1 个策略，或者显式 include_code，返回完整 code
-                        # 如果是无关键词概览且包含多个策略，仅返回元数据列表，避免多套完整源码塞爆模型上下文
-                        should_include_code = include_code or (keyword and len(strategies) <= 2) or (len(strategies) == 1)
-
-                        projected = []
-                        for s in strategies:
-                            item = {
-                                "id": s.get("id"),
-                                "name": s.get("name"),
-                                "symbol": s.get("symbol"),
-                                "description": s.get("description"),
-                            }
-                            if should_include_code:
-                                item["code"] = s.get("code")
-                            else:
-                                item["has_code"] = bool(s.get("code"))
-                            projected.append(item)
-
-                        res_dict = {
-                            "status": "success",
-                            "total": len(projected),
-                            "strategies": projected
-                        }
-                        if not should_include_code and len(strategies) > 1:
-                            res_dict["note"] = "为避免上下文过载，策略代码未全量展开。如需运行某策略，可指定 keyword（如 keyword='历史大底'）精准提取完整代码。"
-                        return json.dumps(res_dict, ensure_ascii=False)
-                    return json.dumps({"status": "failed", "code": resp.status_code, "detail": resp.text}, ensure_ascii=False)
-            except Exception as e:
-                return json.dumps({"status": "error", "error": f"用户策略库服务不可用: {str(e)}"}, ensure_ascii=False)
 
         @tool(
             name="run_backtest_fast",
@@ -283,8 +206,8 @@ class QuantAgent(BaseAgent):
 
         self.tool_registry.register(validate_strategy_code)
         self.tool_registry.register(run_backtest_fast)
-        self.tool_registry.register(get_user_watchlists)
-        self.tool_registry.register(get_user_strategies)
+
+
 
     async def initialize_tools(self, force_refresh: bool = False):
         """动态发现并挂载 stock-data MCP 工具"""

@@ -1,0 +1,22 @@
+[project]
+name = "mcp-gateway"
+version = "0.1.0"
+description = "Unified MCP Gateway: aggregates all upstream service REST APIs into a single MCP HTTP endpoint for quant-agent"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.0.0",
+    "httpx>=0.27.0",
+    "mcp>=2.0.0",
+    "sse-starlette>=2.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_gateway"]

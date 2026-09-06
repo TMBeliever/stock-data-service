@@ -1,6 +1,6 @@
 from agent_core.tool import BaseTool, tool, ToolRegistry
 from agent_core.token_governor import TokenGovernor
-from agent_core.mcp_client import MCPClient
+from agent_core.mcp_client import MCPClient, MCPHttpClient
 from agent_core.base_agent import BaseAgent
 from agent_core.workspace import (
     WorkspaceManager,
@@ -19,6 +19,7 @@ __all__ = [
     "ToolRegistry",
     "TokenGovernor",
     "MCPClient",
+    "MCPHttpClient",
     "WorkspaceManager",
     "Project",
     "ProjectSession",

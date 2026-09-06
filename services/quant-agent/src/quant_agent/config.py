@@ -29,6 +29,9 @@ class AgentConfig(BaseSettings):
     
     # 用户中心与策略库服务地址
     COMMON_SERVER_URL: str = os.getenv("COMMON_SERVER_URL", "http://localhost:8090")
+
+    # 统一 MCP 数据网关地址 (mcp-gateway 服务)
+    MCP_GATEWAY_URL: str = os.getenv("MCP_GATEWAY_URL", "http://localhost:8050/mcp")
     
     # 智能体思考轮数 (0 为无限制，对标 DSH 自然终结模式；>0 为硬性限制)
     MAX_AGENT_STEPS: int = int(os.getenv("QUANT_AGENT_MAX_STEPS", os.getenv("MAX_AGENT_STEPS", "0")))

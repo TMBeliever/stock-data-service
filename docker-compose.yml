@@ -38,6 +38,22 @@ services:
     volumes:
       - common_data_storage:/app/data
 
+  mcp-gateway:
+    build:
+      context: .
+      dockerfile: services/mcp-gateway/Dockerfile
+    container_name: mcp-gateway-service
+    restart: unless-stopped
+    ports:
+      - "8050:8050"
+    environment:
+      - STOCK_DATA_API_URL=http://stock-data:8000
+      - COMMON_SERVER_URL=http://common-server:8090
+      - QUANT_SERVER_URL=http://quant-server:8080
+    depends_on:
+      - stock-data
+      - common-server
+
 volumes:
   stock_data_storage:
   common_data_storage:

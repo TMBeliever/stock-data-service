@@ -23,6 +23,19 @@ def resolve_executable_path(executable: str) -> str:
     if not executable:
         return executable
 
+    exe_name = os.path.basename(executable)
+    # 针对 agy / antigravity，优先选择官方原生二进制程序，杜绝被旧版 node wrapper 拦截
+    if exe_name in ("agy", "antigravity"):
+        preferred = [
+            os.path.expanduser("~/.local/bin/agy"),
+            os.path.expanduser("~/.local/bin/antigravity"),
+            "/usr/local/bin/agy",
+            "/usr/local/bin/antigravity"
+        ]
+        for pref in preferred:
+            if os.path.isfile(pref) and os.access(pref, os.X_OK):
+                return pref
+
     # 1. PATH 中已存在
     which_path = shutil.which(executable)
     if which_path:
@@ -170,7 +183,8 @@ class CLIProcessProvider(BaseAIProvider):
     def _build_command(
         self,
         prompt: str,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        effort: Optional[str] = None
     ) -> tuple[List[str], bool]:
         """
         构建 argv 参数列表：
@@ -200,8 +214,21 @@ class CLIProcessProvider(BaseAIProvider):
             # Google agy 与 Claude CLI 均使用 --dangerously-skip-permissions (严禁传 -y 和 -m)
             if "--dangerously-skip-permissions" not in cmd_args:
                 cmd_args.append("--dangerously-skip-permissions")
-            if model and "--model" not in cmd_args:
-                cmd_args.extend(["--model", model])
+            effective_model = model or "gemini-3.8-flash"
+            if "--model" not in cmd_args:
+                cmd_args.extend(["--model", effective_model])
+
+        # 思考程度参数 (--effort) 处理：必须指定 low, medium, high，严禁传空 ""
+        target_effort = effort
+        if not target_effort or str(target_effort).strip().lower() in ("", "off", "none"):
+            target_effort = "medium"
+        elif str(target_effort).strip().lower() not in ("low", "medium", "high"):
+            target_effort = "medium"
+        else:
+            target_effort = str(target_effort).strip().lower()
+
+        if target_effort and "--effort" not in cmd_args:
+            cmd_args.extend(["--effort", target_effort])
 
         needs_stdin = not has_prompt_placeholder
         return cmd_args, needs_stdin
@@ -258,12 +285,22 @@ class CLIProcessProvider(BaseAIProvider):
         resolved_exe = resolve_executable_path(self.executable)
         exe_lower = os.path.basename(resolved_exe).lower()
 
+        # 解析 effort 参数
+        effort = kwargs.get("effort") or kwargs.get("reasoning_effort") or "medium"
+        if str(effort).strip().lower() in ("", "off", "none"):
+            effort = "medium"
+        elif str(effort).strip().lower() not in ("low", "medium", "high"):
+            effort = "medium"
+        else:
+            effort = str(effort).strip().lower()
+
         # 针对默认 agy / gemini 走独占预热待命池，达到零冷启动
         if ("agy" in exe_lower or "gemini" in exe_lower) and not kwargs.get("args_template"):
             from ai_core.process_pool import prewarmed_process_pool
             worker = await prewarmed_process_pool.acquire_worker(
                 executable=self.executable,
                 model=kwargs.get("model"),
+                effort=effort,
                 env=self._get_env()
             )
             try:
@@ -283,7 +320,8 @@ class CLIProcessProvider(BaseAIProvider):
         # 针对自定义 executable / 测试用例参数模板，走独立子进程
         cmd_args, needs_stdin = self._build_command(
             prompt,
-            model=kwargs.get("model")
+            model=kwargs.get("model"),
+            effort=effort
         )
         stdin_dest = asyncio.subprocess.PIPE if needs_stdin else asyncio.subprocess.DEVNULL
         proc = await asyncio.create_subprocess_exec(
@@ -338,12 +376,22 @@ class CLIProcessProvider(BaseAIProvider):
         resolved_exe = resolve_executable_path(self.executable)
         exe_lower = os.path.basename(resolved_exe).lower()
 
+        # 解析 effort 参数
+        effort = kwargs.get("effort") or kwargs.get("reasoning_effort") or "medium"
+        if str(effort).strip().lower() in ("", "off", "none"):
+            effort = "medium"
+        elif str(effort).strip().lower() not in ("low", "medium", "high"):
+            effort = "medium"
+        else:
+            effort = str(effort).strip().lower()
+
         # 针对默认 agy / gemini 走独占预热待命池，达到零冷启动
         if ("agy" in exe_lower or "gemini" in exe_lower) and not kwargs.get("args_template"):
             from ai_core.process_pool import prewarmed_process_pool
             worker = await prewarmed_process_pool.acquire_worker(
                 executable=self.executable,
                 model=kwargs.get("model"),
+                effort=effort,
                 env=self._get_env()
             )
             try:
@@ -356,7 +404,8 @@ class CLIProcessProvider(BaseAIProvider):
         # 针对自定义 executable / 测试用例参数模板，走独立子进程
         cmd_args, needs_stdin = self._build_command(
             prompt,
-            model=kwargs.get("model")
+            model=kwargs.get("model"),
+            effort=effort
         )
         stdin_dest = asyncio.subprocess.PIPE if needs_stdin else asyncio.subprocess.DEVNULL
         proc = await asyncio.create_subprocess_exec(

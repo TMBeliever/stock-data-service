@@ -81,7 +81,8 @@ class BaseAgent:
         tools: List[ToolDefinition],
         model: Optional[str] = None,
         provider: Optional[str] = None,
-        temperature: Optional[float] = 0.2
+        temperature: Optional[float] = 0.2,
+        reasoning_effort: Optional[str] = "medium"
     ) -> Dict[str, Any]:
         """通过标准 OpenAI 协议 (/v1/chat/completions) 向底层统一 AI 网关发起生成请求"""
         url = f"{self.ai_core_url}/v1/chat/completions"
@@ -114,10 +115,19 @@ class BaseAgent:
                 msg_dict["name"] = m.name
             openai_messages.append(msg_dict)
 
+        effort_val = reasoning_effort or "medium"
+        if str(effort_val).strip().lower() in ("", "off", "none"):
+            effort_val = "medium"
+        elif str(effort_val).strip().lower() not in ("low", "medium", "high"):
+            effort_val = "medium"
+        else:
+            effort_val = str(effort_val).strip().lower()
+
         payload: Dict[str, Any] = {
             "model": model or "agt-gemini-3.8-flash",
             "messages": openai_messages,
             "temperature": temperature if temperature is not None else 0.2,
+            "reasoning_effort": effort_val,
             "stream": False
         }
         if tools:
@@ -271,6 +281,7 @@ class BaseAgent:
         sensitive_tools: Optional[List[str]] = None,
         approved_tool_calls: Optional[List[str]] = None,
         approved_tool_call: Optional[Dict[str, Any]] = None,
+        thinking_level: Optional[str] = "medium",
         max_steps_override: Optional[int] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
@@ -349,7 +360,8 @@ class BaseAgent:
             try:
                 ai_resp = await self._call_llm_generate(
                     messages=history, tools=tools,
-                    model=model, provider=provider, temperature=temperature
+                    model=model, provider=provider, temperature=temperature,
+                    reasoning_effort=thinking_level
                 )
             except Exception as e:
                 err_msg = f"智能体推理异常: {str(e)}"

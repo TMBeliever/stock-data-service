@@ -55,10 +55,17 @@ class PrewarmedProcess:
     在后台提前拉起并加载完 Node 虚拟机与依赖，只等写入 stdin 输入；
     一次性使用（Single-Use），推演结束后彻底杀死，绝不跨请求复用，100% 杜绝串流与状态残留。
     """
-    def __init__(self, proc: asyncio.subprocess.Process, created_at: float, model: Optional[str] = None):
+    def __init__(
+        self,
+        proc: asyncio.subprocess.Process,
+        created_at: float,
+        model: Optional[str] = None,
+        effort: Optional[str] = None
+    ):
         self.proc: asyncio.subprocess.Process = proc
         self.created_at: float = created_at
         self.model: Optional[str] = model
+        self.effort: Optional[str] = effort
         self.leased: bool = False
 
     @property
@@ -222,6 +229,7 @@ class PrewarmedProcessPool:
         self,
         executable: Optional[str] = None,
         model: Optional[str] = None,
+        effort: Optional[str] = None,
         env: Optional[Dict[str, str]] = None
     ) -> PrewarmedProcess:
         """底层拉起一个新的预热待命子进程"""
@@ -240,9 +248,20 @@ class PrewarmedProcessPool:
             # 严禁传 -y 和 -m，且走 stdin 管道通信时严禁传空 prompt ("-p", "")，否则 agy 校验失败直接退出
             cmd_args.append("--dangerously-skip-permissions")
 
-        if model:
-            # agy / gemini / claude 均原生支持 --model 参数 (agy 不支持 -m 缩写)
-            cmd_args.extend(["--model", model])
+        effective_model = model or "gemini-3.8-flash"
+        cmd_args.extend(["--model", effective_model])
+
+        # 思考程度参数 (--effort) 处理：
+        # gemini-3.8-flash 模型架构要求必须显式指定 --effort (low, medium, high)，严禁为空 ""
+        target_effort = effort
+        if not target_effort or str(target_effort).strip().lower() in ("", "off", "none"):
+            target_effort = "medium"
+        elif str(target_effort).strip().lower() not in ("low", "medium", "high"):
+            target_effort = "medium"
+        else:
+            target_effort = str(target_effort).strip().lower()
+
+        cmd_args.extend(["--effort", target_effort])
 
         # 运行在干净隔离的临时工作区目录，杜绝扫描当前代码库与 git
         isolated_cwd = "/tmp/quant_ai_clean_sandbox"
@@ -264,19 +283,36 @@ class PrewarmedProcessPool:
             env=merged_env
         )
 
-        return PrewarmedProcess(proc=proc, created_at=time.time(), model=model)
+        return PrewarmedProcess(proc=proc, created_at=time.time(), model=effective_model, effort=target_effort)
 
-    def _ensure_gentle_fill_task(self, executable: Optional[str] = None, env: Optional[Dict[str, str]] = None):
+    def _ensure_gentle_fill_task(
+        self,
+        executable: Optional[str] = None,
+        model: Optional[str] = None,
+        effort: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None
+    ):
         """确保后台单体温和补位任务正在运行"""
         if self._fill_task is None or self._fill_task.done():
-            self._fill_task = asyncio.create_task(self._gentle_filler_loop(executable=executable, env=env))
+            self._fill_task = asyncio.create_task(
+                self._gentle_filler_loop(executable=executable, model=model, effort=effort, env=env)
+            )
 
-    async def _gentle_filler_loop(self, executable: Optional[str] = None, env: Optional[Dict[str, str]] = None):
+    async def _gentle_filler_loop(
+        self,
+        executable: Optional[str] = None,
+        model: Optional[str] = None,
+        effort: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None
+    ):
         """
         温和启动循环：
         逐个拉起待命进程，每个进程之间休眠 CLI_SPAWN_STAGGER_DELAY 秒 (默认 2 秒)，
         避免瞬间并发拉起 4 个 Node 进程导致 CPU 飙至 100% 打满机器。
         """
+        target_m = model or "gemini-3.8-flash"
+        target_e = effort or "medium"
+
         while self._is_active:
             # 关键：每次拉起待命进程前主动让渡并错峰休眠，保证 CPU 曲线平稳
             try:
@@ -294,11 +330,16 @@ class PrewarmedProcessPool:
                     break
 
             try:
-                worker = await self._spawn_worker(executable=executable, env=env)
+                worker = await self._spawn_worker(
+                    executable=executable,
+                    model=target_m,
+                    effort=target_e,
+                    env=env
+                )
                 try:
                     self._standby_queue.put_nowait(worker)
                     logger.info(
-                        f"[ProcessPool] 温和启动 1 个预热进程 (PID {worker.proc.pid}) 就绪，"
+                        f"[ProcessPool] 温和启动 1 个预热进程 (PID {worker.proc.pid}, model={worker.model}, effort={worker.effort}) 就绪，"
                         f"待命队列: {self._standby_queue.qsize()}/{ai_config.CLI_STANDBY_POOL_SIZE}"
                     )
                 except asyncio.QueueFull:
@@ -312,11 +353,12 @@ class PrewarmedProcessPool:
         self,
         executable: Optional[str] = None,
         model: Optional[str] = None,
+        effort: Optional[str] = None,
         env: Optional[Dict[str, str]] = None
     ) -> PrewarmedProcess:
         """
         原子独占租借 Worker：
-        1. 优先从已就绪待命队列秒级获取 (0ms 延迟，且模型匹配)；
+        1. 优先从已就绪待命队列秒级获取 (0ms 延迟，且模型和思考深度匹配)；
         2. 若队列暂空或模型不匹配，在信号量控制下立即为当前请求拉起 1 个；
         3. 立即激活温和后台协程，以 2 秒间隔错峰补齐其余待命进程。
         """
@@ -324,8 +366,16 @@ class PrewarmedProcessPool:
         self._is_active = True
 
         worker: Optional[PrewarmedProcess] = None
+        req_m = model or "gemini-3.8-flash"
+        req_e = effort or "medium"
+        if str(req_e).strip().lower() in ("", "off", "none"):
+            req_e = "medium"
+        elif str(req_e).strip().lower() not in ("low", "medium", "high"):
+            req_e = "medium"
+        else:
+            req_e = str(req_e).strip().lower()
 
-        # 1. 尝试从待命队列原子取出与所请求 model 匹配且健康的进程
+        # 1. 尝试从待命队列原子取出与所请求 model & effort 匹配且健康的进程
         mismatched: List[PrewarmedProcess] = []
         while not self._standby_queue.empty():
             try:
@@ -334,8 +384,8 @@ class PrewarmedProcessPool:
                     await candidate.terminate()
                     continue
                 cand_m = candidate.model or "gemini-3.8-flash"
-                req_m = model or "gemini-3.8-flash"
-                if cand_m == req_m:
+                cand_e = candidate.effort or "medium"
+                if cand_m == req_m and cand_e == req_e:
                     worker = candidate
                     break
                 else:
@@ -353,14 +403,24 @@ class PrewarmedProcessPool:
         # 2. 队列无可用或无匹配模型，在信号量保护下立即拉起 1 个给当前请求专用
         if worker is None:
             async with self._semaphore:
-                worker = await self._spawn_worker(executable=executable, model=model, env=env)
+                worker = await self._spawn_worker(
+                    executable=executable,
+                    model=req_m,
+                    effort=req_e,
+                    env=env
+                )
 
         worker.leased = True
         async with self._lock:
             self._active_processes.add(worker)
 
         # 3. 激活后台温和错峰补位
-        self._ensure_gentle_fill_task(executable=executable, env=env)
+        self._ensure_gentle_fill_task(
+            executable=executable,
+            model=req_m,
+            effort=req_e,
+            env=env
+        )
         return worker
 
     async def release_worker(self, worker: PrewarmedProcess):
@@ -371,7 +431,10 @@ class PrewarmedProcessPool:
 
         # 归还后确保后台温和补齐待命数
         if self._is_active:
-            self._ensure_gentle_fill_task()
+            self._ensure_gentle_fill_task(
+                model=worker.model,
+                effort=worker.effort
+            )
 
 # 全局单例
 prewarmed_process_pool = PrewarmedProcessPool()

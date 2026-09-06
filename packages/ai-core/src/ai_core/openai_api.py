@@ -69,6 +69,7 @@ class OpenAIChatCompletionRequest(BaseModel):
     stream: Optional[bool] = Field(False, description="是否启用 SSE 流式输出")
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="采样随机度")
     max_tokens: Optional[int] = Field(None, description="最大生成 Token 数")
+    reasoning_effort: Optional[str] = Field(None, description="思考深度 (low, medium, high)")
     tools: Optional[List[Dict[str, Any]]] = Field(None, description="工具函数声明定义列表")
     user: Optional[str] = Field(None, description="调用端用户/会话唯一标识符")
 
@@ -153,6 +154,17 @@ def _resolve_provider_and_kwargs(req: OpenAIChatCompletionRequest) -> tuple[str,
         extra_kwargs["temperature"] = req.temperature
 
     provider_type, target_model = resolve_agt_model(model_name)
+    effort_val = req.reasoning_effort or "medium"
+    if str(effort_val).strip().lower() in ("", "off", "none"):
+        effort_val = "medium"
+    elif str(effort_val).strip().lower() not in ("low", "medium", "high"):
+        effort_val = "medium"
+    else:
+        effort_val = str(effort_val).strip().lower()
+
+    extra_kwargs["effort"] = effort_val
+    extra_kwargs["reasoning_effort"] = effort_val
+
     if provider_type == "cli":
         extra_kwargs["executable"] = "agy"
         extra_kwargs["model"] = target_model

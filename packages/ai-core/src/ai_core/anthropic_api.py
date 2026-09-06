@@ -87,6 +87,8 @@ def _resolve_provider_and_kwargs(req: AnthropicMessagesRequest) -> tuple[str, Di
         extra_kwargs["temperature"] = req.temperature
 
     provider_type, target_model = resolve_agt_model(model_name)
+    extra_kwargs["effort"] = "medium"
+    extra_kwargs["reasoning_effort"] = "medium"
     if provider_type == "cli":
         extra_kwargs["executable"] = "agy"
         extra_kwargs["model"] = target_model

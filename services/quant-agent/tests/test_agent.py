@@ -1,6 +1,15 @@
+import sys
+from pathlib import Path
 import pytest
 from httpx import AsyncClient, ASGITransport
 from quant_agent.main import app
+
+# 动态确保当前测试目录在 sys.path 中，支持根目录与子目录各种 pytest 运行方式
+TESTS_DIR = Path(__file__).resolve().parent
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
+
+from test_admin_tools import create_test_token
 
 @pytest.mark.asyncio
 async def test_health():
@@ -33,7 +42,6 @@ async def test_list_tools():
 @pytest.mark.asyncio
 async def test_mcp_servers_separated_listing():
     """验证 MCP 服务器分离列表返回：普通用户仅见 stock/user/other，超管额外可见系统级运维工具"""
-    from test_admin_tools import create_test_token
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         # 1. 普通用户请求
@@ -66,7 +74,6 @@ async def test_mcp_servers_separated_listing():
 @pytest.mark.asyncio
 async def test_mcp_servers_toggle_rbac():
     """验证 MCP 开关权限：普通用户可自主切换 stock / user；超管可控制系统级运维工具；越权时拒绝"""
-    from test_admin_tools import create_test_token
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         user_token = create_test_token(role="user", username="trader_bob")
@@ -116,7 +123,6 @@ async def test_mcp_servers_toggle_rbac():
 @pytest.mark.asyncio
 async def test_individual_tool_toggle():
     """验证单个具体工具的精细化开关：支持开启/关闭具体工具能力，验证返回与持久化生效"""
-    from test_admin_tools import create_test_token
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         user_token = create_test_token(role="user", username="trader_bob")

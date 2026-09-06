@@ -146,6 +146,33 @@ export interface AiChatMessage {
   codeBlock?: string
 }
 
+export interface GridOptimizationRankingItem {
+  combo_id: number
+  params: Record<string, any>
+  total_return?: number
+  annualized_return?: number
+  max_drawdown?: number
+  sharpe_ratio?: number
+  sortino_ratio?: number
+  calmar_ratio?: number
+  win_rate?: number
+  profit_factor?: number
+  total_trades?: number
+  status: 'success' | 'error'
+  error?: string
+}
+
+export interface GridOptimizationResult {
+  status: string
+  total_combinations: number
+  executed_combinations: number
+  metric: string
+  elapsed_ms: number
+  best_params: Record<string, any>
+  best_result: GridOptimizationRankingItem | null
+  ranking: GridOptimizationRankingItem[]
+}
+
 // 4 套标准经典策略（直接内置在用户的初始策略库中）
 export const DEFAULT_INITIAL_STRATEGIES: UserStrategyItem[] = [
   {
@@ -162,18 +189,24 @@ from quant_core.core.models import Bar
 class DualMAStrategy(BaseStrategy):
     """
     经典双均线交叉策略 (Dual Moving Average Cross - QuantCore 2.0 极简范式)：
-    - MA(5) 上穿 MA(20) 金叉：以 80% 目标仓位买入建仓；
-    - MA(5) 下穿 MA(20) 死叉：全部平仓落袋为安。
+    - 快线上穿慢线金叉：以目标仓位买入建仓；
+    - 快线下穿慢线死叉：全部平仓落袋为安。
     """
-    def __init__(self, fast_period: int = 5, slow_period: int = 20):
-        super().__init__(name="DualMA", params={"fast": fast_period, "slow": slow_period})
+    def __init__(
+        self,
+        fast_period: int = 5,          # @param label="快线周期(MA)" min=2 max=30 step=1 unit="天" group="buy"
+        slow_period: int = 20,         # @param label="慢线周期(MA)" min=10 max=120 step=5 unit="天" group="buy"
+        target_percent: float = 0.80,  # @param label="金叉开仓目标仓位" min=0.2 max=1.0 step=0.05 unit="%" group="capital"
+    ):
+        super().__init__(name="DualMA", params={"fast": fast_period, "slow": slow_period, "target": target_percent})
         self.fast = fast_period
         self.slow = slow_period
+        self.target_percent = target_percent
 
     def on_bar(self, bar: Bar):
         # 1. 均线金叉开仓 (Golden Cross)
         if self.cross_over(self.fast, self.slow) and not self.position:
-            self.order_target_percent(0.8, reason="金叉开仓")
+            self.order_target_percent(self.target_percent, reason="金叉开仓")
 
         # 2. 均线死叉平仓 (Death Cross)
         elif self.cross_under(self.fast, self.slow) and self.position:
@@ -194,14 +227,26 @@ from quant_core.core.models import Bar
 class SmartDividendDCAStrategy(BaseStrategy):
     """
     智能估值分位数定投策略 (QuantCore 2.0 极简范式)：
-    - 利用 bar.percentile(250) 计算价格历史分位数；
-    - 分位数 <= 20% (bar.is_undervalued): 加码 2.0 倍基准金额买入；
-    - 分位数 >= 80% (bar.is_overvalued): 减仓 20% 主动止盈防回撤。
+    - 利用 bar.percentile(window) 计算价格历史估值分位数；
+    - 低于低估阈值时加倍定投抄底；
+    - 超过高估阈值时主动分批止盈防范回撤。
     """
-    def __init__(self, base_amount: float = 2000.0, window: int = 250):
+    def __init__(
+        self,
+        base_amount: float = 2000.0,        # @param label="每期基准定投金额" min=500 max=10000 step=500 unit="元" group="capital"
+        window: int = 250,                  # @param label="历史分位数回溯窗口" min=60 max=500 step=10 unit="天" group="general"
+        buy_undervalue_pct: float = 0.20,   # @param label="极度低估买入阈值" min=0.05 max=0.40 step=0.05 unit="%" group="buy"
+        undervalue_multiplier: float = 2.0, # @param label="低估加倍定投系数" min=1.0 max=4.0 step=0.5 unit="倍" group="buy"
+        sell_overvalue_pct: float = 0.80,   # @param label="严重高估止盈阈值" min=0.60 max=0.95 step=0.05 unit="%" group="sell"
+        take_profit_ratio: float = 0.20,    # @param label="高估止盈减仓比例" min=0.10 max=0.50 step=0.05 unit="%" group="sell"
+    ):
         super().__init__(name="SmartDCA", params={"base_amount": base_amount, "window": window})
         self.base_amount = base_amount
         self.window = window
+        self.buy_undervalue_pct = buy_undervalue_pct
+        self.undervalue_multiplier = undervalue_multiplier
+        self.sell_overvalue_pct = sell_overvalue_pct
+        self.take_profit_ratio = take_profit_ratio
         self.last_dates = {}
         self.symbol_days = {}
 
@@ -220,8 +265,8 @@ class SmartDividendDCAStrategy(BaseStrategy):
         pct = bar.percentile(self.window)
 
         # 1. 极度低估: 加倍定投抄底
-        if bar.is_undervalued and self.cash >= self.base_amount * 2:
-            qty = int((self.base_amount * 2.0) / bar.close // 100) * 100
+        if pct <= self.buy_undervalue_pct and self.cash >= self.base_amount * self.undervalue_multiplier:
+            qty = int((self.base_amount * self.undervalue_multiplier) / bar.close // 100) * 100
             if qty > 0:
                 self.buy(qty, reason=f"低估加倍定投(分位{pct:.1%})")
 
@@ -231,9 +276,9 @@ class SmartDividendDCAStrategy(BaseStrategy):
             if qty > 0:
                 self.buy(qty, reason=f"合理估值定投(分位{pct:.1%})")
 
-        # 3. 严重高估泡沫: 主动止盈 20%
-        elif bar.is_overvalued and self.position.available_quantity >= 500:
-            sell_qty = min(self.position.available_quantity, int(self.position.available_quantity * 0.2 // 100) * 100)
+        # 3. 严重高估泡沫: 主动止盈
+        elif pct >= self.sell_overvalue_pct and self.position.available_quantity >= 500:
+            sell_qty = min(self.position.available_quantity, int(self.position.available_quantity * self.take_profit_ratio // 100) * 100)
             if sell_qty > 0:
                 self.sell(sell_qty, reason=f"高估主动止盈(分位{pct:.1%})")
 `
@@ -252,20 +297,26 @@ from quant_core.core.models import Bar
 class GridTradingStrategy(BaseStrategy):
     """
     动态自适应网格策略 (QuantCore 2.0 极简范式)：
-    - 初始建立 40% 底仓；
-    - 价格下跌超 2.5% 触及网格下轨低吸加仓；
-    - 价格上涨超 2.5% 触及网格上轨高抛止盈。
+    - 初始建立底仓；
+    - 价格下跌触及网格下轨低吸加仓；
+    - 价格上涨触及网格上轨高抛止盈。
     """
-    def __init__(self, step_pct: float = 0.025, base_shares: int = 1000):
+    def __init__(
+        self,
+        step_pct: float = 0.025,       # @param label="网格间距比例" min=0.01 max=0.08 step=0.005 unit="%" group="general"
+        base_shares: int = 1000,       # @param label="单格交易股数" min=100 max=5000 step=100 unit="股" group="capital"
+        initial_ratio: float = 0.40,   # @param label="初始建底仓比例" min=0.10 max=0.80 step=0.05 unit="%" group="capital"
+    ):
         super().__init__(name="GridTrading", params={"step": step_pct, "shares": base_shares})
         self.step_pct = step_pct
         self.base_shares = base_shares
+        self.initial_ratio = initial_ratio
         self.last_trade_price = 0.0
 
     def on_bar(self, bar: Bar):
         # 1. 初始建底仓
         if self.last_trade_price == 0.0:
-            self.order_target_percent(0.4, reason="网格初始化底仓")
+            self.order_target_percent(self.initial_ratio, reason="网格初始化底仓")
             self.last_trade_price = bar.close
             return
 
@@ -442,8 +493,17 @@ export const useStrategyStore = defineStore('strategy', () => {
   const symbol = ref(DEFAULT_INITIAL_STRATEGIES[0].symbol)
   const symbols = ref<string[]>([DEFAULT_INITIAL_STRATEGIES[0].symbol])
   const benchmark = ref('510300.SH.ETF')
-  const startDate = ref('2023-01-01')
-  const endDate = ref('')
+  function getPast1YearRange() {
+    const end = new Date()
+    const todayStr = end.toISOString().split('T')[0]
+    const start = new Date()
+    start.setFullYear(start.getFullYear() - 1)
+    const startStr = start.toISOString().split('T')[0]
+    return { startStr, todayStr }
+  }
+  const defaultDates = getPast1YearRange()
+  const startDate = ref(defaultDates.startStr)
+  const endDate = ref(defaultDates.todayStr)
   const initialCash = ref(100000)
 
   // 悬浮回测工作舱 (Floating Backtest Cockpit) 几何尺寸与状态
@@ -662,9 +722,15 @@ export const useStrategyStore = defineStore('strategy', () => {
   const isBacktesting = ref(false)
   const backtestError = ref<string | null>(null)
   const backtestResult = ref<BacktestResultData | null>(null)
+  const previousBacktestResult = ref<BacktestResultData | null>(null)
   const userBacktests = ref<UserBacktestItem[]>([])
   const isSavingBacktest = ref(false)
   const userBacktestsLoading = ref(false)
+
+  // 4.5. 一键网格寻优状态
+  const isOptimizing = ref(false)
+  const optimizationResult = ref<GridOptimizationResult | null>(null)
+  const optimizationError = ref<string | null>(null)
 
   // 5. AI Copilot 对话状态
   const aiModel = ref<'minimax/minimax-m3:free' | 'gemini-flash-lite-latest' | 'claude'>('minimax/minimax-m3:free')
@@ -946,6 +1012,9 @@ class MyCustomStrategy(BaseStrategy):
         throw new Error(data.detail || '回测执行失败')
       }
 
+      if (backtestResult.value) {
+        previousBacktestResult.value = backtestResult.value
+      }
       backtestResult.value = data
     } catch (err: any) {
       backtestError.value = err.message || '回测服务通信异常'
@@ -953,6 +1022,10 @@ class MyCustomStrategy(BaseStrategy):
     } finally {
       isBacktesting.value = false
     }
+  }
+
+  function clearPreviousBacktest() {
+    previousBacktestResult.value = null
   }
 
   // 极速试跑预检 (以最小日期区间 ~30 根 Bar 极速验证策略可运行性与语法)
@@ -993,6 +1066,61 @@ class MyCustomStrategy(BaseStrategy):
         success: false,
         error: err.message || '试跑通信异常',
       }
+    }
+  }
+
+  // 一键网格寻优 (Grid Optimization)
+  async function runGridOptimization(payload: {
+    param_grid: Record<string, any[]>
+    metric?: string
+    max_combinations?: number
+    customCode?: string
+    customSymbol?: string
+  }): Promise<{ success: boolean; data?: GridOptimizationResult; error?: string }> {
+    const targetCode = (payload.customCode || code.value).trim()
+    const targetSymbol = (payload.customSymbol || symbol.value || '510300.SH.ETF').trim()
+    const targetSymbols = symbols.value && symbols.value.length > 0 ? symbols.value : [targetSymbol]
+
+    if (!targetCode) {
+      return { success: false, error: '策略代码不能为空' }
+    }
+    if (!payload.param_grid || Object.keys(payload.param_grid).length === 0) {
+      return { success: false, error: '寻优网格参数不能为空' }
+    }
+
+    isOptimizing.value = true
+    optimizationError.value = null
+
+    try {
+      const resp = await fetch('/api/v1/backtest/grid-optimize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: targetSymbols[0],
+          symbols: targetSymbols,
+          code: targetCode,
+          start: startDate.value,
+          end: endDate.value || null,
+          initial_cash: initialCash.value,
+          param_grid: payload.param_grid,
+          metric: payload.metric || 'sharpe_ratio',
+          max_combinations: payload.max_combinations || 64,
+        }),
+      })
+
+      const data = await resp.json()
+      if (!resp.ok) {
+        throw new Error(data.detail || '网格寻优执行失败')
+      }
+
+      optimizationResult.value = data
+      return { success: true, data }
+    } catch (err: any) {
+      const errMsg = err.message || '网格寻优通信异常'
+      optimizationError.value = errMsg
+      return { success: false, error: errMsg }
+    } finally {
+      isOptimizing.value = false
     }
   }
 
@@ -1425,6 +1553,8 @@ class MyStrategy(BaseStrategy):
     isBacktesting,
     backtestError,
     backtestResult,
+    previousBacktestResult,
+    clearPreviousBacktest,
     aiModel,
     isAiStreaming,
     aiMessages,
@@ -1450,6 +1580,10 @@ class MyStrategy(BaseStrategy):
     applyHoldingsToBacktest,
     runBacktest,
     dryRunStrategy,
+    isOptimizing,
+    optimizationResult,
+    optimizationError,
+    runGridOptimization,
     askAiToFixStrategy,
     sendAiMessage,
     extractPythonCode,

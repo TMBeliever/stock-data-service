@@ -1,4 +1,6 @@
 import datetime
+import itertools
+import time
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -295,4 +297,153 @@ def run_custom_backtest_endpoint(req: CustomBacktestRequest):
         "benchmark_symbol": benchmark_sym,
         "warnings": result.warnings,
     }
+
+
+class GridOptimizeRequest(BaseModel):
+    code: str = Field(..., description="用户自定义 Python 策略源码")
+    symbol: Optional[str] = Field(default=None, description="回测标的代码 (单标的)")
+    symbols: Optional[List[str]] = Field(default=None, description="回测标的列表 (多标的)")
+    start: str = Field(default="2021-01-01", description="开始日期 YYYY-MM-DD")
+    end: Optional[str] = Field(default=None, description="结束日期 YYYY-MM-DD (留空为最新日)")
+    initial_cash: float = Field(default=100_000.0, description="初始资金 (CNY)")
+    param_grid: Dict[str, List[Any]] = Field(..., description="参数候选网格字典, 如 {'fast_period': [5, 10], 'slow_period': [20, 30]}")
+    metric: Optional[str] = Field(default="sharpe_ratio", description="优化排序目标指标: sharpe_ratio | total_return | calmar_ratio | win_rate")
+    max_combinations: Optional[int] = Field(default=64, description="最大允许执行的组合数上限")
+
+
+@router.post("/backtest/grid-optimize")
+def grid_optimize_endpoint(req: GridOptimizeRequest):
+    """一键参数网格寻优接口: 单次加载行情并在内存中极速跑笛卡尔积测试，返回指标排行榜"""
+    from quant_server.api.sandbox import StrategyCodeSandbox, SecurityCheckError
+    import traceback
+
+    t0 = time.perf_counter()
+
+    # 1. 语法树审计与策略类动态加载
+    try:
+        strategy_cls = StrategyCodeSandbox.load_strategy_class(req.code)
+    except SecurityCheckError as e:
+        raise HTTPException(status_code=400, detail=f"安全策略拦截: {str(e)}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"代码结构错误: {str(e)}")
+    except Exception as e:
+        tb = traceback.format_exc()
+        raise HTTPException(status_code=400, detail=f"策略编译失败: {str(e)}\n\n{tb}")
+
+    # 2. 生成笛卡尔积参数列表
+    if not req.param_grid:
+        raise HTTPException(status_code=400, detail="param_grid 不能为空")
+
+    param_keys = list(req.param_grid.keys())
+    value_lists = [req.param_grid[k] for k in param_keys]
+
+    all_combos = []
+    for prod in itertools.product(*value_lists):
+        combo = dict(zip(param_keys, prod))
+        all_combos.append(combo)
+
+    total_candidates = len(all_combos)
+    if total_candidates == 0:
+        raise HTTPException(status_code=400, detail="未生成有效的参数组合")
+
+    max_limit = min(req.max_combinations or 64, 100)
+    combos_to_run = all_combos[:max_limit]
+
+    # 3. 解析与获取标的行情 (单次内存加载)
+    def normalize_symbol(raw: str) -> str:
+        s = raw.strip().upper()
+        if s.endswith(".BOND"):
+            s = s[:-5] + ".ETF"
+        if s.isdigit() and len(s) == 6:
+            if s.startswith("5") or s.startswith("6"):
+                s = f"{s}.SH.ETF" if s.startswith("5") else f"{s}.SH.STK"
+            elif s.startswith("0") or s.startswith("3") or s.startswith("1"):
+                s = f"{s}.SZ.ETF" if s.startswith("1") else f"{s}.SZ.STK"
+        return s
+
+    input_symbols = req.symbols if (req.symbols and len(req.symbols) > 0) else ([req.symbol] if req.symbol else ["510300.SH.ETF"])
+    target_symbols: List[str] = []
+    seen = set()
+    for s in input_symbols:
+        if not s or not s.strip():
+            continue
+        cleaned = normalize_symbol(s)
+        if cleaned not in seen:
+            target_symbols.append(cleaned)
+            seen.add(cleaned)
+
+    if not target_symbols:
+        target_symbols = ["510300.SH.ETF"]
+
+    bars_map: Dict[str, List[Bar]] = {}
+    for sym in target_symbols:
+        bars = data_client.get_bars(symbol=sym, period="1d", start=req.start, end=req.end, adjust="qfq")
+        if bars and len(bars) > 0:
+            bars_map[sym] = bars
+
+    if not bars_map:
+        raise HTTPException(status_code=404, detail=f"未能获取到标的行情数据 ({', '.join(target_symbols)})")
+
+    # 4. 循环极速运行回测引擎
+    results = []
+    for idx, combo in enumerate(combos_to_run):
+        try:
+            strat = StrategyCodeSandbox.instantiate_strategy(strategy_cls, kwargs_override=combo)
+            broker = SimulatedBroker(
+                slippage_pct=0.0005,
+                commission_rate=0.00008,
+                min_commission=0.0,
+                stamp_tax_rate=0.0,
+                t_plus_one=True
+            )
+            engine = BacktestEngine(strategy=strat, broker=broker, initial_cash=req.initial_cash)
+            res = engine.run(bars_map)
+
+            results.append({
+                "combo_id": idx + 1,
+                "params": combo,
+                "total_return": res.total_return,
+                "annualized_return": res.annualized_return,
+                "max_drawdown": res.max_drawdown,
+                "sharpe_ratio": res.sharpe_ratio,
+                "sortino_ratio": res.sortino_ratio,
+                "calmar_ratio": res.calmar_ratio,
+                "win_rate": res.win_rate,
+                "profit_factor": res.profit_factor,
+                "total_trades": res.total_trades,
+                "status": "success",
+            })
+        except Exception as e:
+            results.append({
+                "combo_id": idx + 1,
+                "params": combo,
+                "status": "error",
+                "error": str(e)
+            })
+
+    # 5. 排序评选最优
+    metric_key = req.metric if req.metric in ["sharpe_ratio", "total_return", "annualized_return", "calmar_ratio", "win_rate"] else "sharpe_ratio"
+
+    def sort_score(item: Dict[str, Any]) -> float:
+        if item.get("status") != "success":
+            return -999999.0
+        val = item.get(metric_key, 0.0)
+        return float(val) if val is not None else -999999.0
+
+    results.sort(key=sort_score, reverse=True)
+
+    elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    best_item = next((r for r in results if r.get("status") == "success"), None)
+
+    return {
+        "status": "success",
+        "total_combinations": total_candidates,
+        "executed_combinations": len(results),
+        "metric": metric_key,
+        "elapsed_ms": elapsed_ms,
+        "best_params": best_item["params"] if best_item else {},
+        "best_result": best_item,
+        "ranking": results,
+    }
+
 

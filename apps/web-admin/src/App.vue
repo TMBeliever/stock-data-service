@@ -4,7 +4,6 @@ import TopCapsuleNav from '@/components/TopCapsuleNav.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
 import AuthModal from '@/components/AuthModal.vue'
 import GlobalFloatingAiAssistant from '@/components/GlobalFloatingAiAssistant.vue'
-import GlobalFloatingBacktestCockpit from '@/components/strategy/GlobalFloatingBacktestCockpit.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAiStore } from '@/stores/ai'
 
@@ -89,9 +88,6 @@ onUnmounted(() => {
 
     <!-- 6. 全局悬浮可拖拽与缩放 AI 助手 (⌘+J) -->
     <GlobalFloatingAiAssistant />
-
-    <!-- 7. 全局极客悬浮量化回测工作舱 (⌘+B) -->
-    <GlobalFloatingBacktestCockpit />
   </div>
 </template>
 

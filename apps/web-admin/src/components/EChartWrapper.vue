@@ -46,20 +46,18 @@ watch(
       return
     }
     if (chartInstance && newOpt && Object.keys(newOpt).length > 0) {
-      chartInstance.clear()
       chartInstance.setOption(
         {
           backgroundColor: 'transparent',
           ...newOpt,
         },
-        true
+        { notMerge: true, lazyUpdate: true }
       )
       requestAnimationFrame(() => {
         chartInstance?.resize()
       })
     }
-  },
-  { deep: true }
+  }
 )
 
 watch(
@@ -102,6 +100,11 @@ onUnmounted(() => {
   }
   chartInstance?.dispose()
   chartInstance = null
+})
+
+defineExpose({
+  getChart: () => chartInstance,
+  resize: onResize,
 })
 </script>
 

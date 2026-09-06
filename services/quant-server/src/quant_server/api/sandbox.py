@@ -194,16 +194,30 @@ class StrategyCodeSandbox:
         return candidate_cls
 
     @classmethod
-    def instantiate_strategy(cls, strategy_cls: Type[BaseStrategy]) -> BaseStrategy:
+    def instantiate_strategy(cls, strategy_cls: Type[BaseStrategy], kwargs_override: Optional[Dict[str, Any]] = None) -> BaseStrategy:
         """
         智能容错实例化策略类：
+        支持传入 kwargs_override 覆盖默认参数（用于调参台与网格寻优）。
         若策略类的 __init__ 包含未设置默认值的必须参数（如 AI 漏写默认实参），
         自动通过 inspect.signature 探测参数名与注解，智能注入合理默认值，确保 100% 成功实例化。
         """
         import inspect
+        override = kwargs_override or {}
         instance: Optional[BaseStrategy] = None
         try:
-            instance = strategy_cls()
+            if override:
+                sig = inspect.signature(strategy_cls.__init__)
+                valid_kwargs = {}
+                for name, p in sig.parameters.items():
+                    if name in ("self", "args", "kwargs"):
+                        continue
+                    if name in override:
+                        valid_kwargs[name] = override[name]
+                    elif p.default != inspect.Parameter.empty:
+                        valid_kwargs[name] = p.default
+                instance = strategy_cls(**valid_kwargs)
+            else:
+                instance = strategy_cls()
         except TypeError as err:
             try:
                 sig = inspect.signature(strategy_cls.__init__)

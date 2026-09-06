@@ -9,6 +9,23 @@ import { useStrategyStore, type UserStrategyItem } from '@/stores/strategy'
 import { useAuthStore } from '@/stores/auth'
 import { useAiStore } from '@/stores/ai'
 import { copyToClipboard } from '@/utils/clipboard'
+import StrategyParamDeck from './StrategyParamDeck.vue'
+
+const currentView = ref<'params' | 'code'>('params')
+
+const props = withDefaults(
+  defineProps<{
+    isDrawerOpen?: boolean
+  }>(),
+  {
+    isDrawerOpen: false,
+  }
+)
+
+const emit = defineEmits<{
+  (e: 'toggleDrawer'): void
+  (e: 'openDrawerAndRun'): void
+}>()
 
 const strategyStore = useStrategyStore()
 const authStore = useAuthStore()
@@ -490,11 +507,11 @@ async function handleDeleteUserStrategy(strat: UserStrategyItem, e: Event) {
   }
 }
 
-// 键盘快捷键监听 (⌘+Enter 运行回测并唤起工作舱, ⌘+S 保存策略)
+// 键盘快捷键监听 (⌘+Enter 自动滑出抽屉并运行回测, ⌘+S 保存策略)
 function handleKeyDown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
     e.preventDefault()
-    strategyStore.openBacktestCockpit({ autoRun: true })
+    emit('openDrawerAndRun')
   } else if ((e.metaKey || e.ctrlKey) && e.key === 's') {
     e.preventDefault()
     openSaveModal()
@@ -531,41 +548,40 @@ onUnmounted(() => {
       {{ insertToast }}
     </div>
 
-    <!-- 1. 顶部操作栏 -->
-    <div class="px-4 py-3 border-b border-white/[0.08] bg-white/[0.02] flex flex-wrap items-center justify-between gap-2 shrink-0">
-      <!-- 左侧：策略名称、我的策略库下拉与新建策略 -->
-      <div class="flex items-center space-x-2">
+    <!-- 1. 顶部单行紧凑操作栏 (高度固定 42px，绝不折行) -->
+    <div class="h-11 px-3 border-b border-white/[0.08] bg-white/[0.02] flex items-center justify-between gap-2 shrink-0">
+      <!-- 左侧：策略名称、我的策略库、保存策略 -->
+      <div class="flex items-center space-x-1.5 min-w-0">
         <!-- 策略名称徽标 -->
-        <div class="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] text-xs font-mono text-zinc-300">
-          <span class="text-amber-400">🐍</span>
-          <span class="font-semibold text-white truncate max-w-[150px] sm:max-w-[200px]">
+        <div class="flex items-center space-x-1.5 px-2 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] text-xs font-mono text-zinc-300 min-w-0">
+          <span class="text-amber-400 shrink-0">🐍</span>
+          <span class="font-semibold text-white truncate max-w-[120px] sm:max-w-[160px]">
             {{ strategyStore.activeStrategyName }}
           </span>
           <span
             v-if="strategyStore.activeStrategyId && strategyStore.activeStrategyId > 0"
-            class="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/20 text-emerald-400 font-sans"
+            class="px-1 py-0.2 rounded text-[9px] bg-emerald-500/20 text-emerald-400 font-sans shrink-0 hidden sm:inline"
           >
-            云端已同步
+            云端
           </span>
           <span
             v-else
-            class="px-1.5 py-0.2 rounded text-[9px] bg-amber-500/20 text-amber-400 font-sans"
+            class="px-1 py-0.2 rounded text-[9px] bg-amber-500/20 text-amber-400 font-sans shrink-0 hidden sm:inline"
           >
-            本地草稿
+            草稿
           </span>
         </div>
 
-        <!-- 我的云端策略库下拉按钮 -->
-        <div class="relative">
+        <!-- 我的云端策略库下拉 -->
+        <div class="relative shrink-0">
           <button
             @click="showMyStrategies = !showMyStrategies"
-            class="px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-xs text-zinc-300 hover:text-white transition-all flex items-center space-x-1.5 cursor-pointer"
+            class="px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-xs text-zinc-300 hover:text-white transition-all flex items-center space-x-1 cursor-pointer"
+            title="查看与切换已保存策略"
           >
             <span>📂</span>
-            <span>我的策略库</span>
-            <span
-              class="px-1.5 py-0.2 rounded-full bg-red-500/20 text-red-400 text-[10px] font-bold font-mono"
-            >
+            <span class="hidden md:inline">策略库</span>
+            <span class="px-1.5 py-0.2 rounded-full bg-red-500/20 text-red-400 text-[10px] font-bold font-mono">
               {{ strategyStore.userStrategies.length }}
             </span>
           </button>
@@ -573,7 +589,7 @@ onUnmounted(() => {
           <!-- 策略库下拉浮层 -->
           <div
             v-if="showMyStrategies"
-            class="absolute top-9 left-0 z-40 w-80 bg-[#18191e] border border-white/[0.12] rounded-xl shadow-2xl p-2.5 space-y-2 animate-fadeIn"
+            class="absolute top-9 left-0 z-50 w-80 bg-[#18191e] border border-white/[0.12] rounded-xl shadow-2xl p-2.5 space-y-2 animate-fadeIn"
           >
             <div class="flex items-center justify-between px-1 pb-1.5 border-b border-white/[0.06] text-xs">
               <span class="font-bold text-white">个人专属策略库</span>
@@ -644,84 +660,123 @@ onUnmounted(() => {
         <button
           @click="openSaveModal"
           :disabled="strategyStore.isSavingStrategy"
-          class="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-xs text-zinc-200 hover:text-white transition-all flex items-center space-x-1 cursor-pointer"
+          class="px-2 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-xs text-zinc-200 hover:text-white transition-all flex items-center space-x-1 cursor-pointer shrink-0"
+          title="保存策略 (⌘+S)"
         >
           <span>💾</span>
-          <span>{{ strategyStore.isSavingStrategy ? '保存中...' : '保存策略' }}</span>
+          <span class="hidden sm:inline">{{ strategyStore.isSavingStrategy ? '保存中...' : '保存' }}</span>
         </button>
+
+        <!-- 视图书签切换: 🎛️ 调参台 ↔ 💻 源码 -->
+        <div class="flex items-center p-0.5 rounded-lg bg-black/40 border border-white/[0.1] shrink-0 ml-1">
+          <button
+            @click="currentView = 'params'"
+            :class="[
+              'px-2 py-0.5 rounded-md text-xs transition-all flex items-center space-x-1 cursor-pointer font-medium',
+              currentView === 'params'
+                ? 'bg-amber-500/30 text-amber-300 border border-amber-500/40 shadow-sm font-semibold'
+                : 'text-zinc-400 hover:text-zinc-200',
+            ]"
+            title="可视化调参台视图 (包含一键参数寻优)"
+          >
+            <span>🎛️</span>
+            <span class="hidden sm:inline">调参台</span>
+          </button>
+          <button
+            @click="currentView = 'code'"
+            :class="[
+              'px-2 py-0.5 rounded-md text-xs transition-all flex items-center space-x-1 cursor-pointer font-medium',
+              currentView === 'code'
+                ? 'bg-white/10 text-white border border-white/20 shadow-sm font-semibold'
+                : 'text-zinc-400 hover:text-zinc-200',
+            ]"
+            title="查看与编辑 Python 策略源码"
+          >
+            <span>💻</span>
+            <span class="hidden sm:inline">源码</span>
+          </button>
+        </div>
       </div>
 
-      <!-- 右侧：AI 助手、API 速查、代码操作与运行回测 -->
-      <div class="flex items-center space-x-2">
-        <!-- ✨ AI 助手唤醒按钮 -->
+      <!-- 右侧：紧凑工具与运行主按钮 -->
+      <div class="flex items-center space-x-1.5 shrink-0">
+        <!-- AI 助手 -->
         <button
           @click="aiStore.toggleOpen()"
-          :class="aiStore.isOpen ? 'bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border-amber-500/40 shadow-sm' : 'bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border-white/[0.08]'"
-          class="px-2.5 py-1 rounded-lg border text-xs transition-all flex items-center space-x-1.5 cursor-pointer group"
-          title="唤出全站 AI 策略助手 (⌘+L)"
+          :class="aiStore.isOpen ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border-white/[0.08]'"
+          class="px-2 py-1 rounded-lg border text-xs transition-all flex items-center space-x-1 cursor-pointer"
+          title="唤出 AI 助手 (⌘+L)"
         >
           <span>✨</span>
-          <span>AI 助手</span>
-          <span class="text-[10px] text-zinc-500 font-mono hidden md:inline">⌘L</span>
+          <span class="hidden xl:inline">AI助手</span>
         </button>
 
-        <!-- 常用 API 片段速查表按钮 -->
+        <!-- API 速查 -->
         <button
           @click="showCheatSheet = true"
-          class="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 transition-all text-xs flex items-center space-x-1 cursor-pointer"
+          class="px-2 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs flex items-center space-x-1 cursor-pointer"
+          title="查看内置 Quant API 语法片段"
         >
           <span>📖</span>
-          <span class="hidden sm:inline">API 速查</span>
+          <span class="hidden xl:inline">API</span>
         </button>
 
-        <!-- 悬浮量化回测工作舱快捷开关 -->
+        <!-- 回测抽屉快捷开关 (滑出 / 收起) -->
         <button
-          @click="strategyStore.toggleBacktestCockpit()"
-          :class="strategyStore.isBacktestCockpitOpen ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm' : 'bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border-white/[0.08]'"
+          @click="emit('toggleDrawer')"
+          :class="isDrawerOpen ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm' : 'bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border-white/[0.08]'"
           class="px-2.5 py-1 rounded-lg border text-xs transition-all flex items-center space-x-1.5 cursor-pointer"
-          title="呼出/收起全站悬浮量化回测工作舱 (⌘+B)"
+          :title="isDrawerOpen ? '收起右侧回测分析抽屉' : '从右侧滑出回测分析面板'"
         >
-          <span class="text-amber-400 animate-pulse">⚡</span>
-          <span>回测工作舱</span>
-          <span class="text-[10px] text-zinc-500 font-mono hidden md:inline">⌘B</span>
+          <span class="text-amber-400">⚡</span>
+          <span>{{ isDrawerOpen ? '收起回测' : '回测面板' }}</span>
         </button>
 
         <!-- 复制代码 -->
         <button
           @click="copyCode"
-          class="px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-zinc-400 hover:text-zinc-200 transition-all text-xs flex items-center space-x-1 cursor-pointer"
+          class="p-1 rounded-lg hover:bg-white/[0.08] text-zinc-400 hover:text-zinc-200 transition-all text-xs cursor-pointer"
+          title="复制代码"
         >
-          <span>📋</span>
-          <span class="hidden sm:inline">复制</span>
+          📋
         </button>
 
-        <!-- 最小日期极速预检按钮 -->
+        <!-- 30天预检 -->
         <button
           @click="handleFastDryRun"
           :disabled="isDryRunning"
-          class="px-2.5 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 hover:text-indigo-200 transition-all text-xs flex items-center space-x-1 cursor-pointer disabled:opacity-50"
-          title="以最小日期区间 (~30根Bar) 极速试跑验证代码逻辑与语法，发现错误自动呼叫 AI 自愈"
+          class="px-2 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-xs flex items-center space-x-1 cursor-pointer disabled:opacity-50"
+          title="30天切片数据极速预检语法"
         >
-          <span>{{ isDryRunning ? '⏳' : '⚡' }}</span>
-          <span class="hidden sm:inline">{{ isDryRunning ? '试跑中...' : '极速预检' }}</span>
+          <span>⚡</span>
+          <span class="hidden lg:inline">{{ isDryRunning ? '预检中...' : '预检' }}</span>
         </button>
 
-        <!-- 运行回测主按钮 -->
+        <!-- 运行回测主按钮 (自动滑出抽屉并执行) -->
         <button
-          @click="strategyStore.openBacktestCockpit({ autoRun: true })"
+          @click="emit('openDrawerAndRun')"
           :disabled="strategyStore.isBacktesting"
           class="px-3.5 py-1 rounded-lg bg-gradient-to-r from-red-500 to-amber-500 hover:from-red-600 hover:to-amber-600 disabled:opacity-50 text-white font-semibold text-xs flex items-center space-x-1.5 shadow-md shadow-red-500/20 transition-all cursor-pointer"
+          title="运行回测并滑出看板 (⌘+Enter)"
         >
           <span v-if="!strategyStore.isBacktesting">▶</span>
           <span v-else class="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
           <span>{{ strategyStore.isBacktesting ? '撮合中...' : '运行回测' }}</span>
-          <span class="hidden sm:inline text-[10px] text-white/60 font-mono font-normal">(⌘+Enter)</span>
+          <span class="text-[10px] text-white/60 font-mono hidden sm:inline">⌘↵</span>
         </button>
       </div>
     </div>
 
-    <!-- 2. CodeMirror 编辑器主体 -->
-    <div class="flex-1 relative overflow-hidden bg-[#1e1e1e]">
+    <!-- 2. 主内容区域 (调参台 / 源码编辑器 按需切换) -->
+    <div v-show="currentView === 'params'" class="flex-1 relative overflow-hidden">
+      <StrategyParamDeck
+        :code="strategyStore.code"
+        @update:code="strategyStore.updateCode"
+        @switchToCode="currentView = 'code'"
+        @runBacktest="emit('openDrawerAndRun')"
+      />
+    </div>
+    <div v-show="currentView === 'code'" class="flex-1 relative overflow-hidden bg-[#1e1e1e]">
       <Codemirror
         v-model="strategyStore.code"
         :extensions="extensions"

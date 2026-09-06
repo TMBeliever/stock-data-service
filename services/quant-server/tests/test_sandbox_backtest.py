@@ -235,4 +235,55 @@ class BrokenStrategy(BaseStrategy):
     assert "Traceback" in err
 
 
+def test_endpoint_grid_optimize():
+    grid_code = """
+from quant_core.core.base_strategy import BaseStrategy
+from quant_core.core.models import Bar
+
+class GridMAStrategy(BaseStrategy):
+    def __init__(self, fast: int = 5, slow: int = 20):
+        super().__init__(name="GridMA")
+        self.fast = fast
+        self.slow = slow
+
+    def on_bar(self, bar: Bar):
+        closes = self.context.get_closes(bar.symbol, n=self.slow + 2)
+        if len(closes) < self.slow + 1:
+            return
+        ma_fast = sum(closes[-self.fast:]) / self.fast
+        ma_slow = sum(closes[-self.slow:]) / self.slow
+        pos = self.get_position(bar.symbol)
+        if ma_fast > ma_slow and pos.quantity == 0:
+            self.order_target_percent(bar.symbol, 0.8, reason="Buy")
+        elif ma_fast < ma_slow and pos.available_quantity > 0:
+            self.close_position(bar.symbol, reason="Sell")
+"""
+    payload = {
+        "symbol": "510300.SH.ETF",
+        "code": grid_code,
+        "start": "2023-01-01",
+        "end": "2023-06-01",
+        "initial_cash": 100000.0,
+        "param_grid": {
+            "fast": [3, 5],
+            "slow": [10, 20]
+        },
+        "metric": "sharpe_ratio",
+        "max_combinations": 10
+    }
+    response = client.post("/api/v1/backtest/grid-optimize", json=payload)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["total_combinations"] == 4
+    assert data["executed_combinations"] == 4
+    assert "best_params" in data
+    assert "ranking" in data
+    assert len(data["ranking"]) == 4
+    assert data["ranking"][0]["status"] == "success"
+    assert "total_return" in data["ranking"][0]
+    assert "sharpe_ratio" in data["ranking"][0]
+
+
+
 

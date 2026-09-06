@@ -797,6 +797,16 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
         })
       }
 
+      // 携带当前前端工作台的投研上下文（当前策略名、当前标的、自选组合概览）
+      const stratStore = useStrategyStore()
+      let pageCtx = ''
+      if (stratStore.name || stratStore.symbol || (stratStore.userWatchlists && stratStore.userWatchlists.length > 0)) {
+        const watchlistsDesc = (stratStore.userWatchlists || [])
+          .map((w) => `${w.name}: [${(w.symbols || []).join(', ')}]`)
+          .join('; ')
+        pageCtx = `【当前前端工作台上下文】激活策略: ${stratStore.name || '未命名'} | 当前选中标的: ${stratStore.symbol || '510300'} | 用户自选组合: ${watchlistsDesc || '无'}`
+      }
+
       const resp = await fetch('/api/v1/agent/chat', {
         method: 'POST',
         headers: {
@@ -811,6 +821,8 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
           project_id: curProj.id,
           project_path: curProj.path,
           host_type: curProj.host_type,
+          page_context: pageCtx,
+          max_steps: 0,
           execution_mode: executionMode.value,
           approved_tool_calls: approvedToolCallsList,
           approved_tool_call: approvedToolCallObj,

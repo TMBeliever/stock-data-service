@@ -1,4 +1,5 @@
 import logging
+import contextvars
 from typing import Optional
 from pydantic import BaseModel
 import jwt
@@ -7,6 +8,9 @@ from fastapi import Request
 from quant_agent.config import agent_config
 
 logger = logging.getLogger(__name__)
+
+# 用户原始 Bearer Token 协程上下文变量 (供工具链与下游服务交互时使用)
+current_user_token: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("current_user_token", default=None)
 
 class UserAuth(BaseModel):
     """用户认证与权限状态模型"""
@@ -35,6 +39,7 @@ async def get_current_auth(request: Request) -> UserAuth:
     """
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
+        current_user_token.set(None)
         return UserAuth(
             user_id=None,
             username="guest",
@@ -42,6 +47,7 @@ async def get_current_auth(request: Request) -> UserAuth:
             is_admin=False
         )
 
+    current_user_token.set(auth_header)
     token = auth_header.split(" ", 1)[1].strip()
     payload = decode_token(token)
     if not payload:

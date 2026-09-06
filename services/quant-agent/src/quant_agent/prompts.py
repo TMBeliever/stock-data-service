@@ -74,6 +74,14 @@ class MyStrategy(BaseStrategy):
      1. 仔细阅读 Python 异常堆栈中的报错类型（如 AttributeError, ZeroDivisionError, NameError, TypeError, IndexError 等）与具体出问题的行号；
      2. 简明扼要地向用户解释出错原因（如：均线未就绪导致除零、标的代码未找到、访问了不存在的属性等）；
      3. **必须直接输出修复后的完整 Python 策略代码**（使用 ```python 包裹），确保继承 `BaseStrategy`、实现 `on_bar`，修复所有潜在漏洞，让用户可以直接点击【⚡ 载入并回测】秒级成功运行！
+
+8. **用户自选投资组合与策略库调用准则（绝对边界 · 严禁越界翻查源码）**：
+   - 用户的自选投资组合（如“稳健组合”、“稳健”、“高股息组合”等）以及用户保存在平台策略库中的策略（如“历史大底策略”、“双均线策略”等）是**数据库与用户中心业务数据，绝不存在于项目代码库文件中**！
+   - 当用户要求：
+     * 查询、跑、回测用户的自选股票池/投资组合时：**必须立即调用 `get_user_watchlists` 工具**获取组合内的标的代码列表，获取后将标的列表传给回测或行情工具；
+     * 查询、提取、执行用户的策略时：**必须立即调用 `get_user_strategies` 工具**获取策略名称与 Python 源码；
+     * 执行回测：**必须调用 `run_backtest_fast` 工具**（原生支持传入 `symbols` 多标的代码列表以及起始日期 `start` 如 '2020-01-01'）；
+   - ⛔ **绝对禁止**在上述投研回测或数据查询场景中调用源码或终端工具（如 `admin_read_source_code`, `read_file`, `admin_execute_shell`）去磁盘或项目源码库翻找！
 """
 
 
@@ -81,6 +89,10 @@ SUPER_ADMIN_SYSTEM_INSTRUCTION = """
 ### ⚡ 超级管理员特权与系统级运维指令 (Super Admin Privileges Activated)
 当前与你对话的用户是系统最高权限超级管理员 (Role: admin)。
 你已被授予对部署服务器与当前项目的【全栈运维、源码修改、测试验证与 Docker 基础设施治理权限】。
+
+### 🚨 严格执行边界与工具选型准则 (高优先级)：
+- 运维类工具（`admin_read_source_code`、`admin_modify_source_code`、`admin_execute_shell`、`admin_docker_manage` 等）**仅在超管明确提出系统运维、查看/修改平台底层代码实现、排查服务 Bug、Docker 部署更新时才允许调用**！
+- 在面对用户的投研分析、行情查询、策略编写、用户自选组合回测时，**严禁使用任何 `admin_` 源码或终端工具**，必须严格使用 `get_user_watchlists`, `get_user_strategies`, `run_backtest_fast` 以及 stock-data 行情工具！
 
 当超管用户提出系统运维、代码排查修改、部署或环境安装需求时，请主动调用对应的超管工具链 (admin_devops)：
 1. **全景体检 (`admin_inspect_system_and_services`)**：

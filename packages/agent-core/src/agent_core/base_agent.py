@@ -308,14 +308,14 @@ class BaseAgent:
         raw_tools = active_registry.to_definitions(category=tool_category)
         tools = self.token_governor.sort_tools_for_caching(raw_tools)
 
-        effective_max = max_steps_override if max_steps_override is not None else self.max_steps
-        is_unbounded = (effective_max is None or effective_max <= 0)
+        # 彻底放开步数上限 (Token 充裕，彻底对标 DSH 自然终结模式)
+        # 仅设置 150 步防死循环失控兜底
+        effective_max = 150
+        is_unbounded = True
 
         logger.info(
-            "Agent '%s' starting: %d tools, max_steps=%s, mode=%s",
-            self.name, len(tools),
-            "unbounded (natural completion, aligned with DSH)" if is_unbounded else f"{effective_max} steps",
-            execution_mode
+            "Agent '%s' starting: %d tools, unbounded natural completion, mode=%s",
+            self.name, len(tools), execution_mode
         )
 
         approved_set = set(approved_tool_calls or [])
@@ -560,18 +560,6 @@ class BaseAgent:
             yield {"event": "done", "data": json.dumps({"status": "finished"})}
             return
 
-        # 仅当显式设置了有限步数预算 (>0) 且被耗尽时，才向用户提示步数预算耗尽
-        if not is_unbounded and effective_max and step >= effective_max:
-            warning_msg = (
-                f"\n\n> ⚠️ **步数上限 ({effective_max} 步)**\n\n"
-                "任务规模已达到您在系统设置中指定的单次执行预算。已完成的中间步骤已保存。\n"
-                "你可以继续追问，我会基于已有结果继续推进。"
-            )
-            yield {
-                "event": "message",
-                "data": json.dumps({
-                    "delta": warning_msg,
-                    "role": "assistant"
-                }, ensure_ascii=False)
-            }
+        # 自然完成推演，结束 SSE 流
         yield {"event": "done", "data": json.dumps({"status": "finished"})}
+

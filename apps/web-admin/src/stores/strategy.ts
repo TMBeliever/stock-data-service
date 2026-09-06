@@ -987,7 +987,7 @@ class MyCustomStrategy(BaseStrategy):
   async function saveUserWatchlist(name: string, description?: string, customSymbols?: string[]): Promise<boolean> {
     const cleanName = name.trim()
     if (!cleanName) return false
-    const symList = customSymbols && customSymbols.length > 0 ? customSymbols : symbols.value
+    const symList = customSymbols !== undefined ? customSymbols : symbols.value
     const authStore = useAuthStore()
 
     let cloudItem: UserWatchlistItem | null = null

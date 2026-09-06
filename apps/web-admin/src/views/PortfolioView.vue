@@ -197,10 +197,6 @@ async function confirmCreateWatchlist() {
     .split(/[,，\s]+/)
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean)
-  if (rawSymbols.length === 0) {
-    rawSymbols.push('510300.SH.ETF')
-  }
-
   const newName = createNameInput.value.trim()
   const ok = await strategyStore.saveUserWatchlist(newName, createDescInput.value.trim(), rawSymbols)
   if (ok) {
@@ -768,7 +764,7 @@ function syncHoldingsToBacktest() {
             <input
               v-model="createSymbolsInput"
               type="text"
-              placeholder="如: 600519.SH, 300750.SZ, 510300.SH.ETF (逗号隔开)"
+              placeholder="如: 600519.SH, 300750.SZ (选填，留空可后续添加)"
               class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono"
             />
           </div>

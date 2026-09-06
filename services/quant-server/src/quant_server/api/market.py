@@ -208,6 +208,77 @@ def _load_meta_db_symbols() -> List[Dict[str, Any]]:
     except Exception:
         return []
 
+def _query_live_market_suggestions(keyword: str) -> List[Dict[str, Any]]:
+    """
+    全市场实时标的检索联想 (支持中文名、拼音缩写、代码，如 新金路、XJL、纳斯达克、纳指):
+    穿透获取全市场 5000+ A股及 ETF/LOF 标准代码与名称，无缝弥补本地冷标的。
+    """
+    if not keyword:
+        return []
+    import urllib.parse
+    import urllib.request
+    
+    # 智能同义词派生 (如 纳斯达克 -> 纳指，标普500 -> 标普)
+    search_queries = [keyword]
+    if "纳斯达克" in keyword:
+        search_queries.append(keyword.replace("纳斯达克", "纳指"))
+    elif "纳指" in keyword:
+        search_queries.append(keyword.replace("纳指", "纳斯达克"))
+
+    results = []
+    seen_tickers = set()
+
+    for q_text in search_queries:
+        try:
+            q = urllib.parse.quote(q_text)
+            # type 21~26 涵盖场内 ETF、LOF 及公募联接基金
+            url = f"http://suggest3.sinajs.cn/suggest/type=11,12,13,14,15,21,22,23,24,25,26,31,32,33&key={q}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=1.8) as resp:
+                raw = resp.read().decode("gbk", errors="ignore")
+                if '"' not in raw:
+                    continue
+                content = raw.split('"')[1]
+                items = [x for x in content.split(";") if x.strip()]
+                for item in items:
+                    parts = item.split(",")
+                    if len(parts) >= 4:
+                        name = parts[0]
+                        ticker = parts[2]
+                        raw_code = parts[3].lower()
+                        if not ticker.isdigit() or len(ticker) != 6:
+                            continue
+                        if ticker in seen_tickers:
+                            continue
+                        seen_tickers.add(ticker)
+
+                        # 仅保留场内可交易标的 (A股股票 60/68/00/30，场内 ETF/LOF 51/15/58/16)
+                        is_etf = ticker.startswith(("51", "15", "58", "16"))
+                        is_stk = ticker.startswith(("60", "68", "000", "001", "002", "003", "300", "301"))
+                        if not (is_etf or is_stk):
+                            continue
+
+                        market = "SH" if ticker.startswith(("6", "5")) or raw_code.startswith("sh") else ("SZ" if ticker.startswith(("0", "3", "1")) or raw_code.startswith("sz") else "SH")
+                        asset_type = "ETF" if is_etf else "STK"
+                        symbol = f"{ticker}.{market}.{asset_type}"
+                        category = "etf" if is_etf else "stk"
+                        results.append({
+                            "symbol": symbol,
+                            "ticker": ticker,
+                            "market": market,
+                            "asset_type": asset_type,
+                            "name": name,
+                            "pinyin": ticker,
+                            "category": category,
+                            "tags": [market, asset_type, "全市场检索"],
+                        })
+        except Exception:
+            pass
+
+    # 将场内 ETF 优先排在前面
+    results.sort(key=lambda x: 0 if x.get("asset_type") == "ETF" else 1)
+    return results
+
 def normalize_symbol_key(sym: str) -> str:
     """将输入的标的代码归一化为标准的 6位.市场.类型 代码 (如 512800 -> 512800.SH.ETF)"""
     s = sym.strip().upper()
@@ -270,7 +341,7 @@ def _fetch_live_snapshots(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             chunk = all_tickers[i:i + chunk_size]
             sym_str = ",".join(chunk)
             try:
-                with httpx.Client(timeout=2.0) as client:
+                with httpx.Client(timeout=6.0) as client:
                     resp = client.get(url, params={"symbols": sym_str})
                     if resp.status_code == 200:
                         items = resp.json().get("data", [])
@@ -279,7 +350,7 @@ def _fetch_live_snapshots(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                             ticker = item.get("ticker")
                             if sym:
                                 results[sym] = item
-                            if ticker and ticker not in results:
+                            if ticker:
                                 results[ticker] = item
             except Exception:
                 pass
@@ -407,6 +478,22 @@ def search_symbols(
                     "tags": [auto_mkt, auto_type, "全市场直连"],
                 })
 
+        # 3. 实时全市场联想直通 (当输入中文名、拼音缩写等在本地字典未足额匹配时，直连全市场标的联想引擎)
+        if len(matched) < limit:
+            try:
+                live_suggs = _query_live_market_suggestions(q or keyword)
+                existing_syms = {m["symbol"] for m in matched}
+                for item in live_suggs:
+                    if item["symbol"] not in existing_syms:
+                        if category and category != "all" and item.get("category") != category:
+                            continue
+                        matched.append(item)
+                        existing_syms.add(item["symbol"])
+                        if len(matched) >= limit * 2:
+                            break
+            except Exception:
+                pass
+
     # 截断 limit
     candidates = matched[:limit]
     candidate_symbols = [c["symbol"] for c in candidates]
@@ -415,7 +502,7 @@ def search_symbols(
     snapshots = _fetch_live_snapshots(candidate_symbols)
 
     for c in candidates:
-        snap = snapshots.get(c["symbol"])
+        snap = snapshots.get(c["symbol"]) or snapshots.get(c.get("ticker", ""))
         if snap:
             c["latest_price"] = snap.get("latest_price")
             c["change"] = snap.get("change")
@@ -429,7 +516,7 @@ def search_symbols(
             c["pe"] = snap.get("pe")
             c["pb"] = snap.get("pb")
             c["market_cap"] = snap.get("total_market_cap") or snap.get("market_cap")
-            if snap.get("name") and (c["name"] == c["ticker"] or c["name"].startswith("A股(")):
+            if snap.get("name"):
                 c["name"] = snap["name"]
         else:
             c["latest_price"] = c.get("latest_price", None)
@@ -443,7 +530,7 @@ def search_symbols(
 @router.get("/symbols/{symbol}/detail")
 def get_symbol_detail(symbol: str):
     """
-    获取单个标的的详细行情快照与基本面数据
+    获取单个标的的详细行情快照与基本面数据 (数据源唯一来自数据中台)
     """
     orig_sym = symbol.strip().upper()
     norm_sym = normalize_symbol_key(orig_sym)
@@ -467,16 +554,13 @@ def get_symbol_detail(symbol: str):
         }
 
     snaps = _fetch_live_snapshots([norm_sym, orig_sym])
-    snap = snaps.get(norm_sym) or snaps.get(orig_sym) or {}
+    snap = snaps.get(norm_sym) or snaps.get(orig_sym) or snaps.get(meta.get("ticker", "")) or {}
 
     res = dict(meta)
     for k, v in snap.items():
-        if k == "name" and res.get("name") and res["name"] != res.get("ticker"):
-            continue
         res[k] = v
-    if not res.get("name") or res["name"] == res.get("ticker"):
-        if snap.get("name"):
-            res["name"] = snap["name"]
+    if snap.get("name"):
+        res["name"] = snap["name"]
 
     return {
         "symbol": norm_sym,

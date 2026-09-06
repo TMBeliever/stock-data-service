@@ -8,12 +8,16 @@ from sse_starlette.sse import EventSourceResponse
 from ai_core.config import ai_config
 from ai_core.models import Message, AIResponse, ToolDefinition
 from ai_core.orchestrator import ai_orchestrator
+from ai_core.openai_api import openai_router
 
 app = FastAPI(
     title="AI Core Service",
     description="Universal AI Foundation Microservice supporting API Key & CLI Process drivers with Streaming SSE",
     version="0.1.0"
 )
+
+# 挂载 OpenAI 标准兼容路由 (/v1/chat/completions, /v1/models 等)
+app.include_router(openai_router)
 
 # 允许跨域
 app.add_middleware(

@@ -43,7 +43,15 @@ const isSidebarOpen = ref(true)
 const showMcpDrawer = ref(false)
 const showPermissionTooltip = ref(false)
 const showModelPopover = ref(false)
+const showModeMenu = ref(false)
+const modeMenuRef = ref<HTMLElement | null>(null)
 const expandedProjects = ref<Record<string, boolean>>({})
+
+function selectAssistantMode(mode: 'quant' | 'devops') {
+  codexStore.setAssistantMode(mode)
+  showModeMenu.value = false
+  showToast(mode === 'quant' ? '✓ 已切换为量化投研模式' : '✓ 已切换为工程与运维模式')
+}
 
 // 当前激活模型与思考程度
 const modelFilterTab = ref<'all' | 'agy' | 'standard'>('all')
@@ -598,6 +606,9 @@ function handleClickOutside(e: MouseEvent) {
   }
   if (modelPopoverRef.value && !modelPopoverRef.value.contains(target as Node)) {
     showModelPopover.value = false
+  }
+  if (modeMenuRef.value && !modeMenuRef.value.contains(target as Node)) {
+    showModeMenu.value = false
   }
   if (!target.closest('#ask-alpha-selection-tooltip')) {
     selectionTooltip.value.visible = false
@@ -1187,7 +1198,7 @@ onUnmounted(() => {
                 <span>量化投研助手</span>
               </span>
               <span class="text-zinc-500">/</span>
-              <span class="text-zinc-300 font-medium truncate max-w-[180px]">
+              <span class="text-zinc-300 font-medium truncate max-w-[220px]">
                 {{ codexStore.activeSession?.title || '新对话' }}
               </span>
             </template>
@@ -1197,43 +1208,10 @@ onUnmounted(() => {
                 <span>{{ codexStore.activeProject?.name || '项目' }}</span>
               </span>
               <span class="text-zinc-500">/</span>
-              <span class="text-zinc-300 font-medium truncate max-w-[180px]">
+              <span class="text-zinc-300 font-medium truncate max-w-[220px]">
                 {{ codexStore.activeSession?.title || '新对话' }}
               </span>
             </template>
-
-            <!-- 模式切换开关（仅超管登录时支持投研与工程模式自由切换，普通用户严格默认投研模式） -->
-            <div
-              v-if="authStore.isAdmin"
-              class="flex items-center bg-black/40 p-0.5 rounded-lg border border-white/[0.08] text-[10px] ml-1.5"
-            >
-              <button
-                @click="codexStore.setAssistantMode('quant')"
-                :class="[
-                  'px-2 py-0.5 rounded transition-all flex items-center space-x-1 cursor-pointer',
-                  codexStore.assistantMode === 'quant'
-                    ? 'bg-purple-600/30 text-purple-200 font-semibold border border-purple-500/40 shadow-xs'
-                    : 'text-zinc-400 hover:text-zinc-200',
-                ]"
-                title="专属量化投研场景：免挂载项目，杜绝源码文件噪音，专注行情分析、自选组合与策略回测"
-              >
-                <span>📈</span>
-                <span>投研模式</span>
-              </button>
-              <button
-                @click="codexStore.setAssistantMode('devops')"
-                :class="[
-                  'px-2 py-0.5 rounded transition-all flex items-center space-x-1 cursor-pointer',
-                  codexStore.assistantMode === 'devops'
-                    ? 'bg-amber-600/30 text-amber-200 font-semibold border border-amber-500/40 shadow-xs'
-                    : 'text-zinc-400 hover:text-zinc-200',
-                ]"
-                title="工程开发与运维模式：挂载代码工程，支持终端 Shell、测试验证与系统维护"
-              >
-                <span>💻</span>
-                <span>工程模式</span>
-              </button>
-            </div>
 
             <!-- 权限角色标识 -->
             <span
@@ -1261,8 +1239,88 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- 右侧：开辟新会话 + Agent 配置 + 关闭窗口 (✕) -->
+        <!-- 右侧：模式切换 (Tooltip切换卡片) + 开辟新会话 + Agent 配置 + 关闭窗口 (✕) -->
         <div class="flex items-center space-x-1.5 text-zinc-400 text-xs">
+          <!-- 场景模式切换器 (右侧固定，Tooltip 浮层切换，极致节省空间) -->
+          <div v-if="authStore.isAdmin" ref="modeMenuRef" class="relative">
+            <button
+              @click.stop="showModeMenu = !showModeMenu"
+              :class="[
+                'px-2 py-0.5 rounded-md text-[11px] font-medium transition-all flex items-center space-x-1 cursor-pointer border',
+                codexStore.assistantMode === 'quant'
+                  ? 'bg-purple-500/15 border-purple-500/35 text-purple-200 hover:bg-purple-500/25 shadow-xs'
+                  : 'bg-amber-500/15 border-amber-500/35 text-amber-200 hover:bg-amber-500/25 shadow-xs',
+              ]"
+              title="点击切换场景模式 (投研 / 工程)"
+            >
+              <span class="text-xs">{{ codexStore.assistantMode === 'quant' ? '📈' : '💻' }}</span>
+              <span>{{ codexStore.assistantMode === 'quant' ? '投研模式' : '工程模式' }}</span>
+              <svg
+                :class="['w-2.5 h-2.5 transition-transform duration-150 text-zinc-400', showModeMenu ? 'rotate-180' : '']"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            <!-- 模式切换浮层 Tooltip 菜单 -->
+            <transition name="fade">
+              <div
+                v-if="showModeMenu"
+                class="absolute right-0 top-full mt-1.5 w-60 bg-[#161722]/98 border border-white/[0.14] rounded-xl shadow-2xl p-1.5 z-50 backdrop-blur-xl space-y-1 text-left"
+              >
+                <div class="px-2 py-1 text-[10px] text-zinc-400 font-semibold tracking-wider uppercase border-b border-white/[0.06] flex items-center justify-between">
+                  <span>场景模式切换</span>
+                  <span class="text-[9px] text-purple-400 font-mono">⚡ Super Admin</span>
+                </div>
+
+                <button
+                  @click.stop="selectAssistantMode('quant')"
+                  :class="[
+                    'w-full text-left p-2 rounded-lg text-xs transition-all flex items-start space-x-2.5 cursor-pointer',
+                    codexStore.assistantMode === 'quant'
+                      ? 'bg-purple-500/25 text-purple-200 border border-purple-500/30'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.05]',
+                  ]"
+                >
+                  <span class="text-base leading-none">📈</span>
+                  <div class="flex-1">
+                    <div class="flex items-center justify-between font-semibold text-[11px] text-white">
+                      <span>量化投研模式</span>
+                      <span v-if="codexStore.assistantMode === 'quant'" class="text-[10px] text-purple-300">✓ 当前</span>
+                    </div>
+                    <div class="text-[10px] text-zinc-400 mt-0.5 leading-snug">
+                      纯净投研体验，免挂载项目，物理屏蔽终端与源码工具，专注行情与回测
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  @click.stop="selectAssistantMode('devops')"
+                  :class="[
+                    'w-full text-left p-2 rounded-lg text-xs transition-all flex items-start space-x-2.5 cursor-pointer',
+                    codexStore.assistantMode === 'devops'
+                      ? 'bg-amber-500/25 text-amber-200 border border-amber-500/30'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.05]',
+                  ]"
+                >
+                  <span class="text-base leading-none">💻</span>
+                  <div class="flex-1">
+                    <div class="flex items-center justify-between font-semibold text-[11px] text-white">
+                      <span>工程与运维模式</span>
+                      <span v-if="codexStore.assistantMode === 'devops'" class="text-[10px] text-amber-300">✓ 当前</span>
+                    </div>
+                    <div class="text-[10px] text-zinc-400 mt-0.5 leading-snug">
+                      代码工作台，挂载代码工程，赋能宿主机终端 Shell、测试验证与代码修改
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </transition>
+          </div>
+
           <button
             @click="codexStore.createSession()"
             class="px-2 py-0.5 rounded-lg hover:bg-white/[0.08] hover:text-zinc-200 transition-colors cursor-pointer flex items-center space-x-1 text-[11px]"

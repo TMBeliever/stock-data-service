@@ -9,6 +9,7 @@ from ai_core.config import ai_config
 from ai_core.models import Message, AIResponse, ToolDefinition
 from ai_core.orchestrator import ai_orchestrator
 from ai_core.openai_api import openai_router
+from ai_core.anthropic_api import anthropic_router
 
 app = FastAPI(
     title="AI Core Service",
@@ -18,6 +19,9 @@ app = FastAPI(
 
 # 挂载 OpenAI 标准兼容路由 (/v1/chat/completions, /v1/models 等)
 app.include_router(openai_router)
+
+# 挂载 Anthropic Messages 标准兼容路由 (/v1/messages, /messages 等，供 Claude CLI 使用)
+app.include_router(anthropic_router)
 
 # 允许跨域
 app.add_middleware(

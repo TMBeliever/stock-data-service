@@ -304,10 +304,12 @@ async def test_process_pool_spawn_worker_args(monkeypatch):
     assert "claude-sonnet-4.6" in cmd1
     assert "-y" not in cmd1
     assert "-m" not in cmd1
+    assert "-p" not in cmd1
 
     # 2. 针对 gemini
     w2 = await pool._spawn_worker(executable="gemini", model="gemini-3.8-flash")
     cmd2 = captured_cmds[-1]
+    assert "-p" in cmd2
     assert "-y" in cmd2
     assert "--model" in cmd2
     assert "--dangerously-skip-permissions" not in cmd2

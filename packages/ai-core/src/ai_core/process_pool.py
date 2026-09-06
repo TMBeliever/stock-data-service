@@ -231,12 +231,13 @@ class PrewarmedProcessPool:
         exe = resolve_executable_path(executable or ai_config.CLI_EXECUTABLE)
 
         # 构造纯净无状态参数：彻底禁用工具执行，严禁添加 --conversation / -c / -r
-        cmd_args = [exe, "-p", ""]
+        cmd_args = [exe]
         exe_lower = os.path.basename(exe).lower()
         if "gemini" in exe_lower:
-            cmd_args.append("-y")
+            cmd_args.extend(["-p", "", "-y"])
         else:
-            # Google agy (Go 二进制) 与 Claude CLI 均使用 --dangerously-skip-permissions (严禁传 -y)
+            # Google agy (Go 二进制) 与 Claude CLI 均使用 --dangerously-skip-permissions
+            # 严禁传 -y 和 -m，且走 stdin 管道通信时严禁传空 prompt ("-p", "")，否则 agy 校验失败直接退出
             cmd_args.append("--dangerously-skip-permissions")
 
         if model:

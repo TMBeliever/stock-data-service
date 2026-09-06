@@ -63,16 +63,16 @@ def test_resolve_agt_model():
     assert resolve_agt_model("agt-gemini-3.8-flash") == ("cli", "gemini-3.8-flash")
     assert resolve_agt_model("agt-flash") == ("cli", "gemini-3.8-flash")
     assert resolve_agt_model("agt-gemini-3.7-flash") == ("cli", "gemini-3.7-flash")
-    assert resolve_agt_model("agt-claude-sonnet-4.6") == ("cli", "claude-sonnet-4.6")
-    assert resolve_agt_model("agt-sonnet") == ("cli", "claude-sonnet-4.6")
-    assert resolve_agt_model("agt-claude-opus-4.6") == ("cli", "claude-opus-4.6")
-    assert resolve_agt_model("agt-opus") == ("cli", "claude-opus-4.6")
-    assert resolve_agt_model("agt-gpt-oss-120b") == ("cli", "gpt-oss-120b")
+    assert resolve_agt_model("agt-claude-sonnet-4.6") == ("cli", "claude-sonnet-4-6")
+    assert resolve_agt_model("agt-sonnet") == ("cli", "claude-sonnet-4-6")
+    assert resolve_agt_model("agt-claude-opus-4.6") == ("cli", "claude-opus-4-6-thinking")
+    assert resolve_agt_model("agt-opus") == ("cli", "claude-opus-4-6-thinking")
+    assert resolve_agt_model("agt-gpt-oss-120b") == ("cli", "gpt-oss-120b-medium")
 
     # 2. 原生 Claude 请求自动映射
-    assert resolve_agt_model("claude-3-5-sonnet-20241022") == ("cli", "claude-sonnet-4.6")
-    assert resolve_agt_model("claude-3-7-sonnet") == ("cli", "claude-sonnet-4.6")
-    assert resolve_agt_model("claude-3-opus-20240229") == ("cli", "claude-opus-4.6")
+    assert resolve_agt_model("claude-3-5-sonnet-20241022") == ("cli", "claude-sonnet-4-6")
+    assert resolve_agt_model("claude-3-7-sonnet") == ("cli", "claude-sonnet-4-6")
+    assert resolve_agt_model("claude-3-opus-20240229") == ("cli", "claude-opus-4-6-thinking")
 
     # 3. 宿主机别名与空值
     assert resolve_agt_model("agy") == ("cli", "gemini-3.8-flash")

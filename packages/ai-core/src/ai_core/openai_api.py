@@ -165,6 +165,9 @@ def _resolve_provider_and_kwargs(req: OpenAIChatCompletionRequest) -> tuple[str,
     extra_kwargs["effort"] = effort_val
     extra_kwargs["reasoning_effort"] = effort_val
 
+    if req.user:
+        extra_kwargs["user"] = req.user
+
     if provider_type == "cli":
         extra_kwargs["executable"] = "agy"
         extra_kwargs["model"] = target_model
@@ -186,9 +189,12 @@ async def list_models():
         {"id": "agt-gemini-3.7-flash", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Gemini 3.7 Flash Medium Fast"},
         {"id": "agt-gemini-3.6-flash", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Gemini 3.6 Flash Medium Fast"},
         {"id": "agt-gemini-3.1-pro", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Gemini 3.1 Pro Low"},
-        {"id": "agt-claude-sonnet-4.6", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Claude Sonnet 4.6 (Thinking)"},
-        {"id": "agt-claude-opus-4.6", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Claude Opus 4.6 (Thinking)"},
-        {"id": "agt-gpt-oss-120b", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "GPT-OSS 120B (Medium)"},
+        {"id": "claude-sonnet-4-6", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Claude Sonnet 4.6 (Thinking)"},
+        {"id": "claude-opus-4-6-thinking", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Claude Opus 4.6 (Thinking)"},
+        {"id": "gpt-oss-120b-medium", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "GPT-OSS 120B (Medium)"},
+        {"id": "agt-claude-sonnet-4.6", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Claude Sonnet 4.6 (Alias)"},
+        {"id": "agt-claude-opus-4.6", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Claude Opus 4.6 (Alias)"},
+        {"id": "agt-gpt-oss-120b", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "GPT-OSS 120B (Alias)"},
         {"id": "agy", "object": "model", "created": created_ts, "owned_by": "antigravity", "description": "Default AGY Model"},
         {"id": "gemini-flash-lite-latest", "object": "model", "created": created_ts, "owned_by": "openai-proxy"},
         {"id": "minimax/minimax-m3:free", "object": "model", "created": created_ts, "owned_by": "openai-proxy"}

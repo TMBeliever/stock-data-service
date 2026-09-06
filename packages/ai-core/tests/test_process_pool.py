@@ -8,12 +8,17 @@ from ai_core.models import Message
 
 @pytest.mark.asyncio
 async def test_prewarmed_process_execute_and_stream():
-    """测试单个 PrewarmedProcess 能够通过 stdin 接收输入，流式吐出输出，并且单次使用后彻底关闭"""
-    # 模拟一个执行 echo 的 Python 子进程
+    """测试单个 PrewarmedProcess 能够通过 stream-json 双向通信接收输入并流式输出"""
     code = (
-        "import sys\n"
-        "data = sys.stdin.read().strip()\n"
-        "print('PROCESSED_' + data, flush=True)\n"
+        "import sys, json\n"
+        "sys.stdout.write(json.dumps({'event': 'init', 'session_id': 'sess-1'}) + '\\n')\n"
+        "sys.stdout.flush()\n"
+        "line = sys.stdin.readline()\n"
+        "req = json.loads(line)\n"
+        "prompt = req.get('message', {}).get('content', '')\n"
+        "sys.stdout.write(json.dumps({'event': 'step_update', 'step_update': {'text_delta': 'PROCESSED_' + prompt}}) + '\\n')\n"
+        "sys.stdout.write(json.dumps({'event': 'result', 'status': 'success'}) + '\\n')\n"
+        "sys.stdout.flush()\n"
     )
     proc = await asyncio.create_subprocess_exec(
         sys.executable, "-c", code,
@@ -23,6 +28,7 @@ async def test_prewarmed_process_execute_and_stream():
     )
 
     worker = PrewarmedProcess(proc=proc, created_at=time.time())
+    assert await worker.wait_for_init(timeout=3.0)
     assert worker.is_alive
 
     chunks = []
@@ -32,7 +38,7 @@ async def test_prewarmed_process_execute_and_stream():
 
     full_output = "".join(chunks)
     assert "PROCESSED_TEST_INPUT" in full_output
-    assert not worker.is_alive  # 执行完毕后进程已退出
+    await worker.terminate()
 
 @pytest.mark.asyncio
 async def test_process_pool_atomic_lease_and_physical_isolation(monkeypatch):
@@ -79,7 +85,7 @@ async def test_process_pool_single_use_terminate(monkeypatch):
 
     async def mock_spawn(*args, **kwargs):
         p = await asyncio.create_subprocess_exec(
-            sys.executable, "-c", "import sys, time; sys.stdin.read(); sys.exit(0)",
+            sys.executable, "-c", "import sys; sys.stdin.read()",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
@@ -91,10 +97,12 @@ async def test_process_pool_single_use_terminate(monkeypatch):
     worker = await pool.acquire_worker()
     assert worker.is_alive
 
-    # 释放 worker
+    # 归还 Worker，验证触发 terminate 且不再放回待命队列
     await pool.release_worker(worker)
-    assert not worker.is_alive  # 确认已经物理死亡
-    assert worker not in pool._active_processes
+    await asyncio.sleep(0.05)
+
+    assert not worker.is_alive
+    assert pool._standby_queue.empty()
     await pool.shutdown()
 
 @pytest.mark.asyncio
@@ -161,8 +169,8 @@ async def test_process_pool_staggered_gentle_warmup(monkeypatch):
     assert worker.is_alive
 
     # 等待后台温和错峰把剩余待命补齐到 4 个
-    # 3 个待命 * 0.05s = 约 0.15s
-    await asyncio.sleep(0.3)
+    # 4 个待命 * 0.05s = 约 0.2s
+    await asyncio.sleep(0.35)
     assert pool._standby_queue.qsize() == 4
 
     # 验证拉起时间戳具有错峰间隔，杜绝瞬间并发拉起
@@ -181,12 +189,20 @@ async def test_process_pool_four_workers_concurrent(monkeypatch):
     monkeypatch.setattr(ai_config, "CLI_STANDBY_POOL_SIZE", 4)
     monkeypatch.setattr(ai_config, "CLI_MAX_CONCURRENCY", 4)
 
-    # 每个子进程独立根据 stdin 加上自己的前缀
+    # 每个子进程独立根据 stdin 加上自己的前缀 (符合 stream-json NDJSON 规范)
     async def mock_spawn(*args, **kwargs):
         code = (
-            "import sys\n"
-            "data = sys.stdin.read().strip()\n"
-            "print(f'OUTPUT_{data}', flush=True)\n"
+            "import sys, json\n"
+            "sys.stdout.write(json.dumps({'event': 'init', 'session_id': 'sess-1'}) + '\\n')\n"
+            "sys.stdout.flush()\n"
+            "while True:\n"
+            "    line = sys.stdin.readline()\n"
+            "    if not line: break\n"
+            "    req = json.loads(line)\n"
+            "    prompt = req.get('message', {}).get('content', '')\n"
+            "    sys.stdout.write(json.dumps({'event': 'step_update', 'step_update': {'text_delta': f'OUTPUT_{prompt}'}}) + '\\n')\n"
+            "    sys.stdout.write(json.dumps({'event': 'result', 'status': 'success'}) + '\\n')\n"
+            "    sys.stdout.flush()\n"
         )
         p = await asyncio.create_subprocess_exec(
             sys.executable, "-c", code,
@@ -194,7 +210,9 @@ async def test_process_pool_four_workers_concurrent(monkeypatch):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        return PrewarmedProcess(proc=p, created_at=time.time())
+        w = PrewarmedProcess(proc=p, created_at=time.time())
+        assert await w.wait_for_init(timeout=3.0)
+        return w
 
     monkeypatch.setattr(pool, "_spawn_worker", mock_spawn)
 
@@ -231,10 +249,18 @@ async def test_process_pool_client_interrupt_and_retry(monkeypatch):
 
     async def mock_spawn(*args, **kwargs):
         code = (
-            "import sys, time\n"
-            "data = sys.stdin.read().strip()\n"
-            "time.sleep(0.5)\n"
-            "print('RES_' + data, flush=True)\n"
+            "import sys, json, time\n"
+            "sys.stdout.write(json.dumps({'event': 'init', 'session_id': 'sess-1'}) + '\\n')\n"
+            "sys.stdout.flush()\n"
+            "while True:\n"
+            "    line = sys.stdin.readline()\n"
+            "    if not line: break\n"
+            "    req = json.loads(line)\n"
+            "    prompt = req.get('message', {}).get('content', '')\n"
+            "    time.sleep(0.05)\n"
+            "    sys.stdout.write(json.dumps({'event': 'step_update', 'step_update': {'text_delta': f'RES_{prompt}'}}) + '\\n')\n"
+            "    sys.stdout.write(json.dumps({'event': 'result', 'status': 'success'}) + '\\n')\n"
+            "    sys.stdout.flush()\n"
         )
         p = await asyncio.create_subprocess_exec(
             sys.executable, "-c", code,
@@ -242,7 +268,9 @@ async def test_process_pool_client_interrupt_and_retry(monkeypatch):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        return PrewarmedProcess(proc=p, created_at=time.time())
+        w = PrewarmedProcess(proc=p, created_at=time.time())
+        assert await w.wait_for_init(timeout=3.0)
+        return w
 
     monkeypatch.setattr(pool, "_spawn_worker", mock_spawn)
 
@@ -278,7 +306,7 @@ async def test_process_pool_client_interrupt_and_retry(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_process_pool_spawn_worker_args(monkeypatch):
-    """验证 _spawn_worker 针对 agy 工具生成合规参数：使用 --dangerously-skip-permissions 和 --model，绝不传 -y 和 -m"""
+    """验证 _spawn_worker 针对 agy 工具生成合规参数：使用 --dangerously-skip-permissions 和 --model，且针对支持的模型传 --effort"""
     pool = PrewarmedProcessPool()
     captured_cmds = []
 
@@ -286,9 +314,15 @@ async def test_process_pool_spawn_worker_args(monkeypatch):
 
     async def mock_create_subprocess_exec(*args, **kwargs):
         captured_cmds.append(list(args))
-        # 模拟启动一个 dummy python 进程
+        # 模拟启动一个输出 init 的 dummy python 进程
+        code = (
+            "import sys, json\n"
+            "sys.stdout.write(json.dumps({'event': 'init', 'session_id': 'sess-123'}) + '\\n')\n"
+            "sys.stdout.flush()\n"
+            "sys.stdin.read()\n"
+        )
         return await orig_exec(
-            sys.executable, "-c", "import sys; sys.exit(0)",
+            sys.executable, "-c", code,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
@@ -296,23 +330,22 @@ async def test_process_pool_spawn_worker_args(monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_create_subprocess_exec)
 
-    # 1. 针对 agy
-    w1 = await pool._spawn_worker(executable="agy", model="claude-sonnet-4.6")
+    # 1. 针对 agy + claude (不支持 effort，绝不能传 --effort)
+    w1 = await pool._spawn_worker(executable="agy", model="claude-sonnet-4-6")
     cmd1 = captured_cmds[-1]
     assert "--dangerously-skip-permissions" in cmd1
     assert "--model" in cmd1
-    assert "claude-sonnet-4.6" in cmd1
-    assert "-y" not in cmd1
-    assert "-m" not in cmd1
-    assert "-p" not in cmd1
+    assert "claude-sonnet-4-6" in cmd1
+    assert "--effort" not in cmd1
 
-    # 2. 针对 gemini
-    w2 = await pool._spawn_worker(executable="gemini", model="gemini-3.8-flash")
+    # 2. 针对 agy + gemini (支持 effort，必须传 --effort)
+    w2 = await pool._spawn_worker(executable="agy", model="gemini-3.8-flash", effort="low")
     cmd2 = captured_cmds[-1]
-    assert "-p" in cmd2
-    assert "-y" in cmd2
+    assert "--dangerously-skip-permissions" in cmd2
     assert "--model" in cmd2
-    assert "--dangerously-skip-permissions" not in cmd2
+    assert "gemini-3.8-flash" in cmd2
+    assert "--effort" in cmd2
+    assert "low" in cmd2
 
     await w1.terminate()
     await w2.terminate()

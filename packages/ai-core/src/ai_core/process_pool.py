@@ -384,10 +384,14 @@ class PrewarmedProcessPool:
             exe,
             "--dangerously-skip-permissions",
             "--model", effective_model,
-            "--effort", target_effort,
             "--input-format", "stream-json",
             "--output-format", "stream-json",
         ]
+
+        # 仅当模型支持时 (如 Gemini 家族) 传递 --effort，严禁传给 Claude/OSS 模型
+        from ai_core.models import model_supports_effort
+        if model_supports_effort(effective_model) and target_effort:
+            cmd_args.extend(["--effort", target_effort])
 
         # 部分版本支持 --disable-slash-commands
         cmd_args.append("--disable-slash-commands")
@@ -470,16 +474,11 @@ class PrewarmedProcessPool:
         target_m = model or "gemini-3.8-flash"
         target_e = effort or "low"  # 预热默认 low，覆盖 agent 最常用场景
 
-        first = True
         while self._is_active:
-            # 第一个 Worker 立即拉起，后续错峰休眠，避免 CPU 瞬间打满
-            if first:
-                first = False
-            else:
-                try:
-                    await asyncio.sleep(ai_config.CLI_SPAWN_STAGGER_DELAY)
-                except asyncio.CancelledError:
-                    break
+            try:
+                await asyncio.sleep(ai_config.CLI_SPAWN_STAGGER_DELAY)
+            except asyncio.CancelledError:
+                break
 
             # 检查是否已达到设定的待命上限
             async with self._lock:

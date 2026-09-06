@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import json
 import uuid
 import glob
@@ -202,7 +203,7 @@ class CLIProcessProvider(BaseAIProvider):
             else:
                 cmd_args.append(arg)
 
-        # 针对不同 CLI 工具进行无头非交互模式安全自适应
+        effective_model = model or "gemini-3.8-flash"
         exe_lower = os.path.basename(resolved_exe).lower()
         if "gemini" in exe_lower:
             # gemini-cli: 使用 -y 开启无头非交互模式
@@ -214,7 +215,6 @@ class CLIProcessProvider(BaseAIProvider):
             # Google agy 与 Claude CLI 均使用 --dangerously-skip-permissions (严禁传 -y 和 -m)
             if "--dangerously-skip-permissions" not in cmd_args:
                 cmd_args.append("--dangerously-skip-permissions")
-            effective_model = model or "gemini-3.8-flash"
             if "--model" not in cmd_args:
                 cmd_args.extend(["--model", effective_model])
 
@@ -227,7 +227,8 @@ class CLIProcessProvider(BaseAIProvider):
         else:
             target_effort = str(target_effort).strip().lower()
 
-        if target_effort and "--effort" not in cmd_args:
+        from ai_core.models import model_supports_effort
+        if model_supports_effort(effective_model) and target_effort and "--effort" not in cmd_args:
             cmd_args.extend(["--effort", target_effort])
 
         needs_stdin = not has_prompt_placeholder
@@ -294,8 +295,58 @@ class CLIProcessProvider(BaseAIProvider):
         else:
             effort = str(effort).strip().lower()
 
-        # 针对默认 agy / gemini 走独占预热待命池，达到零冷启动
+        # 针对默认 agy / gemini 走粘性会话 Worker 或独占预热待命池
         if ("agy" in exe_lower or "gemini" in exe_lower) and not kwargs.get("args_template"):
+            from ai_core.session_manager import session_manager, resolve_session_id
+            session_id = kwargs.get("session_id")
+            user = kwargs.get("user")
+            effective_sid, is_ephemeral = resolve_session_id(
+                explicit_session_id=session_id,
+                messages=messages,
+                user=user
+            )
+
+            # 1. 粘性长效会话模式 (Session-Sticky with Delta Slicing)
+            if not is_ephemeral:
+                session_entry = await session_manager.get_or_create_session(
+                    session_id=effective_sid,
+                    executable=self.executable,
+                    model=kwargs.get("model"),
+                    effort=effort,
+                    env=self._get_env()
+                )
+                async with session_entry.lock:
+                    prev_count = session_entry.messages_processed
+                    curr_count = len(messages)
+                    if prev_count > 0 and curr_count > prev_count:
+                        delta_msgs = messages[prev_count:]
+                        prompt_to_send = self._format_messages_to_prompt(delta_msgs, tools=tools)
+                        logger.info(
+                            f"[CLIProcessProvider] ✂️ 会话 {effective_sid} 增量裁剪: "
+                            f"外部 {curr_count} 条，此前已处理 {prev_count} 条，发送新增 {len(delta_msgs)} 条"
+                        )
+                    else:
+                        prompt_to_send = prompt
+
+                    try:
+                        content_text = await session_entry.worker.execute(prompt_to_send, timeout=timeout)
+                        session_entry.messages_processed = curr_count + 1
+                        session_entry.last_active = time.time()
+
+                        clean_content, parsed_tools = self._parse_tool_calls_from_text(content_text)
+                        return AIResponse(
+                            content=clean_content,
+                            tool_calls=parsed_tools,
+                            model=self.executable,
+                            provider_type="cli",
+                            finish_reason="tool_calls" if parsed_tools else "stop",
+                            raw_response={"stdout": content_text}
+                        )
+                    except (Exception, asyncio.CancelledError):
+                        await session_manager.close_session(effective_sid)
+                        raise
+
+            # 2. 一次性无会话模式：从预热池获取 Worker，用完即焚
             from ai_core.process_pool import prewarmed_process_pool
             worker = await prewarmed_process_pool.acquire_worker(
                 executable=self.executable,
@@ -385,8 +436,59 @@ class CLIProcessProvider(BaseAIProvider):
         else:
             effort = str(effort).strip().lower()
 
-        # 针对默认 agy / gemini 走独占预热待命池，达到零冷启动
+        # 针对默认 agy / gemini 走粘性会话 Worker 或独占预热待命池
         if ("agy" in exe_lower or "gemini" in exe_lower) and not kwargs.get("args_template"):
+            from ai_core.session_manager import session_manager, resolve_session_id
+            session_id = kwargs.get("session_id")
+            user = kwargs.get("user")
+            effective_sid, is_ephemeral = resolve_session_id(
+                explicit_session_id=session_id,
+                messages=messages,
+                user=user
+            )
+
+            # 1. 粘性长效会话模式 (Session-Sticky with Delta Slicing)
+            if not is_ephemeral:
+                session_entry = await session_manager.get_or_create_session(
+                    session_id=effective_sid,
+                    executable=self.executable,
+                    model=kwargs.get("model"),
+                    effort=effort,
+                    env=self._get_env()
+                )
+                async with session_entry.lock:
+                    prev_count = session_entry.messages_processed
+                    curr_count = len(messages)
+                    if prev_count > 0 and curr_count > prev_count:
+                        delta_msgs = messages[prev_count:]
+                        prompt_to_send = self._format_messages_to_prompt(delta_msgs, tools=tools)
+                        logger.info(
+                            f"[CLIProcessProvider Stream] ✂️ 会话 {effective_sid} 增量裁剪: "
+                            f"外部 {curr_count} 条，此前已处理 {prev_count} 条，发送新增 {len(delta_msgs)} 条"
+                        )
+                    else:
+                        prompt_to_send = prompt
+
+                    completed = False
+                    try:
+                        async for chunk in session_entry.worker.execute_and_stream(prompt_to_send, timeout=timeout):
+                            yield chunk
+
+                        completed = True
+                        session_entry.messages_processed = curr_count + 1
+                        session_entry.last_active = time.time()
+                    except Exception as e:
+                        logger.error(f"[CLIProcessProvider Stream] 会话 {effective_sid} 执行异常: {e}")
+                        await session_manager.close_session(effective_sid)
+                        raise
+                    except asyncio.CancelledError:
+                        if not completed:
+                            logger.info(f"[CLIProcessProvider Stream] 客户端中途取消会话 {effective_sid}，清理 Worker")
+                            await session_manager.close_session(effective_sid)
+                        raise
+                return
+
+            # 2. 一次性无会话模式：从预热池获取 Worker，用完即焚
             from ai_core.process_pool import prewarmed_process_pool
             worker = await prewarmed_process_pool.acquire_worker(
                 executable=self.executable,

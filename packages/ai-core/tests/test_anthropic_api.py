@@ -184,7 +184,7 @@ async def test_anthropic_agt_model_routing(monkeypatch):
         resp2 = await client.post("/v1/messages", headers=VALID_ANTHROPIC_HEADER, json=payload2)
         assert resp2.status_code == 200
         assert captured_kwargs.get("provider_type") == "cli"
-        assert captured_kwargs.get("model") == "claude-sonnet-4.6"
+        assert captured_kwargs.get("model") == "claude-sonnet-4-6"
 
 @pytest.mark.asyncio
 async def test_anthropic_client_disconnect_cancels_and_cleans_worker(monkeypatch):

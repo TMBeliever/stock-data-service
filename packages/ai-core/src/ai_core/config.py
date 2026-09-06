@@ -23,9 +23,13 @@ class AIConfig(BaseSettings):
 
     # 独占预热待命池配置 (Pre-warmed Standby Pool - 彻底无状态 + 零冷启动)
     CLI_STANDBY_POOL_SIZE: int = 4  # 活跃期待命 4 个已预热就绪的进程 (~640MB，随调随走)
-    CLI_MAX_CONCURRENCY: int = 4    # 系统允许最大并发推演进程上限 (4 个完全独立物理进程)
+    CLI_MAX_CONCURRENCY: int = 8    # 系统允许最大并发推演进程上限 (4 个待命 + 4 个进行中会话)
     CLI_SPAWN_STAGGER_DELAY: float = 2.0  # 温和启动间隔 (秒)：错峰逐个拉起，杜绝 CPU 瞬间打满
     CLI_POOL_IDLE_TIMEOUT: float = 300.0  # 闲置超过 5 分钟无请求自动销毁待命进程，内存归零 (Scale-to-Zero)
+
+    # 粘性会话 Worker 配置 (Session-Sticky + 增量裁剪，彻底消灭多轮对话冷启动与上下文重复)
+    CLI_SESSION_IDLE_TIMEOUT: float = 600.0  # 会话闲置 10 分钟自动销毁并释放 Worker
+    CLI_SESSION_MAX_WORKERS: int = 6         # 允许维持的粘性长效会话 Worker 最大数量
 
     # 对外 OpenAI 兼容接口固定安全鉴权密钥 (仅授权持有该 key 的客户端调用)
     GATEWAY_API_KEY: str = "sk-quant-agy-8f92e10c74b6"

@@ -89,6 +89,12 @@ def _resolve_provider_and_kwargs(req: AnthropicMessagesRequest) -> tuple[str, Di
     provider_type, target_model = resolve_agt_model(model_name)
     extra_kwargs["effort"] = "medium"
     extra_kwargs["reasoning_effort"] = "medium"
+    if req.metadata:
+        if "user_id" in req.metadata:
+            extra_kwargs["user"] = str(req.metadata["user_id"])
+        if "session_id" in req.metadata:
+            extra_kwargs["session_id"] = str(req.metadata["session_id"])
+
     if provider_type == "cli":
         extra_kwargs["executable"] = "agy"
         extra_kwargs["model"] = target_model

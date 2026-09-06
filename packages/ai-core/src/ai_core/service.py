@@ -12,12 +12,15 @@ from ai_core.orchestrator import ai_orchestrator
 from ai_core.openai_api import openai_router
 from ai_core.anthropic_api import anthropic_router
 from ai_core.process_pool import prewarmed_process_pool
+from ai_core.session_manager import session_manager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期管理：启动独占预热待命池巡检，退出时全量释放所有进程资源"""
+    """应用生命周期管理：启动独占预热待命池与粘性会话巡检，退出时全量释放所有进程资源"""
     prewarmed_process_pool.start()
+    session_manager.start()
     yield
+    await session_manager.shutdown()
     await prewarmed_process_pool.shutdown()
 
 app = FastAPI(
@@ -92,7 +95,7 @@ async def root():
 
 @app.get("/v1/pool/status", tags=["System"])
 async def pool_status():
-    """预热进程池实时状态诊断：查看待命/活跃 Worker 数量与池子健康状态"""
+    """预热进程池实时状态诊断：查看待命/活跃 Worker 数量、粘性会话数与健康状态"""
     pool = prewarmed_process_pool
     standby_count = pool._standby_queue.qsize()
     active_count = len(pool._active_processes)
@@ -106,6 +109,7 @@ async def pool_status():
         "sweeper_running": pool._sweeper_task is not None and not pool._sweeper_task.done(),
         "spawn_stagger_delay_s": ai_config.CLI_SPAWN_STAGGER_DELAY,
         "idle_timeout_s": ai_config.CLI_POOL_IDLE_TIMEOUT,
+        "session_info": session_manager.get_status()
     }
 
 @app.post("/api/v1/ai/generate", response_model=AIResponse, tags=["AI Generation"])

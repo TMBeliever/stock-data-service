@@ -6,24 +6,43 @@ import AuthModal from '@/components/AuthModal.vue'
 import GlobalFloatingAiAssistant from '@/components/GlobalFloatingAiAssistant.vue'
 import GlobalFloatingBacktestCockpit from '@/components/strategy/GlobalFloatingBacktestCockpit.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useAiStore } from '@/stores/ai'
 
 const authStore = useAuthStore()
+const aiStore = useAiStore()
 const showPalette = ref(false)
 
 function onGlobalKeydown(e: KeyboardEvent) {
-  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+  if (e.defaultPrevented) return
+
+  // 1. ⌘+K 全局检索与命令面板
+  if ((e.metaKey || e.ctrlKey) && (e.key?.toLowerCase() === 'k' || e.code === 'KeyK')) {
     e.preventDefault()
     showPalette.value = !showPalette.value
+    return
   }
+
+  // 2. ⌘+J 呼出/收起全站 AI 助手 (根组件兜底保证任何视口均能响应)
+  if ((e.metaKey || e.ctrlKey) && (e.key?.toLowerCase() === 'j' || e.code === 'KeyJ')) {
+    e.preventDefault()
+    aiStore.toggleOpen()
+    return
+  }
+}
+
+function handleOpenPalette() {
+  showPalette.value = true
 }
 
 onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown)
+  window.addEventListener('open-command-palette', handleOpenPalette)
   authStore.initAuth()
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
+  window.removeEventListener('open-command-palette', handleOpenPalette)
 })
 </script>
 

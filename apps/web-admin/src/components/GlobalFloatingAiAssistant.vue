@@ -964,9 +964,10 @@ function onWindowResize() {
   }
 }
 
-// 全局快捷键支持 (⌘+J 呼出，Esc 中断推演)
+// 全局快捷键支持 (⌘+J / Ctrl+J 呼出/收起，Esc 中断推演)
 function handleGlobalKeydown(e: KeyboardEvent) {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
+  if (e.defaultPrevented) return
+  if ((e.metaKey || e.ctrlKey) && (e.key?.toLowerCase() === 'j' || e.code === 'KeyJ')) {
     e.preventDefault()
     aiStore.toggleOpen(triggerPos.value)
     return
@@ -1944,9 +1945,9 @@ onUnmounted(() => {
                           <div class="flex items-center justify-between pb-1 border-b border-white/[0.06]">
                             <span class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider flex items-center space-x-1">
                               <span>🤖</span>
-                              <span>推理模型 (默认 Lite 极速及前沿推演)</span>
+                              <span>推理模型矩阵 (内置 AI 服务直连)</span>
                             </span>
-                            <span class="text-[9px] text-emerald-400 font-mono">Key 驱动</span>
+                            <span class="text-[9px] text-emerald-400 font-mono">标准 API 驱动</span>
                           </div>
 
                           <div class="space-y-1 max-h-48 overflow-y-auto pr-0.5">

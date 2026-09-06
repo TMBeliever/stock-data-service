@@ -97,23 +97,12 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-// 全局 ⌘+K 聚焦搜索框
-function onGlobalKeydown(e: KeyboardEvent) {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-    e.preventDefault()
-    inputRef.value?.focus()
-    isOpen.value = true
-  }
-}
-
 onMounted(() => {
   document.addEventListener('click', onClickOutside)
-  window.addEventListener('keydown', onGlobalKeydown)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', onClickOutside)
-  window.removeEventListener('keydown', onGlobalKeydown)
 })
 
 // 选中标的跳转详情页
@@ -147,13 +136,8 @@ async function addWatchlist(item: SymbolItem, watchlistId: number, e: MouseEvent
   }
 }
 
-function toggleAddDropdown(sym: string, e: MouseEvent) {
-  e.stopPropagation()
-  if (addingSymbol.value === sym) {
-    addingSymbol.value = null
-  } else {
-    addingSymbol.value = sym
-  }
+function openPalette() {
+  window.dispatchEvent(new CustomEvent('open-command-palette'))
 }
 </script>
 
@@ -184,7 +168,11 @@ function toggleAddDropdown(sym: string, e: MouseEvent) {
       </button>
 
       <!-- 快捷键提示徽章 -->
-      <div class="hidden md:flex items-center space-x-0.5 px-1.5 py-0.5 rounded bg-white/[0.06] border border-white/[0.08] text-[10px] text-zinc-400 font-mono shrink-0">
+      <div
+        @click.stop="openPalette"
+        class="hidden md:flex items-center space-x-0.5 px-1.5 py-0.5 rounded bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.08] text-[10px] text-zinc-400 hover:text-white font-mono shrink-0 cursor-pointer transition-colors"
+        title="点击呼出全站命令面板 (⌘+K)"
+      >
         <span>⌘</span>
         <span>K</span>
       </div>

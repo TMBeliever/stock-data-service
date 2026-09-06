@@ -128,14 +128,14 @@ export interface AvailableModelItem {
   isDefault?: boolean
 }
 
-// 统一大模型网关支持的真实可用模型列表 (涵盖 Antigravity 原生预热池模型与外部 Key 代理模型)
+// 统一大模型网关支持的真实可用模型列表 (直连内部标准 OpenAI 格式服务，支持全系 agt-* 模型矩阵)
 export const AVAILABLE_MODELS: AvailableModelItem[] = [
   {
     id: 'agt-gemini-3.8-flash',
     name: 'Gemini 3.8 Flash (High)',
     series: 'Gemini',
     tag: '推荐默认',
-    description: 'Google 2026 前沿推理旗舰，毫秒级极速响应与全市场深度感知 (Antigravity 预热池直通，推荐默认)',
+    description: 'Google 2026 前沿推理旗舰，毫秒级极速响应与全市场深度感知 (内置 AI 网关直连，推荐默认)',
     isDefault: true,
     isLatest: true,
   },
@@ -144,42 +144,42 @@ export const AVAILABLE_MODELS: AvailableModelItem[] = [
     name: 'Claude 3.7 Sonnet (Thinking)',
     series: 'Claude',
     tag: '深度推理',
-    description: 'Anthropic 前沿推理旗舰，具备深度思维链与高难度量化代码编写能力 (Antigravity 预热池直通)',
+    description: 'Anthropic 前沿推理旗舰，具备深度思维链与高难度量化代码编写能力 (内置 AI 网关直连)',
   },
   {
     id: 'agt-gemini-3.7-flash',
     name: 'Gemini 3.7 Flash',
     series: 'Gemini',
     tag: '均衡推演',
-    description: 'Google 经典平衡旗舰，兼顾高推理质量与吞吐量 (Antigravity 预热池直通)',
+    description: 'Google 经典平衡旗舰，兼顾高推理质量与吞吐量 (内置 AI 网关直连)',
+  },
+  {
+    id: 'agt-gemini-3.6-flash',
+    name: 'Gemini 3.6 Flash',
+    series: 'Gemini',
+    tag: '快速轻量',
+    description: '稳定经典多模态基座，超低延迟快速响应 (内置 AI 网关直连)',
   },
   {
     id: 'agt-claude-opus-4.6',
     name: 'Claude 3.7 Opus',
     series: 'Claude',
     tag: '全能架构',
-    description: '超强全能综合架构模型，复杂量化系统设计与回测分析 (Antigravity 预热池直通)',
+    description: '超强全能综合架构模型，复杂量化系统设计与回测分析 (内置 AI 网关直连)',
   },
   {
     id: 'agt-gemini-3.1-pro',
     name: 'Gemini 3.1 Pro',
     series: 'Gemini',
     tag: '专业长文',
-    description: '专业级长上下文多模态推理模型 (Antigravity 预热池直通)',
+    description: '专业级长上下文多模态推理模型 (内置 AI 网关直连)',
   },
   {
-    id: 'minimax/minimax-m3:free',
-    name: 'MiniMax M3 (Free)',
-    series: 'MiniMax',
-    tag: '外部备选',
-    description: 'MiniMax 官方高推理大模型，代码编写与工具推演能力极强 (外部 Key 代理网关)',
-  },
-  {
-    id: 'gemini-flash-lite-latest',
-    name: 'Gemini Flash Lite',
-    series: 'Lite',
-    tag: '极速低延',
-    description: '轻量极速模型，毫秒级响应与超低延迟 (外部 Key 代理网关)',
+    id: 'agt-gpt-oss-120b',
+    name: 'GPT-OSS 120B',
+    series: 'OpenSource',
+    tag: '开源旗舰',
+    description: '开源大模型旗舰基座，极客量化微调与无约束推理 (内置 AI 网关直连)',
   },
 ]
 

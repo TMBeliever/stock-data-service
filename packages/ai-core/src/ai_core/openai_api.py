@@ -154,11 +154,11 @@ def _resolve_provider_and_kwargs(req: OpenAIChatCompletionRequest) -> tuple[str,
         extra_kwargs["temperature"] = req.temperature
 
     provider_type, target_model = resolve_agt_model(model_name)
-    effort_val = req.reasoning_effort or "medium"
+    effort_val = req.reasoning_effort or "low"  # 默认 low：最快，适合 agent 问答
     if str(effort_val).strip().lower() in ("", "off", "none"):
-        effort_val = "medium"
+        effort_val = "low"
     elif str(effort_val).strip().lower() not in ("low", "medium", "high"):
-        effort_val = "medium"
+        effort_val = "low"
     else:
         effort_val = str(effort_val).strip().lower()
 

@@ -277,16 +277,18 @@ class PrewarmedProcessPool:
         self._semaphore = asyncio.Semaphore(ai_config.CLI_MAX_CONCURRENCY)
         self._active_processes: Set[PrewarmedProcess] = set()
         self._lock = asyncio.Lock()
-        self._is_active: bool = False
+        self._is_active: bool = True  # 服务启动即激活，立即开始预热
         self._last_request_time: float = time.time()
         self._sweeper_task: Optional[asyncio.Task] = None
         self._fill_task: Optional[asyncio.Task] = None
 
     def start(self):
-        """启动后台空闲巡检回收协程"""
+        """启动后台空闲巡检回收协程，并立即激活预热填充"""
         ensure_writable_gemini_environment()
         if self._sweeper_task is None or self._sweeper_task.done():
             self._sweeper_task = asyncio.create_task(self._sweep_loop())
+        # 服务启动时立即开始预热，消灭第一个请求的冷启动延迟
+        self._ensure_gentle_fill_task()
 
     async def shutdown(self):
         """服务关闭：取消所有后台任务并清空全部待命进程与运行中进程"""
@@ -326,7 +328,7 @@ class PrewarmedProcessPool:
                 logger.error(f"[ProcessPool] 巡检异常: {e}")
 
     async def sweep_idle(self):
-        """闲置超过指定 TTL 则销毁待命队列进程 (Scale-to-Zero)"""
+        """闲置超过指定 TTL 则销毁待命队列进程 (Scale-to-Zero)；重新活跃后自动补位"""
         now = time.time()
         if self._is_active and (now - self._last_request_time > ai_config.CLI_POOL_IDLE_TIMEOUT):
             logger.info(
@@ -337,6 +339,8 @@ class PrewarmedProcessPool:
                 self._fill_task.cancel()
             await self.clear_standby()
             self._is_active = False
+        elif not self._is_active:
+            pass  # 已经是 Scale-to-Zero 状态，等待下次请求触发复活
 
     async def clear_standby(self):
         """清空待命队列中的全部进程"""
@@ -369,7 +373,7 @@ class PrewarmedProcessPool:
         # 思考程度参数 (--effort) 处理：必须显式指定 low, medium, high
         target_effort = effort
         if not target_effort or str(target_effort).strip().lower() in ("", "off", "none"):
-            target_effort = "medium"
+            target_effort = "low"  # 默认 low：agent 问答场景无需深度推理，最快
         elif str(target_effort).strip().lower() not in ("low", "medium", "high"):
             target_effort = "medium"
         else:
@@ -464,14 +468,18 @@ class PrewarmedProcessPool:
         避免瞬间并发拉起导致 CPU 飙至 100% 打满机器。
         """
         target_m = model or "gemini-3.8-flash"
-        target_e = effort or "medium"
+        target_e = effort or "low"  # 预热默认 low，覆盖 agent 最常用场景
 
+        first = True
         while self._is_active:
-            # 错峰休眠
-            try:
-                await asyncio.sleep(ai_config.CLI_SPAWN_STAGGER_DELAY)
-            except asyncio.CancelledError:
-                break
+            # 第一个 Worker 立即拉起，后续错峰休眠，避免 CPU 瞬间打满
+            if first:
+                first = False
+            else:
+                try:
+                    await asyncio.sleep(ai_config.CLI_SPAWN_STAGGER_DELAY)
+                except asyncio.CancelledError:
+                    break
 
             # 检查是否已达到设定的待命上限
             async with self._lock:
@@ -529,8 +537,11 @@ class PrewarmedProcessPool:
         else:
             req_e = str(req_e).strip().lower()
 
-        # 1. 尝试从待命队列原子取出与所请求 model & effort 匹配且健康就绪的进程
+        # 1. 两阶段匹配：优先精确命中 model+effort，退而求其次只匹配 model（忽略 effort 差异）
+        #    避免因 effort 不一致导致已就绪 Worker 白白浪费、触发冷启动
         mismatched: List[PrewarmedProcess] = []
+        model_only_fallback: Optional[PrewarmedProcess] = None
+
         while not self._standby_queue.empty():
             try:
                 candidate = self._standby_queue.get_nowait()
@@ -540,14 +551,28 @@ class PrewarmedProcessPool:
                 cand_m = candidate.model or "gemini-3.8-flash"
                 cand_e = candidate.effort or "medium"
                 if cand_m == req_m and cand_e == req_e:
+                    # 精确匹配：model + effort 完全一致，立即取用
                     worker = candidate
                     break
+                elif cand_m == req_m and model_only_fallback is None:
+                    # 模型匹配但 effort 不同：保留作为 fallback
+                    model_only_fallback = candidate
                 else:
                     mismatched.append(candidate)
             except asyncio.QueueEmpty:
                 break
 
-        # 将未匹配但健康的待命进程放回待命队列
+        if worker is None and model_only_fallback is not None:
+            # 无精确匹配，使用 model-only fallback（复用 Worker 原有 effort，避免 30s 冷启动）
+            worker = model_only_fallback
+            logger.info(
+                f"[ProcessPool] ⚡ effort 降级复用 Worker "
+                f"(req_effort={req_e}, worker_effort={worker.effort})"
+            )
+        elif model_only_fallback is not None:
+            mismatched.append(model_only_fallback)
+
+        # 将未使用且健康的待命进程放回待命队列
         for m in mismatched:
             try:
                 self._standby_queue.put_nowait(m)

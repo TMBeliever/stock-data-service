@@ -90,6 +90,24 @@ async def root():
         "health_url": "/health"
     }
 
+@app.get("/v1/pool/status", tags=["System"])
+async def pool_status():
+    """预热进程池实时状态诊断：查看待命/活跃 Worker 数量与池子健康状态"""
+    pool = prewarmed_process_pool
+    standby_count = pool._standby_queue.qsize()
+    active_count = len(pool._active_processes)
+    return {
+        "pool_is_active": pool._is_active,
+        "standby_ready": standby_count,
+        "standby_pool_size": ai_config.CLI_STANDBY_POOL_SIZE,
+        "active_in_use": active_count,
+        "max_concurrency": ai_config.CLI_MAX_CONCURRENCY,
+        "fill_task_running": pool._fill_task is not None and not pool._fill_task.done(),
+        "sweeper_running": pool._sweeper_task is not None and not pool._sweeper_task.done(),
+        "spawn_stagger_delay_s": ai_config.CLI_SPAWN_STAGGER_DELAY,
+        "idle_timeout_s": ai_config.CLI_POOL_IDLE_TIMEOUT,
+    }
+
 @app.post("/api/v1/ai/generate", response_model=AIResponse, tags=["AI Generation"])
 async def generate_completion(req: GenerateRequest):
     """单次生成：等待完整大模型输出并返回结构化响应"""

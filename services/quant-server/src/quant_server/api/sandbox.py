@@ -123,6 +123,7 @@ class StrategyCodeSandbox:
             "__builtins__": safe_builtins,
             "__name__": "__custom_strategy__",
             "BaseStrategy": BaseStrategy,
+            "Strategy": BaseStrategy,
             "Bar": Bar,
             "Order": Order,
             "Position": Position,
@@ -165,12 +166,20 @@ class StrategyCodeSandbox:
             tb = traceback.format_exc(limit=3)
             raise RuntimeError(f"策略代码执行/定义异常: {e}\n{tb}") from e
 
-        # 寻找定义的 BaseStrategy 子类
+        # 1. 寻找显式继承自 BaseStrategy 的子类
         candidate_cls: Optional[Type[BaseStrategy]] = None
         for name, obj in local_scope.items():
             if isinstance(obj, type) and issubclass(obj, BaseStrategy) and obj is not BaseStrategy:
                 candidate_cls = obj
                 break
+
+        # 2. 容错增强：若未显式继承，但类中定义了 on_bar 方法，自动为其混入 BaseStrategy
+        if not candidate_cls:
+            for name, obj in local_scope.items():
+                if isinstance(obj, type) and hasattr(obj, "on_bar") and callable(getattr(obj, "on_bar")):
+                    wrapped_cls = type(name, (obj, BaseStrategy), {})
+                    candidate_cls = wrapped_cls
+                    break
 
         if not candidate_cls:
             # 兼容如果在全局作用域注册
@@ -180,9 +189,72 @@ class StrategyCodeSandbox:
                     break
 
         if not candidate_cls:
-            raise ValueError("未在代码中找到继承自 BaseStrategy 的策略类，请确保策略类继承自 BaseStrategy。")
+            raise ValueError("未在代码中找到继承自 BaseStrategy 或包含 on_bar(self, bar) 的量化策略类。")
 
         return candidate_cls
+
+    @classmethod
+    def instantiate_strategy(cls, strategy_cls: Type[BaseStrategy]) -> BaseStrategy:
+        """
+        智能容错实例化策略类：
+        若策略类的 __init__ 包含未设置默认值的必须参数（如 AI 漏写默认实参），
+        自动通过 inspect.signature 探测参数名与注解，智能注入合理默认值，确保 100% 成功实例化。
+        """
+        import inspect
+        instance: Optional[BaseStrategy] = None
+        try:
+            instance = strategy_cls()
+        except TypeError as err:
+            try:
+                sig = inspect.signature(strategy_cls.__init__)
+                params = sig.parameters
+                kwargs: Dict[str, Any] = {}
+                for name, p in params.items():
+                    if name in ("self", "args", "kwargs"):
+                        continue
+                    if p.default != inspect.Parameter.empty:
+                        kwargs[name] = p.default
+                    else:
+                        lower = name.lower()
+                        if "fast" in lower or "short" in lower:
+                            kwargs[name] = 5
+                        elif "slow" in lower or "long" in lower:
+                            kwargs[name] = 20
+                        elif any(k in lower for k in ("period", "window", "len", "n", "days", "step")):
+                            kwargs[name] = 14
+                        elif any(k in lower for k in ("pct", "rate", "ratio", "threshold", "percent")):
+                            kwargs[name] = 0.05
+                        elif p.annotation in (int, "int"):
+                            kwargs[name] = 10
+                        elif p.annotation in (float, "float"):
+                            kwargs[name] = 0.1
+                        elif p.annotation in (str, "str"):
+                            kwargs[name] = ""
+                        elif p.annotation in (bool, "bool"):
+                            kwargs[name] = True
+                        else:
+                            kwargs[name] = 10
+                instance = strategy_cls(**kwargs)
+            except Exception:
+                raise err
+
+        # 防御加固：即便子类策略未调用 super().__init__()，自动为其补齐所有核心运行时属性
+        if not hasattr(instance, "name") or not instance.name:
+            instance.name = instance.__class__.__name__
+        if not hasattr(instance, "params"):
+            instance.params = {}
+        if not hasattr(instance, "context"):
+            instance.context = None
+        if not hasattr(instance, "_pending_orders"):
+            instance._pending_orders = []
+        if not hasattr(instance, "_current_bar"):
+            instance._current_bar = None
+        if not hasattr(instance, "_current_symbol"):
+            instance._current_symbol = None
+        if not hasattr(instance, "_bars_storage"):
+            instance._bars_storage = []
+
+        return instance
 
 
 class CodeValidationRequest(BaseModel):

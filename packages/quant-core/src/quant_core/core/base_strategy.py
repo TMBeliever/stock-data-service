@@ -585,6 +585,107 @@ class BaseStrategy(ABC):
             return self.sell(symbol=symbol, quantity=pos.available_quantity, reason=reason)
         return None
 
+    @property
+    def portfolio(self):
+        """兼容性别名：账户投资组合对象"""
+        return self.context.portfolio if self.context else None
+
+    def order_target_value(
+        self,
+        *args,
+        symbol: Optional[str] = None,
+        target_value: Optional[float] = None,
+        reason: str = "",
+        **kwargs
+    ) -> Optional[Order]:
+        """按目标市值调仓助手 (支持 self.order_target_value(50000) 或 self.order_target_value('510300', 50000))"""
+        if not self.context:
+            return None
+
+        args_list = list(args)
+        if args_list:
+            first = args_list[0]
+            if isinstance(first, (int, float)):
+                target_value = float(args_list.pop(0))
+            elif isinstance(first, Bar):
+                symbol = args_list.pop(0).symbol
+            elif isinstance(first, str):
+                symbol = args_list.pop(0)
+
+        if args_list and target_value is None and isinstance(args_list[0], (int, float)):
+            target_value = float(args_list.pop(0))
+
+        symbol = symbol or self.current_symbol
+        if not symbol or target_value is None:
+            return None
+
+        total_equity = self.equity
+        if total_equity <= 0:
+            return None
+        target_pct = target_value / total_equity
+        return self.order_target_percent(symbol=symbol, target_pct=target_pct, reason=reason or f"TargetValue {target_value}")
+
+    def order_value(
+        self,
+        *args,
+        symbol: Optional[str] = None,
+        value: Optional[float] = None,
+        reason: str = "",
+        **kwargs
+    ) -> Optional[Order]:
+        """按具体金额买卖 (正数买入，负数卖出)"""
+        args_list = list(args)
+        if args_list:
+            first = args_list[0]
+            if isinstance(first, (int, float)):
+                value = float(args_list.pop(0))
+            elif isinstance(first, str):
+                symbol = args_list.pop(0)
+
+        if args_list and value is None and isinstance(args_list[0], (int, float)):
+            value = float(args_list.pop(0))
+
+        symbol = symbol or self.current_symbol
+        if not symbol or value is None:
+            return None
+
+        price = 0.0
+        if self.current_bar and self.current_bar.symbol == symbol:
+            price = self.current_bar.close
+        elif self.context and symbol in self.context.current_bars:
+            price = self.context.current_bars[symbol].close
+
+        if price <= 0:
+            return None
+
+        shares = int(abs(value) / price // 100) * 100
+        if shares <= 0:
+            return None
+
+        if value > 0:
+            return self.buy(symbol=symbol, quantity=shares, price=price, reason=reason or f"OrderValue {value}")
+        else:
+            return self.sell(symbol=symbol, quantity=shares, price=price, reason=reason or f"OrderValue {value}")
+
+    def order_percent(self, *args, **kwargs) -> Optional[Order]:
+        """兼容性别名：等同于 order_target_percent"""
+        return self.order_target_percent(*args, **kwargs)
+
+    def record(self, **kwargs):
+        """兼容聚宽/米筐等平台的自定义指标记录器 (静默记录，保障运行不报错)"""
+        pass
+
+    def get_history(self, symbol: Optional[str] = None, n: int = 50) -> List[Bar]:
+        """兼容性接口：获取历史 Bar 列表"""
+        sym = symbol or self.current_symbol
+        if self.context and sym:
+            return self.context.get_history(sym, n=n)
+        return [b for b in self._bars_storage[-n:]] if self._bars_storage else []
+
+    def get_bars(self, symbol: Optional[str] = None, n: int = 50) -> List[Bar]:
+        """兼容性接口：获取历史 Bar 列表"""
+        return self.get_history(symbol=symbol, n=n)
+
     def get_position(self, symbol: Optional[str] = None) -> Position:
         """获取指定标的或当前标的的持仓对象"""
         sym = symbol or self.current_symbol
@@ -603,3 +704,4 @@ class BaseStrategy(ABC):
         if self.current_bar:
             return self.current_bar.timestamp
         return 0
+

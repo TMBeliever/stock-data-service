@@ -19,6 +19,30 @@ const showCheatSheet = ref(false)
 const showSaveModal = ref(false)
 const showMyStrategies = ref(false)
 const insertToast = ref('')
+const isDryRunning = ref(false)
+
+async function handleFastDryRun() {
+  if (isDryRunning.value) return
+  isDryRunning.value = true
+  insertToast.value = '⚡ 正在极速试跑预检 (30天数据)...'
+  try {
+    const res = await strategyStore.dryRunStrategy()
+    if (res.success) {
+      insertToast.value = '✅ 极速预检通过！未发现语法或运行时异常。'
+    } else {
+      insertToast.value = '⚠️ 预检发现异常，已为你唤起 AI 自动修复'
+      strategyStore.backtestError = res.error || '极速预检失败'
+      strategyStore.askAiToFixStrategy(res.error)
+    }
+  } catch (err: any) {
+    insertToast.value = `❌ 预检失败: ${err.message}`
+  } finally {
+    isDryRunning.value = false
+    setTimeout(() => {
+      insertToast.value = ''
+    }, 4000)
+  }
+}
 
 // 保存策略弹窗状态
 const saveMode = ref<'create' | 'update'>('create')
@@ -669,6 +693,17 @@ onUnmounted(() => {
         >
           <span>📋</span>
           <span class="hidden sm:inline">复制</span>
+        </button>
+
+        <!-- 最小日期极速预检按钮 -->
+        <button
+          @click="handleFastDryRun"
+          :disabled="isDryRunning"
+          class="px-2.5 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 hover:text-indigo-200 transition-all text-xs flex items-center space-x-1 cursor-pointer disabled:opacity-50"
+          title="以最小日期区间 (~30根Bar) 极速试跑验证代码逻辑与语法，发现错误自动呼叫 AI 自愈"
+        >
+          <span>{{ isDryRunning ? '⏳' : '⚡' }}</span>
+          <span class="hidden sm:inline">{{ isDryRunning ? '试跑中...' : '极速预检' }}</span>
         </button>
 
         <!-- 运行回测主按钮 -->

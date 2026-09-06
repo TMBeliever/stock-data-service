@@ -408,25 +408,56 @@ onMounted(() => {
           </button>
         </div>
 
-        <!-- 起止时间与本金 -->
-        <div class="flex items-center space-x-3 text-xs text-zinc-400">
-          <div class="flex items-center space-x-1.5">
-            <span>起始:</span>
+        <!-- 起止时间与快捷周期 -->
+        <div class="flex items-center space-x-2 text-xs text-zinc-400">
+          <div class="flex items-center space-x-2 px-2.5 py-1 rounded-xl bg-black/60 border border-white/[0.1] hover:border-amber-500/40 focus-within:border-amber-500/50 transition-colors font-mono">
+            <span class="text-amber-400 text-xs">📅</span>
             <input
               v-model="strategyStore.startDate"
               type="date"
-              class="bg-black/50 border border-white/[0.1] rounded-lg px-2 py-0.5 text-xs text-white focus:outline-none focus:border-amber-500/50 font-mono"
+              style="color-scheme: dark"
+              class="bg-transparent text-amber-200 focus:outline-none cursor-pointer font-mono text-xs w-[105px]"
             />
+            <span class="text-zinc-500">至</span>
+            <input
+              v-model="strategyStore.endDate"
+              type="date"
+              style="color-scheme: dark"
+              placeholder="至今(最新日)"
+              class="bg-transparent text-amber-200 focus:outline-none cursor-pointer font-mono text-xs w-[105px]"
+            />
+            <button
+              v-if="strategyStore.endDate"
+              @click="strategyStore.endDate = ''"
+              class="text-[10px] text-zinc-400 hover:text-amber-300 font-sans px-1 rounded hover:bg-white/[0.08]"
+              title="清空截止日期，默认回测至最新日"
+            >
+              至最新
+            </button>
           </div>
-          <div class="flex items-center space-x-1.5">
-            <span>本金:</span>
+
+          <!-- 快捷周期预设 -->
+          <div class="hidden md:flex items-center space-x-1 text-[11px]">
+            <button
+              v-for="r in [{ l: '近半年', v: 'half_year' }, { l: '近1年', v: '1y' }, { l: '近3年', v: '3y' }, { l: '近5年', v: '5y' }, { l: '近10年', v: '10y' }, { l: '近20年全历史', v: 'all' }]"
+              :key="r.v"
+              @click="strategyStore.setQuickDateRange(r.v as any)"
+              class="px-2 py-0.8 rounded-lg bg-white/[0.04] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.08] border border-white/[0.06] transition-all cursor-pointer whitespace-nowrap"
+            >
+              {{ r.l }}
+            </button>
+          </div>
+
+          <!-- 本金 -->
+          <div class="flex items-center space-x-1.5 ml-1">
+            <span class="text-[11px]">本金:</span>
             <div class="relative flex items-center">
               <span class="absolute left-2 text-zinc-500 font-mono text-[11px]">¥</span>
               <input
                 v-model.number="strategyStore.initialCash"
                 type="number"
                 step="10000"
-                class="w-24 pl-5 pr-1.5 py-0.5 bg-black/50 border border-white/[0.1] rounded-lg text-xs font-mono font-semibold text-white focus:outline-none focus:border-amber-500/50"
+                class="w-24 pl-5 pr-1.5 py-0.5 bg-black/60 border border-white/[0.1] rounded-lg text-xs font-mono font-semibold text-white focus:outline-none focus:border-amber-500/50"
               />
             </div>
           </div>
@@ -623,12 +654,22 @@ onMounted(() => {
     <!-- 2. 错误告警区 -->
     <div
       v-if="strategyStore.backtestError"
-      class="m-4 p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 space-y-1 animate-fadeIn"
+      class="m-4 p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 space-y-2 animate-fadeIn"
     >
-      <div class="flex items-center space-x-2 font-bold text-red-400">
-        <span>⚠️ 回测中断告警</span>
+      <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-2 font-bold text-red-400">
+          <span>⚠️ 回测中断告警</span>
+        </div>
+        <button
+          @click="strategyStore.askAiToFixStrategy()"
+          class="px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 text-xs font-semibold transition-all cursor-pointer flex items-center space-x-1.5 shadow-sm active:scale-95"
+          title="将报错信息与当前代码发送给 AI 助手进行诊断修复"
+        >
+          <span>🤖</span>
+          <span>AI 一键诊断修复</span>
+        </button>
       </div>
-      <p class="font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap">
+      <p class="font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap max-h-52 overflow-y-auto bg-black/30 p-2.5 rounded-lg border border-red-500/10">
         {{ strategyStore.backtestError }}
       </p>
     </div>

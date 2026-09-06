@@ -366,8 +366,8 @@ function formatArgs(args: Record<string, any> | undefined): string {
     .join('  ')
 }
 
-// 事件代理：捕获 Markdown 代码块内的“复制”与“载入工作台”按钮点击
-function onChatContainerClick(e: MouseEvent) {
+// 事件代理：捕获 Markdown 代码块内的“复制”、“载入工作台”与“极速试跑回测”按钮点击
+async function onChatContainerClick(e: MouseEvent) {
   const target = e.target as HTMLElement
   const copyBtn = target.closest('.copy-code-btn') as HTMLElement
   if (copyBtn) {
@@ -375,6 +375,30 @@ function onChatContainerClick(e: MouseEvent) {
     if (rawEncoded) {
       const code = decodeURIComponent(rawEncoded)
       copyText(code)
+      return
+    }
+  }
+
+  const runBtn = target.closest('.run-backtest-btn') as HTMLElement
+  if (runBtn) {
+    const rawEncoded = runBtn.getAttribute('data-code') || ''
+    if (rawEncoded) {
+      const code = decodeURIComponent(rawEncoded)
+      showToast('⚡ 正在对策略进行最小日期极速试跑预检 (30天数据)...')
+      try {
+        const dryRes = await strategyStore.dryRunStrategy(code)
+        if (dryRes.success) {
+          showToast('✅ 极速试跑验证通过！正在载入工作台并开启回测')
+          strategyStore.applyCodeToEditor(code)
+          strategyStore.openBacktestCockpit({ autoRun: true })
+        } else {
+          showToast('⚠️ 策略试跑未通过，已自动提交 AI 进行诊断与修复...')
+          strategyStore.askAiToFixStrategy(dryRes.error, code)
+        }
+      } catch (err: any) {
+        showToast('⚠️ 策略试跑未通过，已自动提交 AI 进行诊断与修复...')
+        strategyStore.askAiToFixStrategy(err?.message || '试跑通信异常', code)
+      }
       return
     }
   }

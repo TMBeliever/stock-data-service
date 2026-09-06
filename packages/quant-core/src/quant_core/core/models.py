@@ -61,9 +61,19 @@ class Bar(BaseModel):
         return datetime.datetime.fromtimestamp(self.timestamp / 1000.0, datetime.timezone.utc)
 
     @property
+    def datetime(self) -> datetime.datetime:
+        """兼容性别名：日期时间对象"""
+        return self.dt
+
+    @property
     def date_str(self) -> str:
         """YYYY-MM-DD 日期字符串"""
         return self.dt.strftime("%Y-%m-%d")
+
+    @property
+    def date(self) -> str:
+        """兼容性别名：YYYY-MM-DD 日期字符串"""
+        return self.date_str
 
     @property
     def change(self) -> float:

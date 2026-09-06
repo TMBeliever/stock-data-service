@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAiStore } from '@/stores/ai'
+import { useCodexWorkspaceStore } from '@/stores/codexWorkspace'
 
 export interface UserStrategyItem {
   id: number
@@ -631,18 +632,23 @@ export const useStrategyStore = defineStore('strategy', () => {
       const d = new Date()
       d.setFullYear(d.getFullYear() - 1)
       startDate.value = d.toISOString().split('T')[0]
-    } else if (rangeType === '2y') {
-      const d = new Date()
-      d.setFullYear(d.getFullYear() - 2)
-      startDate.value = d.toISOString().split('T')[0]
     } else if (rangeType === '3y') {
       const d = new Date()
       d.setFullYear(d.getFullYear() - 3)
       startDate.value = d.toISOString().split('T')[0]
-    } else if (rangeType === '2023') {
-      startDate.value = '2023-01-01'
-    } else if (rangeType === 'all') {
-      startDate.value = '2020-01-01'
+    } else if (rangeType === '5y') {
+      const d = new Date()
+      d.setFullYear(d.getFullYear() - 5)
+      startDate.value = d.toISOString().split('T')[0]
+    } else if (rangeType === '10y') {
+      const d = new Date()
+      d.setFullYear(d.getFullYear() - 10)
+      startDate.value = d.toISOString().split('T')[0]
+    } else if (rangeType === 'all' || rangeType === '20y') {
+      // 全历史：往前推算20年 (跨越完整牛熊周期与重大金融周期)
+      const d = new Date()
+      d.setFullYear(d.getFullYear() - 20)
+      startDate.value = `${d.getFullYear()}-01-01`
     }
   }
 
@@ -947,6 +953,78 @@ class MyCustomStrategy(BaseStrategy):
     } finally {
       isBacktesting.value = false
     }
+  }
+
+  // 极速试跑预检 (以最小日期区间 ~30 根 Bar 极速验证策略可运行性与语法)
+  async function dryRunStrategy(customCode?: string, customSymbol?: string): Promise<{ success: boolean; error?: string; message?: string }> {
+    const targetCode = (customCode || code.value).trim()
+    const targetSymbol = (customSymbol || symbol.value || '510300.SH.ETF').trim()
+
+    if (!targetCode) {
+      return { success: false, error: '策略代码不能为空' }
+    }
+
+    try {
+      const resp = await fetch('/api/v1/backtest/run-custom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: targetSymbol,
+          code: targetCode,
+          dry_run: true,
+          initial_cash: 100000.0,
+        }),
+      })
+
+      const data = await resp.json()
+      if (!resp.ok) {
+        return {
+          success: false,
+          error: data.detail || '极速试跑执行失败',
+        }
+      }
+
+      return {
+        success: true,
+        message: data.message || '策略极速试跑验证通过',
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err.message || '试跑通信异常',
+      }
+    }
+  }
+
+  // 一键唤起 AI 对话助手进行策略报错自愈修复
+  function askAiToFixStrategy(customError?: string, customCode?: string) {
+    const err = (customError || backtestError.value || '未知执行异常').trim()
+    const currentCode = (customCode || code.value || '').trim()
+
+    const aiStore = useAiStore()
+    const codexStore = useCodexWorkspaceStore()
+
+    // 1. 打开 AI 悬浮舱
+    aiStore.open()
+
+    // 2. 构造自愈 Prompt
+    const fixPrompt = `【策略回测报错自愈请求】
+我刚刚在量化工作台中运行策略时遇到了执行异常，请帮我分析原因并直接给出修复后的完整可用 Python 策略代码：
+
+【报错信息 / Traceback】
+\`\`\`text
+${err}
+\`\`\`
+
+【出问题的策略源码】
+\`\`\`python
+${currentCode}
+\`\`\`
+
+请针对上述报错指出具体根因，并给出修复后的完整策略源码（继承 BaseStrategy，实现 on_bar，做好预热与安全防护，确保可以直接在沙箱中回测运行成功）。`
+
+    // 3. 自动发送给 AI 助理并触发自愈推演
+    codexStore.sendMessage(fixPrompt)
   }
 
   // 拉取用户自选组合列表 (纯真实用户自定义，支持本地快速还原与云端优雅同步)
@@ -1371,6 +1449,8 @@ class MyStrategy(BaseStrategy):
     loadPresetWatchlist,
     applyHoldingsToBacktest,
     runBacktest,
+    dryRunStrategy,
+    askAiToFixStrategy,
     sendAiMessage,
     extractPythonCode,
     fetchUserStrategies,

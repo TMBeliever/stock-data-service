@@ -53,8 +53,12 @@ marked.use({
     <div class="flex items-center space-x-2 text-zinc-400">
       ${
         isPythonOrStrategy
-          ? `<button class="apply-editor-btn hover:text-amber-400 transition-colors cursor-pointer flex items-center space-x-1 px-1.5 py-0.5 rounded hover:bg-white/[0.06]" data-code="${encodedCode}" title="载入代码到量化工作台编辑器">
+          ? `<button class="run-backtest-btn text-amber-400 hover:text-amber-300 transition-colors cursor-pointer flex items-center space-x-1 px-2 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 font-bold" data-code="${encodedCode}" title="载入代码并立即运行回测">
               <span>⚡</span>
+              <span>载入并回测</span>
+            </button>
+            <button class="apply-editor-btn hover:text-white transition-colors cursor-pointer flex items-center space-x-1 px-1.5 py-0.5 rounded hover:bg-white/[0.06]" data-code="${encodedCode}" title="仅载入代码到量化工作台编辑器">
+              <span>📝</span>
               <span>载入工作台</span>
             </button>`
           : ''

@@ -196,3 +196,43 @@ class MultiSymbolTestStrategy(BaseStrategy):
     assert len(data["benchmark_records"]) > 0
 
 
+def test_endpoint_run_custom_dry_run():
+    payload = {
+        "symbol": "510300.SH.ETF",
+        "code": VALID_MA_CODE,
+        "dry_run": True,
+        "initial_cash": 100000.0
+    }
+    response = client.post("/api/v1/backtest/run-custom", json=payload)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["dry_run"] is True
+    assert data["bars_tested"] > 0
+    assert "验证通过" in data["message"]
+
+
+def test_endpoint_run_custom_dry_run_runtime_error():
+    # 策略在运行时故意除以 0 抛出异常
+    broken_code = """
+from quant_core.core.base_strategy import BaseStrategy
+from quant_core.core.models import Bar
+
+class BrokenStrategy(BaseStrategy):
+    def on_bar(self, bar: Bar):
+        x = 1 / 0
+"""
+    payload = {
+        "symbol": "510300.SH.ETF",
+        "code": broken_code,
+        "dry_run": True,
+        "initial_cash": 100000.0
+    }
+    response = client.post("/api/v1/backtest/run-custom", json=payload)
+    assert response.status_code == 500
+    err = response.json()["detail"]
+    assert "division by zero" in err
+    assert "Traceback" in err
+
+
+

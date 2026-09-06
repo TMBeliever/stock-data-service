@@ -334,10 +334,14 @@ async def list_user_strategies(
     result = await db.execute(stmt)
     strategies = list(result.scalars().all())
 
-    # 若用户的策略库中尚未包含任何预置策略（如老用户数据迁移、或首次访问），自动为其补全 4 套初始标准策略
+    # 检查是否缺失官方预置策略（如老用户缺少系统后续新加入的第 5 套达利欧全天候策略），自动为其补齐
     preset_names = {p["name"] for p in DEFAULT_PRESET_STRATEGIES}
     existing_names = {s.name for s in strategies}
+    missing_presets = [p for p in DEFAULT_PRESET_STRATEGIES if p["name"] not in existing_names]
+
+    need_commit = False
     if not (existing_names & preset_names):
+        # 1. 全新用户：全量初始化所有官方预置策略
         for preset in DEFAULT_PRESET_STRATEGIES:
             strat = UserStrategy(
                 user_id=current_user.id,
@@ -347,9 +351,23 @@ async def list_user_strategies(
                 symbol=preset["symbol"]
             )
             db.add(strat)
-        await db.commit()
+        need_commit = True
+    elif missing_presets and len(existing_names & preset_names) >= 2:
+        # 2. 老用户增量平滑迁移：用户保留着大部分官方策略，自动补齐缺失的新官方策略
+        for preset in missing_presets:
+            strat = UserStrategy(
+                user_id=current_user.id,
+                name=preset["name"],
+                description=preset["description"],
+                code=preset["code"],
+                symbol=preset["symbol"]
+            )
+            db.add(strat)
+        need_commit = True
 
-        # 重新获取已写入持久化数据库的策略列表
+    if need_commit:
+        await db.commit()
+        # 重新获取已写入持久化数据库的完整策略列表
         result = await db.execute(stmt)
         strategies = list(result.scalars().all())
 

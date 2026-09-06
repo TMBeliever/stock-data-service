@@ -19,7 +19,18 @@ const isMaximized = ref(false)
 const toastMsg = ref('')
 const singleSymbolInput = ref(strategyStore.symbol)
 const inputSymbolToAdd = ref('')
-const selectedQuickRange = ref<'half_year' | '1y' | '2y' | '3y' | '2023' | 'all'>('1y')
+const selectedQuickRange = ref<'half_year' | '1y' | '3y' | '5y' | '10y' | 'all'>('1y')
+const isDryRunning = ref(false)
+
+const quickRangeOptions = [
+  { l: '近半年', v: 'half_year' },
+  { l: '近1年', v: '1y' },
+  { l: '近3年', v: '3y' },
+  { l: '近5年', v: '5y' },
+  { l: '近10年', v: '10y' },
+  { l: '近20年全历史', v: 'all' },
+] as const
+
 const showArchiveModal = ref(false)
 const archiveNameInput = ref('')
 
@@ -84,11 +95,32 @@ function selectSinglePreset(item: { label: string; value: string }) {
   showToast(`🎯 已应用标的：${item.label}`)
 }
 
-// 快捷区间切换
-function applyDateRange(range: 'half_year' | '1y' | '2y' | '3y' | '2023' | 'all') {
+// 快捷区间切换 (全历史向前推算20年)
+function applyDateRange(range: 'half_year' | '1y' | '3y' | '5y' | '10y' | 'all') {
   selectedQuickRange.value = range
   strategyStore.setQuickDateRange(range)
-  showToast(`📅 时间跨度已应用：${strategyStore.startDate} 至 ${strategyStore.endDate || '最新'}`)
+  showToast(`📅 时间跨度已应用：${strategyStore.startDate} 至 ${strategyStore.endDate || '最新交易日'}`)
+}
+
+// 30天切片极速试跑
+async function handleCockpitDryRun() {
+  if (isDryRunning.value) return
+  isDryRunning.value = true
+  showToast('⚡ 正在对当前策略进行30天极速试跑预检...')
+  try {
+    const res = await strategyStore.dryRunStrategy()
+    if (res.success) {
+      showToast('✅ 极速试跑验证通过！未发现语法或运行时异常')
+    } else {
+      showToast('⚠️ 试跑未通过，已自动提交 AI 助手诊断修复...')
+      strategyStore.backtestError = res.error || '极速试跑失败'
+      strategyStore.askAiToFixStrategy(res.error)
+    }
+  } catch (err: any) {
+    showToast(`❌ 试跑异常: ${err.message}`)
+  } finally {
+    isDryRunning.value = false
+  }
 }
 
 // 批量添加组合标的
@@ -560,48 +592,31 @@ const chartOption = computed(() => {
         : { position: 'fixed', left: `${cockpitPos?.x ?? 40}px`, top: `${cockpitPos?.y ?? 70}px`, width: `${cockpitSize?.width ?? 920}px`, height: `${cockpitSize?.height ?? 680}px`, zIndex: 9999 }"
       class="bg-[#101218]/96 backdrop-blur-3xl border border-white/[0.14] rounded-2xl shadow-[0_30px_90px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden animate-fadeIn select-none"
     >
-      <!-- 2.1 顶部拖拽标题栏 (Header Drag Bar) -->
+      <!-- 2.1 顶部拖拽标题栏 (Header Drag Bar - 窗口控制与 AI 助手完全统一，居于最右) -->
       <div
         @mousedown="onHeaderMouseDown"
-        class="h-12 px-4 bg-white/[0.025] border-b border-white/[0.08] flex items-center justify-between cursor-move shrink-0"
+        class="h-12 px-4 bg-white/[0.03] border-b border-white/[0.08] flex items-center justify-between cursor-move shrink-0"
       >
-        <!-- 左侧：Mac 交通灯控制 + 标题 + 自定义策略下拉弹窗 -->
-        <div class="flex items-center space-x-3">
-          <!-- 优雅极简红黄绿点控制 -->
-          <div class="flex items-center space-x-1.5 pr-2 border-r border-white/[0.08]">
-            <button
-              @click="strategyStore.isBacktestCockpitOpen = false"
-              class="w-3 h-3 rounded-full bg-red-500/80 hover:bg-red-500 transition-colors flex items-center justify-center text-[8px] text-black/60 hover:text-black font-bold cursor-pointer"
-              title="关闭 (⌘+B)"
-            >✕</button>
-            <button
-              @click="strategyStore.isBacktestCockpitOpen = false"
-              class="w-3 h-3 rounded-full bg-amber-500/80 hover:bg-amber-500 transition-colors flex items-center justify-center text-[8px] text-black/60 hover:text-black font-bold cursor-pointer"
-              title="最小化"
-            >–</button>
-            <button
-              @click="isMaximized = !isMaximized"
-              class="w-3 h-3 rounded-full bg-emerald-500/80 hover:bg-emerald-500 transition-colors flex items-center justify-center text-[8px] text-black/60 hover:text-black font-bold cursor-pointer"
-              title="最大化 / 还原"
-            >+</button>
+        <!-- 左侧：图标徽章 + 标题面包屑 + 策略切换下拉 + 运行状态标签 (去除原先冲突的左侧 Mac 交通灯) -->
+        <div class="flex items-center space-x-2.5">
+          <div class="flex items-center space-x-1.5">
+            <span class="flex items-center justify-center w-6 h-6 rounded-lg bg-gradient-to-br from-amber-500/25 via-red-500/20 to-transparent border border-amber-500/30 text-amber-400 text-xs shadow-sm">
+              ⚡
+            </span>
+            <span class="text-xs font-bold text-white tracking-wide">量化回测工作舱</span>
           </div>
 
-          <div class="flex items-center space-x-2">
-            <span class="text-sm font-bold text-white tracking-tight">量化回测工作舱</span>
-            <span class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-gradient-to-r from-red-500/20 to-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
-              PRO
-            </span>
-          </div>
+          <span class="text-zinc-600 text-xs font-mono">/</span>
 
           <!-- 自定义高质感策略切换下拉 (Custom Strategy Popover) -->
           <div class="relative no-drag" ref="strategyDropdownRef">
             <button
               @click="showStrategyDropdown = !showStrategyDropdown"
-              class="flex items-center space-x-2 px-2.5 py-1 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.1] hover:border-amber-500/40 text-xs text-white transition-all cursor-pointer shadow-sm group"
-              title="点击切换策略模板"
+              class="flex items-center space-x-1.5 px-2.5 py-1 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.1] hover:border-amber-500/40 text-xs text-white transition-all cursor-pointer shadow-sm group"
+              title="点击切换当前回测策略"
             >
-              <span class="text-amber-400 font-mono text-[11px] bg-amber-400/10 px-1 py-0.2 rounded border border-amber-400/20">λ</span>
-              <span class="font-medium max-w-[150px] sm:max-w-[200px] truncate text-zinc-200 group-hover:text-white">
+              <span class="text-amber-400 font-mono text-[10px] bg-amber-400/10 px-1 py-0.2 rounded border border-amber-400/20">λ</span>
+              <span class="font-medium max-w-[150px] sm:max-w-[210px] truncate text-zinc-200 group-hover:text-white">
                 {{ currentStrategyName }}
               </span>
               <span
@@ -610,14 +625,14 @@ const chartOption = computed(() => {
               >▼</span>
             </button>
 
-            <!-- 策略弹窗卡片 -->
+            <!-- 策略弹窗卡片 (Dropdown) -->
             <transition name="fade">
               <div
                 v-if="showStrategyDropdown"
                 class="absolute left-0 mt-2 w-80 max-h-96 overflow-y-auto rounded-2xl bg-[#14161f]/98 border border-white/[0.14] shadow-2xl backdrop-blur-3xl p-2 z-50 animate-fadeIn"
               >
                 <div class="px-2.5 py-1.5 text-[10px] font-bold text-zinc-400 tracking-wider uppercase border-b border-white/[0.06]">
-                  🏛️ 内置经典策略模板
+                  🏛️ 官方经典策略库
                 </div>
                 <div class="space-y-1 py-1">
                   <div
@@ -662,15 +677,27 @@ const chartOption = computed(() => {
               </div>
             </transition>
           </div>
+
+          <!-- 引擎状态胶囊 -->
+          <span
+            class="hidden md:inline-flex items-center space-x-1.5 px-2 py-0.5 rounded-full text-[10px] font-mono border"
+            :class="strategyStore.isBacktesting ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'"
+          >
+            <span
+              class="w-1.5 h-1.5 rounded-full inline-block"
+              :class="strategyStore.isBacktesting ? 'bg-amber-400 animate-ping' : 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]'"
+            ></span>
+            <span>{{ strategyStore.isBacktesting ? '撮合推演中' : '沙箱就绪' }}</span>
+          </span>
         </div>
 
-        <!-- 右侧：运行按钮、全功能代码台、最大化、关闭 -->
+        <!-- 右侧：主操作按钮 + 窗口控制 (完全与 AI 助手一致，控制按钮位于最右侧) -->
         <div class="flex items-center space-x-2 no-drag">
           <!-- 运行回测主按钮 -->
           <button
             @click="strategyStore.runBacktest"
             :disabled="strategyStore.isBacktesting"
-            class="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-red-500 to-amber-500 hover:from-red-600 hover:to-amber-600 disabled:opacity-50 text-white font-bold text-xs shadow-lg shadow-red-500/25 flex items-center space-x-1.5 transition-all cursor-pointer group"
+            class="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-red-500 to-amber-500 hover:from-red-600 hover:to-amber-600 disabled:opacity-50 text-white font-bold text-xs shadow-lg shadow-red-500/25 flex items-center space-x-1.5 transition-all cursor-pointer active:scale-95 group"
             title="运行回测 (⌘+Enter)"
           >
             <span v-if="!strategyStore.isBacktesting">▶</span>
@@ -679,101 +706,168 @@ const chartOption = computed(() => {
             <span class="text-[10px] opacity-75 font-mono group-hover:opacity-100">⌘↵</span>
           </button>
 
+          <!-- 30天切片极速试跑按钮 -->
+          <button
+            @click="handleCockpitDryRun"
+            :disabled="isDryRunning"
+            class="px-2.5 py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.1] text-xs text-zinc-200 hover:text-white transition-all flex items-center space-x-1 cursor-pointer disabled:opacity-50"
+            title="以最近30天切片数据毫秒级预检代码逻辑与语法"
+          >
+            <span>⚡</span>
+            <span class="hidden sm:inline">{{ isDryRunning ? '试跑中...' : '30天试跑' }}</span>
+          </button>
+
           <!-- 展开全功能代码工作台 -->
           <button
             @click="router.push('/strategy'); showToast('已切换至全功能代码工作室')"
-            class="px-2.5 py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.08] text-zinc-300 hover:text-white transition-colors cursor-pointer text-xs flex items-center space-x-1"
+            class="p-1.5 rounded-xl hover:bg-white/[0.08] text-zinc-400 hover:text-white transition-colors cursor-pointer text-xs"
             title="打开全功能 Python 策略代码编辑器"
           >
-            <span>💻</span>
-            <span class="hidden sm:inline">代码台</span>
+            💻
+          </button>
+
+          <div class="h-4 w-px bg-white/[0.1] mx-0.5"></div>
+
+          <!-- 最大化 / 还原按钮 (与 AI 助手一致) -->
+          <button
+            @click="isMaximized = !isMaximized"
+            class="p-1.5 rounded-xl hover:bg-white/[0.08] text-zinc-400 hover:text-white transition-colors cursor-pointer text-xs"
+            :title="isMaximized ? '还原窗口' : '最大化窗口'"
+          >
+            <svg v-if="!isMaximized" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/>
+            </svg>
+            <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <rect x="6" y="6" width="15" height="15" rx="1.5" stroke-width="2"/>
+              <path d="M3 17V4a1 1 0 0 1 1-1h13" stroke-width="2"/>
+            </svg>
+          </button>
+
+          <!-- 关闭/收起按钮 (与 AI 助手一致，位于最右，红色悬停) -->
+          <button
+            @click="strategyStore.isBacktestCockpitOpen = false"
+            class="p-1.5 rounded-xl hover:bg-red-500/20 hover:text-red-300 text-zinc-400 transition-colors cursor-pointer text-xs"
+            title="收起工作舱 (⌘+B)"
+          >
+            ✕
           </button>
         </div>
       </div>
 
-      <!-- 2.2 核心参数与起止时间区间工具条 (Date Range & Mode Controls) -->
-      <div class="px-4 py-3 bg-white/[0.015] border-b border-white/[0.08] space-y-3 shrink-0">
-        <!-- 第一行：三大回测模式切换 + 起止时间选择 + 本金设置 -->
+      <!-- 2.2 核心参数与高颜值时间选择中枢 (Date Range & Mode Controls) -->
+      <div class="px-4 py-3 bg-[#11131a]/80 border-b border-white/[0.08] space-y-2.5 shrink-0">
+        <!-- 第一行：模式切换 + 初始资金 + 比较基准 -->
         <div class="flex flex-wrap items-center justify-between gap-3 text-xs">
-          <!-- 模式切换高质感分段器 -->
-          <div class="flex items-center space-x-1 p-0.5 rounded-xl bg-black/60 border border-white/[0.08]">
+          <!-- 模式切换高质感分段器 (Segmented Control) -->
+          <div class="flex items-center space-x-1 p-0.5 rounded-xl bg-black/60 border border-white/[0.08] shadow-inner">
             <button
               @click="strategyStore.backtestMode = 'single'"
-              :class="strategyStore.backtestMode === 'single' ? 'bg-red-500/20 text-red-300 font-bold border border-red-500/30 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'"
-              class="px-2.5 py-1 rounded-lg text-xs transition-all cursor-pointer"
+              :class="strategyStore.backtestMode === 'single' ? 'bg-gradient-to-r from-red-500/20 to-amber-500/20 text-white font-bold border border-amber-500/30 shadow-sm' : 'text-zinc-400 hover:text-zinc-200 border-transparent'"
+              class="px-3 py-1 rounded-lg text-xs transition-all cursor-pointer"
             >
               🎯 单标的
             </button>
             <button
               @click="strategyStore.backtestMode = 'basket'"
-              :class="strategyStore.backtestMode === 'basket' ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'"
-              class="px-2.5 py-1 rounded-lg text-xs transition-all cursor-pointer flex items-center space-x-1"
+              :class="strategyStore.backtestMode === 'basket' ? 'bg-gradient-to-r from-red-500/20 to-amber-500/20 text-white font-bold border border-amber-500/30 shadow-sm' : 'text-zinc-400 hover:text-zinc-200 border-transparent'"
+              class="px-3 py-1 rounded-lg text-xs transition-all cursor-pointer flex items-center space-x-1.5"
             >
               <span>📦 自选股票池</span>
-              <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-white/[0.08] text-zinc-300 font-mono">
+              <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-white/[0.1] text-zinc-300 font-mono">
                 {{ strategyStore.symbols.length }}
               </span>
             </button>
             <button
               @click="strategyStore.backtestMode = 'holdings'; strategyStore.applyHoldingsToBacktest()"
-              :class="strategyStore.backtestMode === 'holdings' ? 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'"
-              class="px-2.5 py-1 rounded-lg text-xs transition-all cursor-pointer flex items-center space-x-1"
+              :class="strategyStore.backtestMode === 'holdings' ? 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30 shadow-sm' : 'text-zinc-400 hover:text-zinc-200 border-transparent'"
+              class="px-3 py-1 rounded-lg text-xs transition-all cursor-pointer flex items-center space-x-1.5"
             >
               <span>💼 我的持仓</span>
-              <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-white/[0.08] text-zinc-300 font-mono">
+              <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-white/[0.1] text-emerald-300 font-mono">
                 {{ strategyStore.userHoldings.length }}
               </span>
             </button>
           </div>
 
-          <!-- 精致双向起止时间区间选择器 (Start Date ~ End Date) -->
-          <div class="flex items-center space-x-2 text-zinc-300 font-mono">
-            <div class="flex items-center space-x-1.5 px-2.5 py-1 rounded-xl bg-black/60 border border-white/[0.1] hover:border-amber-500/40 text-xs transition-colors">
-              <span class="text-zinc-400 text-[11px] font-sans">📅</span>
-              <input
-                v-model="strategyStore.startDate"
-                type="date"
-                style="color-scheme: dark"
-                class="bg-transparent text-white focus:outline-none cursor-pointer font-mono text-xs w-[105px]"
-              />
-              <span class="text-zinc-500">→</span>
-              <input
-                v-model="strategyStore.endDate"
-                type="date"
-                style="color-scheme: dark"
-                placeholder="至今"
-                class="bg-transparent text-white focus:outline-none cursor-pointer font-mono text-xs w-[105px]"
-              />
-            </div>
-
-            <!-- 快捷日期胶囊 -->
-            <div class="hidden sm:flex items-center space-x-1 text-[11px]">
-              <button
-                v-for="r in [{ l: '近半年', v: 'half_year' }, { l: '近1年', v: '1y' }, { l: '近2年', v: '2y' }, { l: '2023至今', v: '2023' }, { l: '全历史', v: 'all' }]"
-                :key="r.v"
-                @click="applyDateRange(r.v as any)"
-                :class="selectedQuickRange === r.v ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold shadow-sm' : 'bg-white/[0.03] text-zinc-400 hover:text-zinc-200 border-white/[0.06]'"
-                class="px-2 py-0.8 rounded-lg border transition-all cursor-pointer"
-              >
-                {{ r.l }}
-              </button>
-            </div>
-
+          <!-- 右侧：初始本金与基准对比 -->
+          <div class="flex items-center space-x-2.5">
             <!-- 初始本金 -->
-            <div class="flex items-center space-x-1 ml-2">
+            <div class="flex items-center space-x-1.5 bg-black/50 border border-white/[0.1] hover:border-white/[0.2] px-2.5 py-1 rounded-xl transition-colors">
+              <span class="text-zinc-400 text-[11px]">本金:</span>
               <div class="relative flex items-center">
-                <span class="absolute left-2.5 text-zinc-500 font-mono text-[11px]">¥</span>
+                <span class="text-amber-400 font-mono text-[11px] mr-1">¥</span>
                 <input
                   v-model.number="strategyStore.initialCash"
                   type="number"
                   step="10000"
-                  class="w-24 pl-5 pr-2 py-1 bg-black/60 border border-white/[0.1] rounded-xl text-xs font-mono font-semibold text-white focus:outline-none focus:border-amber-500/50"
-                  title="初始本金"
+                  class="w-24 bg-transparent text-xs font-mono font-semibold text-white focus:outline-none"
+                  title="初始回测本金"
                 />
               </div>
             </div>
+
+            <!-- 基准对比标的 -->
+            <div class="hidden sm:flex items-center space-x-1.5 bg-black/50 border border-white/[0.1] px-2.5 py-1 rounded-xl text-zinc-400">
+              <span class="text-[11px]">基准:</span>
+              <span class="font-mono text-xs text-zinc-200 font-medium">沪深300 ETF</span>
+            </div>
           </div>
         </div>
+
+        <!-- 第二行：高颜值金融时间区间控制舱 (Sleek Time Cockpit - 往前推算20年全历史) -->
+        <div class="flex flex-wrap items-center justify-between gap-2.5 p-2 rounded-xl bg-black/40 border border-white/[0.06]">
+          <!-- 左侧：暗黑定制起止日期输入器 -->
+          <div class="flex items-center space-x-2 font-mono">
+            <div class="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-[#161822] border border-white/[0.12] hover:border-amber-500/50 focus-within:border-amber-500/60 transition-all shadow-inner">
+              <span class="text-amber-400 text-xs">📅</span>
+              <div class="flex items-center space-x-1 text-xs">
+                <span class="text-[11px] text-zinc-500 font-sans">起:</span>
+                <input
+                  v-model="strategyStore.startDate"
+                  type="date"
+                  style="color-scheme: dark"
+                  class="bg-transparent text-amber-200 focus:outline-none cursor-pointer font-mono text-xs w-[110px] tracking-tight"
+                />
+              </div>
+
+              <span class="text-zinc-500 font-mono text-xs px-0.5">至</span>
+
+              <div class="flex items-center space-x-1 text-xs">
+                <span class="text-[11px] text-zinc-500 font-sans">止:</span>
+                <input
+                  v-model="strategyStore.endDate"
+                  type="date"
+                  style="color-scheme: dark"
+                  placeholder="至今(最新日)"
+                  class="bg-transparent text-amber-200 focus:outline-none cursor-pointer font-mono text-xs w-[110px] tracking-tight"
+                />
+              </div>
+
+              <button
+                v-if="strategyStore.endDate"
+                @click="strategyStore.endDate = ''; showToast('已设置为至今(最新交易日)')"
+                class="text-[10px] text-zinc-400 hover:text-amber-300 ml-1 cursor-pointer font-sans px-1 rounded hover:bg-white/[0.08]"
+                title="清空截止日期，默认跑至最新交易日"
+              >
+                至最新
+              </button>
+            </div>
+          </div>
+
+          <!-- 右侧：快捷周期胶囊标签组 (含往前20年全历史) -->
+          <div class="flex items-center space-x-1 text-[11px] overflow-x-auto">
+            <button
+              v-for="r in quickRangeOptions"
+              :key="r.v"
+              @click="applyDateRange(r.v as any)"
+              :class="selectedQuickRange === r.v ? 'bg-gradient-to-r from-amber-500/25 to-red-500/25 text-amber-300 border-amber-500/50 font-bold shadow-sm' : 'bg-white/[0.04] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.08] border-white/[0.06]'"
+              class="px-2.5 py-1 rounded-lg border transition-all cursor-pointer whitespace-nowrap active:scale-95"
+            >
+              {{ r.l }}
+            </button>
+          </div>
+        </div>
+
 
         <!-- 第二行：根据模式展示标的配置区 -->
         <!-- A. 单标的模式 -->
@@ -977,12 +1071,22 @@ const chartOption = computed(() => {
       <!-- 2.3 错误告警区 -->
       <div
         v-if="strategyStore.backtestError"
-        class="m-3 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 space-y-1 animate-fadeIn"
+        class="m-3 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 space-y-2 animate-fadeIn"
       >
-        <div class="flex items-center space-x-1.5 font-bold text-red-400">
-          <span>⚠️ 回测中断告警</span>
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-1.5 font-bold text-red-400">
+            <span>⚠️ 回测中断告警</span>
+          </div>
+          <button
+            @click="strategyStore.askAiToFixStrategy()"
+            class="px-2 py-0.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 text-[11px] font-semibold transition-all cursor-pointer flex items-center space-x-1 shadow-sm active:scale-95"
+            title="将报错信息与当前代码发送给 AI 助手进行诊断修复"
+          >
+            <span>🤖</span>
+            <span>AI 一键诊断修复</span>
+          </button>
         </div>
-        <p class="font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap">
+        <p class="font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap max-h-48 overflow-y-auto bg-black/30 p-2 rounded-lg border border-red-500/10">
           {{ strategyStore.backtestError }}
         </p>
       </div>

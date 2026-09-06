@@ -8,16 +8,16 @@ export default defineConfig(({ mode }) => {
   const isOnline = mode === 'online' || env.VITE_TARGET_ENV === 'online'
   const onlineHost = env.VITE_ONLINE_HOST || '43.155.186.45'
 
-  // 线上环境统一经由腾讯云 Nginx 80 网关代理，不可直连未对外开放的内部端口 (8000/8080/8090)
+  // 线上环境统一经由腾讯云 Nginx 80 网关代理，默认全量中台直连线上；如需本地混合调试可显式指定 VITE_LOCAL_AUTH=true 等
   const stockTarget = isOnline ? `http://${onlineHost}` : 'http://localhost:8000'
-  const quantTarget = isOnline && env.VITE_ONLINE_QUANT === 'true' ? `http://${onlineHost}` : 'http://localhost:8080'
-  const authTarget = isOnline && env.VITE_ONLINE_AUTH === 'true' ? `http://${onlineHost}` : 'http://localhost:8090'
-  const aiTarget = isOnline && env.VITE_ONLINE_AI === 'true' ? `http://${onlineHost}` : (env.VITE_AI_TARGET || 'http://localhost:8070')
-  const agentTarget = isOnline && env.VITE_ONLINE_AGENT === 'true' ? `http://${onlineHost}` : (env.VITE_AGENT_TARGET || 'http://localhost:8060')
+  const quantTarget = isOnline && env.VITE_LOCAL_QUANT !== 'true' && env.VITE_ONLINE_QUANT !== 'false' ? `http://${onlineHost}` : 'http://localhost:8080'
+  const authTarget = isOnline && env.VITE_LOCAL_AUTH !== 'true' && env.VITE_ONLINE_AUTH !== 'false' ? `http://${onlineHost}` : 'http://localhost:8090'
+  const aiTarget = isOnline && env.VITE_LOCAL_AI !== 'true' && env.VITE_ONLINE_AI !== 'false' ? `http://${onlineHost}` : (env.VITE_AI_TARGET || 'http://localhost:8070')
+  const agentTarget = isOnline && env.VITE_LOCAL_AGENT !== 'true' && env.VITE_ONLINE_AGENT !== 'false' ? `http://${onlineHost}` : (env.VITE_AGENT_TARGET || 'http://localhost:8060')
 
   console.log(`\n==================================================`)
   console.log(isOnline
-    ? `  🌐 Web-Admin 环境模式: 【线上部署环境】 -> 数据中台: http://${onlineHost}/stock | 业务中台: ${quantTarget}`
+    ? `  🌐 Web-Admin 环境模式: 【线上部署环境】 -> 全量中台直连: http://${onlineHost} (行情/鉴权/策略库/回测/AI)`
     : `  💻 Web-Admin 环境模式: 【本地全闭环环境】 -> 基础服务: http://localhost:8000/8080/8090/8070/8060`
   )
   console.log(`==================================================\n`)

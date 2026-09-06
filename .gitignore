@@ -40,3 +40,4 @@ storage/parquet/
 .git_origin_bak/
 .claude/
 .agents/
+.deploy_cache/

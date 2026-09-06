@@ -123,23 +123,26 @@ class CustomBacktestRequest(BaseModel):
     start: str = Field(default="2021-01-01", description="开始日期 YYYY-MM-DD")
     end: Optional[str] = Field(default=None, description="结束日期 YYYY-MM-DD (留空为最新日)")
     initial_cash: float = Field(default=100_000.0, description="初始资金 (CNY)")
+    dry_run: Optional[bool] = Field(default=False, description="是否为极速试跑测试模式 (仅在最小日期区间~30根Bar试跑以验证策略可运行性)")
 
 
 @router.post("/backtest/run-custom")
 def run_custom_backtest_endpoint(req: CustomBacktestRequest):
-    """通过安全 AST 沙箱执行用户自定义 Python 策略源码并返回回测绩效与净值数据 (原生支持单标的与多标的自选组合)"""
+    """通过安全 AST 沙箱执行用户自定义 Python 策略源码并返回回测绩效与净值数据 (原生支持单标的、多标的自选组合与极速试跑)"""
     from quant_server.api.sandbox import StrategyCodeSandbox, SecurityCheckError
+    import traceback
 
     # 1. 语法树审计与策略类动态加载
     try:
         strategy_cls = StrategyCodeSandbox.load_strategy_class(req.code)
-        strat = strategy_cls()
+        strat = StrategyCodeSandbox.instantiate_strategy(strategy_cls)
     except SecurityCheckError as e:
         raise HTTPException(status_code=400, detail=f"安全策略拦截: {str(e)}")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"代码结构错误: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"策略编译/初始化失败: {str(e)}")
+        tb = traceback.format_exc()
+        raise HTTPException(status_code=400, detail=f"策略编译/初始化失败: {str(e)}\n\n{tb}")
 
     # 2. 解析与标准化目标标的列表 (兼容 symbols 列表与单值 symbol，自动容错与纠偏)
     def normalize_symbol(raw: str) -> str:
@@ -169,12 +172,20 @@ def run_custom_backtest_endpoint(req: CustomBacktestRequest):
     if not target_symbols:
         target_symbols = ["510300.SH.ETF"]
 
-    # 3. 批量获取标的行情切片
+    # 3. 批量获取标的行情切片 (极速试跑模式使用最小日期窗口，毫秒级验证)
+    query_start = req.start
+    if req.dry_run:
+        # 极速试跑截取最近约 60 天区间，最终只取末尾 30 根 Bar
+        dry_start_date = (datetime.date.today() - datetime.timedelta(days=60)).strftime("%Y-%m-%d")
+        query_start = dry_start_date
+
     bars_map: Dict[str, List[Bar]] = {}
     missing_symbols: List[str] = []
     for sym in target_symbols:
-        bars = data_client.get_bars(symbol=sym, period="1d", start=req.start, end=req.end, adjust="qfq")
+        bars = data_client.get_bars(symbol=sym, period="1d", start=query_start, end=req.end, adjust="qfq")
         if bars and len(bars) > 0:
+            if req.dry_run and len(bars) > 30:
+                bars = bars[-30:]
             bars_map[sym] = bars
         else:
             missing_symbols.append(sym)
@@ -198,7 +209,30 @@ def run_custom_backtest_endpoint(req: CustomBacktestRequest):
     try:
         result = engine.run(bars_map)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"回测运行时异常: {str(e)}")
+        tb = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=f"回测运行时异常: {str(e)}\n\n{tb}")
+
+    # 极速试跑测试直接返回精炼成功报告，省去大型图表与每日净值计算
+    if req.dry_run:
+        sample_bars = next(iter(bars_map.values()))
+        return {
+            "status": "success",
+            "dry_run": True,
+            "bars_tested": len(sample_bars),
+            "start_date": sample_bars[0].date_str if sample_bars else "",
+            "end_date": sample_bars[-1].date_str if sample_bars else "",
+            "summary": {
+                "initial_cash": result.initial_cash,
+                "final_equity": result.final_equity,
+                "total_return": result.total_return,
+                "annualized_return": result.annualized_return,
+                "max_drawdown": result.max_drawdown,
+                "sharpe_ratio": result.sharpe_ratio,
+                "win_rate": result.win_rate,
+                "total_trades": result.total_trades,
+            },
+            "message": f"策略极速试跑验证通过！成功在最近 {len(sample_bars)} 根切片 Bar 上运行，未发现语法与执行异常。"
+        }
 
     # 5. 基准走势对齐 (单标的默认以该标的自身为基准，多标的默认以沪深300 ETF为基准或指定基准)
     is_multi = len(target_symbols) > 1

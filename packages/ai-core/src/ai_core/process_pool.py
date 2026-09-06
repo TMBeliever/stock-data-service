@@ -231,9 +231,17 @@ class PrewarmedProcessPool:
         exe = resolve_executable_path(executable or ai_config.CLI_EXECUTABLE)
 
         # 构造纯净无状态参数：彻底禁用工具执行，严禁添加 --conversation / -c / -r
-        cmd_args = [exe, "-p", "", "-y"]
+        cmd_args = [exe, "-p", ""]
+        exe_lower = os.path.basename(exe).lower()
+        if "gemini" in exe_lower:
+            cmd_args.append("-y")
+        else:
+            # Google agy (Go 二进制) 与 Claude CLI 均使用 --dangerously-skip-permissions (严禁传 -y)
+            cmd_args.append("--dangerously-skip-permissions")
+
         if model:
-            cmd_args.extend(["-m", model])
+            # agy / gemini / claude 均原生支持 --model 参数 (agy 不支持 -m 缩写)
+            cmd_args.extend(["--model", model])
 
         # 运行在干净隔离的临时工作区目录，杜绝扫描当前代码库与 git
         isolated_cwd = "/tmp/quant_ai_clean_sandbox"

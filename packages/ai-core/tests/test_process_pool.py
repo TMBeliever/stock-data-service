@@ -276,3 +276,44 @@ async def test_process_pool_client_interrupt_and_retry(monkeypatch):
 
     await pool.shutdown()
 
+@pytest.mark.asyncio
+async def test_process_pool_spawn_worker_args(monkeypatch):
+    """验证 _spawn_worker 针对 agy 工具生成合规参数：使用 --dangerously-skip-permissions 和 --model，绝不传 -y 和 -m"""
+    pool = PrewarmedProcessPool()
+    captured_cmds = []
+
+    orig_exec = asyncio.create_subprocess_exec
+
+    async def mock_create_subprocess_exec(*args, **kwargs):
+        captured_cmds.append(list(args))
+        # 模拟启动一个 dummy python 进程
+        return await orig_exec(
+            sys.executable, "-c", "import sys; sys.exit(0)",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_create_subprocess_exec)
+
+    # 1. 针对 agy
+    w1 = await pool._spawn_worker(executable="agy", model="claude-sonnet-4.6")
+    cmd1 = captured_cmds[-1]
+    assert "--dangerously-skip-permissions" in cmd1
+    assert "--model" in cmd1
+    assert "claude-sonnet-4.6" in cmd1
+    assert "-y" not in cmd1
+    assert "-m" not in cmd1
+
+    # 2. 针对 gemini
+    w2 = await pool._spawn_worker(executable="gemini", model="gemini-3.8-flash")
+    cmd2 = captured_cmds[-1]
+    assert "-y" in cmd2
+    assert "--model" in cmd2
+    assert "--dangerously-skip-permissions" not in cmd2
+
+    await w1.terminate()
+    await w2.terminate()
+
+
+

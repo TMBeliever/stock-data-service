@@ -65,3 +65,28 @@ async def test_cli_provider_timeout():
 
     with pytest.raises(TimeoutError):
         await provider.generate([Message.user("sleep")])
+
+def test_cli_provider_flag_adaptation():
+    """测试不同 CLI 可执行文件的参数自适应：agy 必须使用 --dangerously-skip-permissions 和 --model，严禁传 -y 和 -m"""
+    # 1. agy
+    p_agy = CLIProcessProvider(executable="agy", args_template=["-p", "{prompt}"])
+    cmd_agy, _ = p_agy._build_command("hello", model="claude-sonnet-4.6")
+    assert "--dangerously-skip-permissions" in cmd_agy
+    assert "--model" in cmd_agy
+    assert "claude-sonnet-4.6" in cmd_agy
+    assert "-y" not in cmd_agy
+    assert "-m" not in cmd_agy
+
+    # 2. gemini
+    p_gem = CLIProcessProvider(executable="gemini", args_template=["-p", "{prompt}"])
+    cmd_gem, _ = p_gem._build_command("hello", model="gemini-3.8-flash")
+    assert "-y" in cmd_gem
+    assert "--model" in cmd_gem
+    assert "--dangerously-skip-permissions" not in cmd_gem
+
+    # 3. claude
+    p_claude = CLIProcessProvider(executable="claude", args_template=["-p", "{prompt}"])
+    cmd_claude, _ = p_claude._build_command("hello", model="claude-3-5-sonnet")
+    assert "--dangerously-skip-permissions" in cmd_claude
+    assert "--model" in cmd_claude
+

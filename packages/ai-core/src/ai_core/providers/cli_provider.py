@@ -123,13 +123,14 @@ class CLIProcessProvider(BaseAIProvider):
 
         # 针对不同 CLI 工具进行无头非交互模式安全自适应
         exe_lower = os.path.basename(resolved_exe).lower()
-        if "agy" in exe_lower or "gemini" in exe_lower:
-            # gemini / agy: 使用 -y 开启无头非交互模式，杜绝权限询问挂起
+        if "gemini" in exe_lower:
+            # gemini-cli: 使用 -y 开启无头非交互模式
             if "-y" not in cmd_args and "--yolo" not in cmd_args:
                 cmd_args.append("-y")
-            if model and "-m" not in cmd_args and "--model" not in cmd_args:
-                cmd_args.extend(["-m", model])
-        elif "claude" in exe_lower:
+            if model and "--model" not in cmd_args and "-m" not in cmd_args:
+                cmd_args.extend(["--model", model])
+        else:
+            # Google agy 与 Claude CLI 均使用 --dangerously-skip-permissions (严禁传 -y 和 -m)
             if "--dangerously-skip-permissions" not in cmd_args:
                 cmd_args.append("--dangerously-skip-permissions")
             if model and "--model" not in cmd_args:

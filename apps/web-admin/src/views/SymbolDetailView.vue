@@ -277,7 +277,10 @@ const klineOption = computed(() => {
         <span>/</span>
         <span class="text-zinc-500">标的行情中枢</span>
         <span>/</span>
-        <span class="text-zinc-200 font-mono font-bold">{{ currentSymbol }}</span>
+        <span class="text-zinc-200 font-bold flex items-center space-x-1.5">
+          <span>{{ marketStore.currentDetail?.name || marketStore.getSymbolName(currentSymbol) }}</span>
+          <span class="text-zinc-500 font-mono font-normal text-[11px]">({{ currentSymbol.split('.')[0] }})</span>
+        </span>
       </div>
 
       <!-- 右侧投研操作按钮 -->
@@ -439,14 +442,34 @@ const klineOption = computed(() => {
             {{ marketStore.currentDetail?.amount ? (marketStore.currentDetail.amount / 100000000).toFixed(2) + '亿' : '--' }}
           </div>
         </div>
-        <div class="p-2 rounded-xl bg-black/30 border border-white/[0.04]">
-          <div class="text-[10px] text-zinc-400">市盈率 (PE)</div>
-          <div class="font-bold text-amber-300 mt-0.5">{{ marketStore.currentDetail?.pe || 'N/A' }}</div>
-        </div>
-        <div class="p-2 rounded-xl bg-black/30 border border-white/[0.04]">
-          <div class="text-[10px] text-zinc-400">市净率 (PB)</div>
-          <div class="font-bold text-blue-300 mt-0.5">{{ marketStore.currentDetail?.pb || 'N/A' }}</div>
-        </div>
+        <!-- 股票显示 PE/PB，ETF 则展示专属的 单位净值(IOPV) 与 折溢价率(Premium Rate) -->
+        <template v-if="marketStore.currentDetail?.asset_type === 'ETF'">
+          <div class="p-2 rounded-xl bg-black/30 border border-white/[0.04]">
+            <div class="text-[10px] text-zinc-400">单位净值 (IOPV)</div>
+            <div class="font-bold text-amber-300 mt-0.5 font-mono">
+              {{ marketStore.currentDetail?.nav !== undefined && marketStore.currentDetail?.nav !== null ? '¥' + Number(marketStore.currentDetail.nav).toFixed(4) : '--' }}
+            </div>
+          </div>
+          <div class="p-2 rounded-xl bg-black/30 border border-white/[0.04]">
+            <div class="text-[10px] text-zinc-400">折溢价率</div>
+            <div
+              :class="marketStore.currentDetail?.premium_rate && marketStore.currentDetail.premium_rate > 0 ? 'text-red-400' : 'text-emerald-400'"
+              class="font-bold mt-0.5 font-mono"
+            >
+              {{ marketStore.currentDetail?.premium_rate !== undefined && marketStore.currentDetail?.premium_rate !== null ? (marketStore.currentDetail.premium_rate > 0 ? '+' : '') + Number(marketStore.currentDetail.premium_rate).toFixed(2) + '%' : '--' }}
+            </div>
+          </div>
+        </template>
+        <template v-else>
+          <div class="p-2 rounded-xl bg-black/30 border border-white/[0.04]">
+            <div class="text-[10px] text-zinc-400">市盈率 (PE)</div>
+            <div class="font-bold text-amber-300 mt-0.5">{{ marketStore.currentDetail?.pe || 'N/A' }}</div>
+          </div>
+          <div class="p-2 rounded-xl bg-black/30 border border-white/[0.04]">
+            <div class="text-[10px] text-zinc-400">市净率 (PB)</div>
+            <div class="font-bold text-blue-300 mt-0.5">{{ marketStore.currentDetail?.pb || 'N/A' }}</div>
+          </div>
+        </template>
       </div>
     </div>
 

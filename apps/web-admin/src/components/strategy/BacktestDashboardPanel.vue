@@ -3,10 +3,12 @@ import { computed, ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import EChartWrapper from '@/components/EChartWrapper.vue'
 import { useStrategyStore, type UserBacktestItem } from '@/stores/strategy'
+import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 const strategyStore = useStrategyStore()
+const marketStore = useMarketStore()
 const authStore = useAuthStore()
 
 const activeTab = ref<'chart' | 'trades' | 'history'>('chart')
@@ -435,7 +437,7 @@ onMounted(() => {
       <!-- A. 单标的模式 -->
       <div v-if="strategyStore.backtestMode === 'single'" class="flex flex-wrap items-center justify-between gap-2 pt-1">
         <div class="flex items-center space-x-2 flex-1 max-w-md">
-          <span class="text-xs text-zinc-400 shrink-0 font-medium">输入代码:</span>
+          <span class="text-xs text-zinc-400 shrink-0 font-medium">标的资产:</span>
           <div class="relative flex-1">
             <input
               v-model="singleSymbolInput"
@@ -443,8 +445,15 @@ onMounted(() => {
               @keydown.enter.prevent="handleSingleSymbolChange"
               type="text"
               placeholder="如 600519.SH / 510300.SH.ETF / 000858"
-              class="w-full bg-black/50 border border-white/[0.12] rounded-lg px-3 py-1 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500/60 font-mono"
+              class="w-full bg-black/50 border border-white/[0.12] rounded-lg pl-3 pr-24 py-1 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500/60 font-mono"
             />
+            <span
+              v-if="singleSymbolInput.trim() && marketStore.getSymbolName(singleSymbolInput) !== singleSymbolInput.split('.')[0]"
+              class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-amber-300 bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 rounded font-medium truncate max-w-[100px]"
+              :title="marketStore.getSymbolName(singleSymbolInput)"
+            >
+              {{ marketStore.getSymbolName(singleSymbolInput) }}
+            </span>
           </div>
           <button
             @click="handleSingleSymbolChange"
@@ -481,23 +490,24 @@ onMounted(() => {
       <div v-else-if="strategyStore.backtestMode === 'basket'" class="space-y-2 pt-1">
         <!-- 组合标的标签池 + 快速添加输入框 -->
         <div class="flex flex-wrap items-center gap-1.5 p-2 rounded-xl bg-black/40 border border-white/[0.08] min-h-[38px]">
-          <!-- 标的 Capsule 胶囊 -->
+          <!-- 标的 Capsule 胶囊：主视觉中文名称，副视觉代码 -->
           <div
             v-for="sym in strategyStore.symbols"
             :key="sym"
-            class="inline-flex items-center space-x-1 px-2 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono group hover:bg-amber-500/20 transition-all"
+            class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs group hover:bg-amber-500/20 transition-all"
           >
             <span
               @click="router.push(`/symbol/${encodeURIComponent(sym)}`)"
-              class="cursor-pointer hover:underline"
-              title="点击查看标的行情详情与K线"
+              class="cursor-pointer hover:underline font-medium text-white flex items-center space-x-1"
+              :title="`${marketStore.getSymbolName(sym)} (${sym}) - 点击查看标的行情详情与K线`"
             >
-              {{ sym }}
+              <span>{{ marketStore.getSymbolName(sym) }}</span>
+              <span class="text-[10px] font-mono text-zinc-400 font-normal">({{ sym.split('.')[0] }})</span>
             </span>
             <button
               @click="strategyStore.removeSymbolTag(sym)"
               class="text-amber-500 hover:text-red-400 transition-colors cursor-pointer text-xs ml-0.5"
-              title="移除标的"
+              title="移除此标的"
             >
               ×
             </button>
@@ -1140,9 +1150,10 @@ onMounted(() => {
               <span
                 v-for="sym in strategyStore.symbols"
                 :key="sym"
-                class="px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-300 font-mono text-[11px] border border-blue-500/20"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-300 text-[11px] border border-blue-500/20"
               >
-                {{ sym }}
+                <span class="font-medium text-white">{{ marketStore.getSymbolName(sym) }}</span>
+                <span class="text-[10px] font-mono text-zinc-400">({{ sym.split('.')[0] }})</span>
               </span>
             </div>
           </div>

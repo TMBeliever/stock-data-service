@@ -4,10 +4,12 @@ import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import EChartWrapper from '@/components/EChartWrapper.vue'
 import { useStrategyStore, type UserBacktestItem } from '@/stores/strategy'
+import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 const strategyStore = useStrategyStore()
+const marketStore = useMarketStore()
 const authStore = useAuthStore()
 
 const { cockpitPosition: cockpitPos, cockpitSize } = storeToRefs(strategyStore)
@@ -777,15 +779,24 @@ const chartOption = computed(() => {
         <!-- A. 单标的模式 -->
         <div v-if="strategyStore.backtestMode === 'single'" class="flex flex-wrap items-center justify-between gap-2 pt-0.5">
           <div class="flex items-center space-x-2 flex-1 max-w-md">
-            <span class="text-xs text-zinc-400 shrink-0 font-medium">标的代码:</span>
-            <input
-              v-model="singleSymbolInput"
-              @change="handleSingleSymbolChange"
-              @keydown.enter.prevent="handleSingleSymbolChange"
-              type="text"
-              placeholder="如 600519.SH.STK / 510300.SH.ETF"
-              class="w-full bg-black/60 border border-white/[0.12] rounded-xl px-3 py-1 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500/60 font-mono"
-            />
+            <span class="text-xs text-zinc-400 shrink-0 font-medium">标的资产:</span>
+            <div class="relative flex-1">
+              <input
+                v-model="singleSymbolInput"
+                @change="handleSingleSymbolChange"
+                @keydown.enter.prevent="handleSingleSymbolChange"
+                type="text"
+                placeholder="如 600519.SH.STK / 510300.SH.ETF"
+                class="w-full bg-black/60 border border-white/[0.12] rounded-xl pl-3 pr-24 py-1 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500/60 font-mono"
+              />
+              <span
+                v-if="singleSymbolInput.trim() && marketStore.getSymbolName(singleSymbolInput) !== singleSymbolInput.split('.')[0]"
+                class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-amber-300 bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 rounded font-medium truncate max-w-[100px]"
+                :title="marketStore.getSymbolName(singleSymbolInput)"
+              >
+                {{ marketStore.getSymbolName(singleSymbolInput) }}
+              </span>
+            </div>
             <button
               @click="handleSingleSymbolChange"
               class="px-2.5 py-1 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] text-xs text-white transition-colors cursor-pointer shrink-0 font-medium"
@@ -819,22 +830,24 @@ const chartOption = computed(() => {
         <!-- B. 组合股票池模式 (包含自制无原生Select的下拉弹窗) -->
         <div v-else-if="strategyStore.backtestMode === 'basket'" class="space-y-2 pt-0.5">
           <div class="flex flex-wrap items-center gap-1.5 p-2 rounded-xl bg-black/50 border border-white/[0.08]">
-            <!-- 标的胶囊 -->
+            <!-- 标的胶囊：主视觉展示中文名称，副标展示代码 -->
             <div
               v-for="sym in strategyStore.symbols"
               :key="sym"
-              class="inline-flex items-center space-x-1 px-2 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono"
+              class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs hover:bg-amber-500/15 transition-all group"
             >
               <span
                 @click="router.push(`/symbol/${encodeURIComponent(sym)}`)"
-                class="cursor-pointer hover:underline"
-                title="点击查看行情详情"
+                class="cursor-pointer hover:underline font-medium text-white flex items-center space-x-1"
+                :title="`${marketStore.getSymbolName(sym)} (${sym}) - 点击查看行情详情`"
               >
-                {{ sym }}
+                <span>{{ marketStore.getSymbolName(sym) }}</span>
+                <span class="text-[10px] font-mono text-zinc-400 font-normal">({{ sym.split('.')[0] }})</span>
               </span>
               <button
                 @click="strategyStore.removeSymbolTag(sym)"
                 class="text-amber-500 hover:text-red-400 cursor-pointer text-xs ml-0.5"
+                title="移除此标的"
               >
                 ×
               </button>

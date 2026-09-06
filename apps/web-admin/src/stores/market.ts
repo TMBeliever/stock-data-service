@@ -42,6 +42,40 @@ export interface KlineItem {
 
 const RECENT_KEY = 'quantscope_recent_symbols'
 
+// 常用标的中文名称预设字典（支持大盘宽基、行业ETF、核心权重）
+const BUILTIN_SYMBOL_NAMES: Record<string, string> = {
+  '510300': '沪深300 ETF',
+  '510500': '中证500 ETF',
+  '512100': '中证1000 ETF',
+  '510050': '上证50 ETF',
+  '159915': '创业板 ETF',
+  '588000': '科创50 ETF',
+  '515100': '景顺红利低波100ETF',
+  '512880': '证券 ETF',
+  '512690': '酒 ETF',
+  '512010': '医药 ETF',
+  '512480': '半导体 ETF',
+  '515030': '新能源车 ETF',
+  '513100': '纳斯达克100ETF',
+  '159941': '纳指ETF广发',
+  '159632': '纳指ETF',
+  '159660': '纳斯达克指数ETF',
+  '513300': '纳斯达克ETF',
+  '600519': '贵州茅台',
+  '000858': '五粮液',
+  '300750': '宁德时代',
+  '002594': '比亚迪',
+  '601318': '中国平安',
+  '000001': '平安银行',
+  '000002': '万科A',
+  '600036': '招商银行',
+  '000510': '新金路',
+  '601899': '紫金矿业',
+  '600900': '长江电力',
+  '601398': '工商银行',
+  '601988': '中国银行',
+}
+
 export const useMarketStore = defineStore('market', () => {
   const authStore = useAuthStore()
   const strategyStore = useStrategyStore()
@@ -53,6 +87,68 @@ export const useMarketStore = defineStore('market', () => {
 
   // 历史搜索列表 (持久化到 localStorage)
   const recentSearches = ref<SymbolItem[]>(loadRecentSearches())
+
+  // 全局标的中文名称映射缓存 (响应式)
+  const symbolNameMap = ref<Record<string, string>>({ ...BUILTIN_SYMBOL_NAMES })
+  const pendingSymbolFetches = new Set<string>()
+
+  // 获取标的中文友好名称，无缝兼顾缓存、持仓、最近搜索与自动静默拉取
+  function getSymbolName(symbol: string | undefined | null): string {
+    if (!symbol) return '--'
+    const cleanSym = symbol.trim()
+    if (!cleanSym) return '--'
+
+    const ticker = cleanSym.split('.')[0]
+
+    // 1. 优先从当前全局响应式缓存中读取
+    if (symbolNameMap.value[cleanSym]) return symbolNameMap.value[cleanSym]
+    if (symbolNameMap.value[ticker]) return symbolNameMap.value[ticker]
+
+    // 2. 检查 strategyStore 用户持仓中是否有该标的名称
+    const holding = strategyStore.userHoldings.find(
+      (h) => h.symbol === cleanSym || h.symbol.split('.')[0] === ticker
+    )
+    if (holding && holding.name) {
+      symbolNameMap.value[cleanSym] = holding.name
+      symbolNameMap.value[ticker] = holding.name
+      return holding.name
+    }
+
+    // 3. 检查最近搜索列表中是否有该标的名称
+    const recent = recentSearches.value.find(
+      (s) => s.symbol === cleanSym || s.ticker === ticker
+    )
+    if (recent && recent.name) {
+      symbolNameMap.value[cleanSym] = recent.name
+      symbolNameMap.value[ticker] = recent.name
+      return recent.name
+    }
+
+    // 4. 若为当前正在浏览的标的详情
+    if (currentDetail.value && (currentDetail.value.symbol === cleanSym || currentDetail.value.ticker === ticker)) {
+      if (currentDetail.value.name) {
+        symbolNameMap.value[cleanSym] = currentDetail.value.name
+        symbolNameMap.value[ticker] = currentDetail.value.name
+        return currentDetail.value.name
+      }
+    }
+
+    // 5. 若暂未缓存且非正在拉取，发起一次静默异步拉取补充缓存
+    if (!pendingSymbolFetches.has(cleanSym)) {
+      pendingSymbolFetches.add(cleanSym)
+      fetchSymbolDetail(cleanSym).then((detail) => {
+        if (detail && detail.name) {
+          symbolNameMap.value[cleanSym] = detail.name
+          symbolNameMap.value[ticker] = detail.name
+        }
+      }).catch(() => {
+        // ignore background fetch failure
+      })
+    }
+
+    // 优雅降级：返回 6 位代码
+    return ticker
+  }
 
   // 当前标的详情
   const currentSymbol = ref<string>('600519.SH.STK')
@@ -90,6 +186,13 @@ export const useMarketStore = defineStore('market', () => {
       pct_change: item.pct_change,
     })
     recentSearches.value = filtered.slice(0, 8)
+
+    // 缓存名称
+    if (item.name) {
+      symbolNameMap.value[item.symbol] = item.name
+      if (item.ticker) symbolNameMap.value[item.ticker] = item.name
+    }
+
     try {
       localStorage.setItem(RECENT_KEY, JSON.stringify(recentSearches.value))
     } catch {
@@ -119,6 +222,13 @@ export const useMarketStore = defineStore('market', () => {
       if (resp.ok) {
         const json = await resp.json()
         searchResults.value = json.data || []
+        // 自动缓存搜索结果中的标的名称
+        for (const item of searchResults.value) {
+          if (item.name) {
+            symbolNameMap.value[item.symbol] = item.name
+            if (item.ticker) symbolNameMap.value[item.ticker] = item.name
+          }
+        }
         return searchResults.value
       }
     } catch (err) {
@@ -140,6 +250,10 @@ export const useMarketStore = defineStore('market', () => {
         currentDetail.value = json.detail || null
         if (currentDetail.value) {
           addRecentSearch(currentDetail.value)
+          if (currentDetail.value.name) {
+            symbolNameMap.value[currentDetail.value.symbol] = currentDetail.value.name
+            if (currentDetail.value.ticker) symbolNameMap.value[currentDetail.value.ticker] = currentDetail.value.name
+          }
         }
         return currentDetail.value
       }
@@ -257,6 +371,8 @@ export const useMarketStore = defineStore('market', () => {
     searchResults,
     isSearching,
     recentSearches,
+    symbolNameMap,
+    getSymbolName,
     currentSymbol,
     currentDetail,
     isDetailLoading,

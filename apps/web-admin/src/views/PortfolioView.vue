@@ -277,7 +277,7 @@ async function confirmAddHolding() {
     ...strategyStore.userHoldings,
     {
       symbol: sym,
-      name: newHoldingName.value.trim() || sym.split('.')[0],
+      name: newHoldingName.value.trim() || marketStore.getSymbolName(sym) || sym.split('.')[0],
       quantity: Number(newHoldingQty.value) || 1000,
       avg_cost: Number(newHoldingCost.value) || 10.0,
     },
@@ -468,9 +468,7 @@ function syncHoldingsToBacktest() {
             <table v-else class="w-full text-left font-mono text-xs">
               <thead class="bg-white/[0.04] text-zinc-400 border-b border-white/[0.08] text-[11px]">
                 <tr>
-                  <th class="p-3">标的代码</th>
-                  <th class="p-3">标的名称</th>
-                  <th class="p-3">市场/类型</th>
+                  <th class="p-3">标的资产</th>
                   <th class="p-3 text-right">最新价</th>
                   <th class="p-3 text-right">今日涨跌幅</th>
                   <th class="p-3 text-right">最高 / 最低</th>
@@ -484,34 +482,54 @@ function syncHoldingsToBacktest() {
                   :key="sym"
                   class="hover:bg-white/[0.03] transition-colors group"
                 >
-                  <!-- 代码 -->
+                  <!-- 标的资产：主视觉显示中文名称，次视觉显示代码与市场 -->
                   <td class="p-3">
-                    <span
-                      @click="router.push(`/symbol/${encodeURIComponent(sym)}`)"
-                      class="font-bold text-amber-300 hover:underline cursor-pointer"
-                    >
-                      {{ sym }}
-                    </span>
-                  </td>
+                    <div class="flex items-center space-x-3">
+                      <!-- 资产类别图标 -->
+                      <div class="w-8 h-8 rounded-xl bg-black/40 border border-white/[0.08] flex items-center justify-center text-xs shrink-0 font-bold">
+                        <span v-if="(watchlistSymbolsQuotes[sym]?.asset_type || '').includes('ETF') || sym.includes('ETF')" class="text-blue-400">基</span>
+                        <span v-else-if="watchlistSymbolsQuotes[sym]?.market === 'US'" class="text-amber-400">美</span>
+                        <span v-else-if="watchlistSymbolsQuotes[sym]?.market === 'HK'" class="text-purple-400">港</span>
+                        <span v-else class="text-red-400">A</span>
+                      </div>
 
-                  <!-- 名称 -->
-                  <td class="p-3">
-                    <span
-                      @click="router.push(`/symbol/${encodeURIComponent(sym)}`)"
-                      class="font-sans font-semibold text-white hover:text-red-400 cursor-pointer transition-colors"
-                    >
-                      {{ watchlistSymbolsQuotes[sym]?.name || sym.split('.')[0] }}
-                    </span>
-                  </td>
+                      <!-- 名称与代码 -->
+                      <div class="flex flex-col min-w-0">
+                        <div class="flex items-center space-x-2">
+                          <span
+                            @click="router.push(`/symbol/${encodeURIComponent(sym)}`)"
+                            class="font-sans font-bold text-white hover:text-amber-400 cursor-pointer transition-colors text-sm truncate max-w-[220px]"
+                          >
+                            {{ watchlistSymbolsQuotes[sym]?.name || marketStore.getSymbolName(sym) }}
+                          </span>
+                          <span
+                            v-if="(watchlistSymbolsQuotes[sym]?.asset_type || '').includes('ETF') || sym.includes('ETF')"
+                            class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-blue-500/15 text-blue-300 border border-blue-500/20 shrink-0"
+                          >
+                            ETF
+                          </span>
+                          <span
+                            v-else
+                            class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-white/[0.06] text-zinc-300 border border-white/[0.08] shrink-0"
+                          >
+                            {{ watchlistSymbolsQuotes[sym]?.asset_type || 'A股' }}
+                          </span>
+                        </div>
 
-                  <!-- 市场/类型 -->
-                  <td class="p-3">
-                    <span class="px-1.5 py-0.5 rounded text-[10px] bg-white/[0.06] text-zinc-300 border border-white/[0.08] mr-1">
-                      {{ watchlistSymbolsQuotes[sym]?.market || sym.split('.')[1] || 'SH' }}
-                    </span>
-                    <span class="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/15 text-blue-300 border border-blue-500/20">
-                      {{ watchlistSymbolsQuotes[sym]?.asset_type || (sym.includes('ETF') ? 'ETF' : 'STK') }}
-                    </span>
+                        <div class="flex items-center space-x-1.5 text-[11px] text-zinc-400 font-mono mt-0.5">
+                          <span
+                            @click="router.push(`/symbol/${encodeURIComponent(sym)}`)"
+                            class="hover:text-amber-300 cursor-pointer text-zinc-300 font-semibold"
+                          >
+                            {{ sym.split('.')[0] }}
+                          </span>
+                          <span class="text-zinc-600">•</span>
+                          <span class="text-zinc-400 text-[10px] uppercase">{{ watchlistSymbolsQuotes[sym]?.market || sym.split('.')[1] || 'SH' }}</span>
+                          <span class="text-zinc-600">•</span>
+                          <span class="text-zinc-500 text-[10px]">{{ sym }}</span>
+                        </div>
+                      </div>
+                    </div>
                   </td>
 
                   <!-- 最新价 -->
@@ -655,8 +673,7 @@ function syncHoldingsToBacktest() {
         <table class="w-full text-left font-mono text-xs">
           <thead class="bg-white/[0.04] text-zinc-400 border-b border-white/[0.08] text-[11px]">
             <tr>
-              <th class="p-3">标的代码</th>
-              <th class="p-3">标的简称</th>
+              <th class="p-3">标的资产</th>
               <th class="p-3 text-right">持仓股数</th>
               <th class="p-3 text-right">成本均价(元)</th>
               <th class="p-3 text-right">当前市价(元)</th>
@@ -671,15 +688,43 @@ function syncHoldingsToBacktest() {
               :key="h.symbol"
               class="hover:bg-white/[0.03] transition-colors"
             >
+              <!-- 标的资产：主视觉中文名称，次视觉代码与市场 -->
               <td class="p-3">
-                <span
-                  @click="router.push(`/symbol/${encodeURIComponent(h.symbol)}`)"
-                  class="font-bold text-amber-300 hover:underline cursor-pointer"
-                >
-                  {{ h.symbol }}
-                </span>
+                <div class="flex items-center space-x-3">
+                  <div class="w-8 h-8 rounded-xl bg-black/40 border border-white/[0.08] flex items-center justify-center text-xs shrink-0 font-bold">
+                    <span v-if="h.symbol.includes('ETF') || (h.name && h.name.includes('ETF'))" class="text-blue-400">基</span>
+                    <span v-else class="text-red-400">A</span>
+                  </div>
+                  <div class="flex flex-col min-w-0">
+                    <div class="flex items-center space-x-2">
+                      <span
+                        @click="router.push(`/symbol/${encodeURIComponent(h.symbol)}`)"
+                        class="font-sans font-bold text-white hover:text-amber-400 cursor-pointer transition-colors text-sm truncate max-w-[200px]"
+                      >
+                        {{ h.name || marketStore.getSymbolName(h.symbol) }}
+                      </span>
+                      <span
+                        v-if="h.symbol.includes('ETF') || (h.name && h.name.includes('ETF'))"
+                        class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-blue-500/15 text-blue-300 border border-blue-500/20 shrink-0"
+                      >
+                        ETF
+                      </span>
+                    </div>
+                    <div class="flex items-center space-x-1.5 text-[11px] text-zinc-400 font-mono mt-0.5">
+                      <span
+                        @click="router.push(`/symbol/${encodeURIComponent(h.symbol)}`)"
+                        class="hover:text-amber-300 cursor-pointer text-zinc-300 font-semibold"
+                      >
+                        {{ h.symbol.split('.')[0] }}
+                      </span>
+                      <span class="text-zinc-600">•</span>
+                      <span class="text-zinc-400 text-[10px] uppercase">{{ h.symbol.split('.')[1] || 'SH' }}</span>
+                      <span class="text-zinc-600">•</span>
+                      <span class="text-zinc-500 text-[10px]">{{ h.symbol }}</span>
+                    </div>
+                  </div>
+                </div>
               </td>
-              <td class="p-3 font-sans font-semibold text-white">{{ h.name }}</td>
               <td class="p-3 text-right text-zinc-200">{{ h.quantity.toLocaleString() }} 股</td>
               <td class="p-3 text-right text-zinc-400">¥{{ h.avg_cost.toFixed(3) }}</td>
               <td class="p-3 text-right font-bold text-white">¥{{ h.currentPrice.toFixed(3) }}</td>
@@ -805,7 +850,18 @@ function syncHoldingsToBacktest() {
 
         <div class="space-y-3 text-xs">
           <div>
-            <label class="block text-zinc-400 mb-1 font-medium">标的代码 (如 600519.SH / 510300.SH.ETF) <span class="text-red-400">*</span></label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="text-zinc-400 font-medium">标的代码 (如 600519.SH / 510300.SH.ETF) <span class="text-red-400">*</span></label>
+              <span
+                v-if="newHoldingSymbol.trim() && marketStore.getSymbolName(newHoldingSymbol) !== newHoldingSymbol.split('.')[0]"
+                class="text-[11px] text-emerald-400 flex items-center space-x-1 cursor-pointer hover:underline"
+                @click="newHoldingName = marketStore.getSymbolName(newHoldingSymbol)"
+                title="点击填入此名称"
+              >
+                <span>🎯 已识别: {{ marketStore.getSymbolName(newHoldingSymbol) }}</span>
+                <span class="text-[10px] text-zinc-400">(点此应用)</span>
+              </span>
+            </div>
             <input
               v-model="newHoldingSymbol"
               type="text"
@@ -815,11 +871,11 @@ function syncHoldingsToBacktest() {
           </div>
 
           <div>
-            <label class="block text-zinc-400 mb-1 font-medium">标的简称 (选填)</label>
+            <label class="block text-zinc-400 mb-1 font-medium">标的简称 (选填，留空将自动采用识别名称)</label>
             <input
               v-model="newHoldingName"
               type="text"
-              placeholder="贵州茅台"
+              :placeholder="marketStore.getSymbolName(newHoldingSymbol) !== '--' ? marketStore.getSymbolName(newHoldingSymbol) : '贵州茅台'"
               class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500/50"
             />
           </div>

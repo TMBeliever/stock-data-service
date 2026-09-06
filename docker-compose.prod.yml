@@ -149,9 +149,33 @@ services:
     networks:
       - quant-net
 
+  # =========================================================================
+  # 7. 统一 MCP 数据网关 (对外暴露与 Claude/智能体调用)
+  # =========================================================================
+  mcp-gateway:
+    build:
+      context: .
+      dockerfile: services/mcp-gateway/Dockerfile
+    container_name: quant-mcp-gateway
+    restart: unless-stopped
+    ports:
+      - "8050:8050"
+    environment:
+      - MCP_PORT=8050
+      - MCP_HOST=0.0.0.0
+      - STOCK_DATA_API_URL=http://stock-data:8000
+      - COMMON_SERVER_URL=http://common-server:8090
+      - QUANT_SERVER_URL=http://quant-server:8080
+    depends_on:
+      - stock-data
+      - common-server
+    networks:
+      - quant-net
+
 # =========================================================================
 # 存储卷定义 (生产数据持久化保障)
 # =========================================================================
+
 volumes:
   stock_data_storage:
     name: quant_stock_data_storage

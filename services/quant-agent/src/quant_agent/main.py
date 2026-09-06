@@ -126,34 +126,93 @@ async def update_agent_config(req: UpdateConfigRequest, auth: UserAuth = Depends
 
 @app.get("/api/v1/agent/mcp/servers", tags=["MCP Management"])
 async def list_mcp_servers(auth: UserAuth = Depends(get_current_auth)):
-    """获取已挂载 MCP 服务器状态与工具清单"""
+    """获取已挂载 MCP 服务器状态与分层工具清单（包含各工具详细能力定义与独立开关状态）"""
     await quant_agent.initialize_tools()
     cfg = settings_manager.get_config()
-    quant_tools = quant_agent.tool_registry.list_tools()
+    all_tools = quant_agent.tool_registry.list_tools()
+    global_disabled = set(getattr(cfg, "disabled_tools", []) or [])
 
     servers_report = []
     for s in cfg.mcp_servers:
-        is_stock_data = "stock-data" in s.name
+        # 绝不让旧版残留的 stock-data-mcp 出现在列表中
+        if s.name == "stock-data-mcp":
+            continue
+
+        if s.name == "mcp-stock" or s.group in ("stock", "system"):
+            matched = [
+                t for t in all_tools
+                if t.category in ("system", "quant", "stock")
+                and t.name not in ("validate_strategy_code", "run_backtest_fast")
+            ]
+        elif s.name == "mcp-user" or s.group == "user":
+            matched = [t for t in all_tools if t.category == "user"]
+        else:
+            matched = [t for t in all_tools if t.category == s.category]
+
+        server_disabled = set(getattr(s, "disabled_tools", []) or [])
         matched_tools = [
             {
                 "name": t.name,
-                "description": t.description.split("\n")[0] if t.description else t.name,
-                "category": t.category
+                "description": t.description or t.name,
+                "parameters": t.parameters,
+                "category": t.category,
+                "enabled": (t.name not in server_disabled) and (t.name not in global_disabled) and s.enabled
             }
-            for t in quant_tools
-            if t.category == s.category or (is_stock_data and t.category == "quant")
+            for t in matched
         ]
+
+        active_count = sum(1 for t in matched_tools if t["enabled"])
+
         servers_report.append({
             "name": s.name,
+            "type": s.type,
+            "url": s.url,
             "command": s.command,
             "args": s.args,
             "cwd": s.cwd,
             "enabled": s.enabled,
+            "group": s.group,
             "category": s.category,
             "description": s.description,
-            "status": "CONNECTED" if (s.enabled and len(matched_tools) > 0) else "CONFIGURED",
+            "allow_user_toggle": s.allow_user_toggle,
+            "disabled_tools": list(server_disabled),
+            "status": "CONNECTED" if (s.enabled and len(matched_tools) > 0) else ("DISABLED" if not s.enabled else "DISCONNECTED"),
             "tools_count": len(matched_tools),
+            "active_tools_count": active_count,
             "tools": matched_tools
+        })
+
+    # 如果是超级管理员，额外追加系统级运维/DevOps工具项
+    if auth.is_admin:
+        admin_tools = quant_agent._admin_tool_registry.list_tools()
+        admin_enabled = getattr(cfg, "admin_tools_enabled", True)
+        admin_matched = [
+            {
+                "name": t.name,
+                "description": t.description or t.name,
+                "parameters": t.parameters,
+                "category": t.category,
+                "enabled": (t.name not in global_disabled) and admin_enabled
+            }
+            for t in admin_tools
+        ]
+        servers_report.append({
+            "name": "admin-system-tools",
+            "type": "internal",
+            "url": None,
+            "command": None,
+            "args": [],
+            "cwd": None,
+            "enabled": admin_enabled,
+            "group": "admin",
+            "category": "admin_devops",
+            "description": "超级管理员专属系统级运维管理工具 (宿主机 Shell、源码修改、Docker治理、微服务运维)",
+            "allow_user_toggle": True,
+            "disabled_tools": [t.name for t in admin_tools if t.name in global_disabled],
+            "status": "CONNECTED" if admin_enabled else "DISABLED",
+            "tools_count": len(admin_matched),
+            "active_tools_count": sum(1 for t in admin_matched if t["enabled"]),
+            "tools": admin_matched
         })
 
     return {
@@ -165,12 +224,15 @@ async def list_mcp_servers(auth: UserAuth = Depends(get_current_auth)):
 @app.post("/api/v1/agent/mcp/servers", tags=["MCP Management"])
 async def save_mcp_server(server: McpServerConfig, auth: UserAuth = Depends(get_current_auth)):
     """添加或更新自定义 MCP Server"""
-    if not auth.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="配置与挂载 MCP 服务需要超级管理员权限 (Super Admin required)")
+    # stdio 本地命令模式涉及服务器系统权限，需要超管；HTTP 远程网关模式允许普通用户配置个人 MCP
+    if server.type == "stdio" and not auth.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="配置本地命令行 (stdio) MCP 服务需要超级管理员权限")
+
     cfg = settings_manager.get_config()
-    existing = [s for s in cfg.mcp_servers if s.name != server.name]
+    existing = [s for s in cfg.mcp_servers if s.name != server.name and s.name != "stock-data-mcp"]
     existing.append(server)
     cfg = settings_manager.update_config({"mcp_servers": [s.model_dump() for s in existing]})
+    await quant_agent.initialize_tools(force_refresh=True)
     return {
         "status": "success",
         "message": f"MCP 服务器 '{server.name}' 配置已保存",
@@ -182,25 +244,136 @@ class ToggleMcpRequest(BaseModel):
 
 @app.post("/api/v1/agent/mcp/servers/{server_name}/toggle", tags=["MCP Management"])
 async def toggle_mcp_server(server_name: str, req: ToggleMcpRequest, auth: UserAuth = Depends(get_current_auth)):
-    """动态热插拔 MCP 服务器 (启用或挂起断开)"""
-    if not auth.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="启停 MCP 服务需要超级管理员权限 (Super Admin required)")
+    """动态热插拔 MCP 服务器 (支持用户自主启停其对应权限的 MCP，超管可控制系统级运维工具)"""
+    # 处理超管系统级运维工具开关
+    if server_name == "admin-system-tools":
+        if not auth.is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="控制系统级运维工具调用需要超级管理员权限")
+        settings_manager.update_config({"admin_tools_enabled": req.enabled})
+        return {
+            "status": "success",
+            "message": f"系统级运维工具已{'成功授权开启' if req.enabled else '安全关闭屏蔽'}",
+            "server": {
+                "name": "admin-system-tools",
+                "enabled": req.enabled,
+                "group": "admin"
+            },
+            "enabled": req.enabled
+        }
+
     cfg = settings_manager.get_config()
     target = None
     for s in cfg.mcp_servers:
         if s.name == server_name:
-            s.enabled = req.enabled
             target = s
             break
     if not target:
-        raise HTTPException(status_code=404, detail="未找到该 MCP 服务器")
-    
+        raise HTTPException(status_code=404, detail=f"未找到 MCP 服务: '{server_name}'")
+
+    # 权限检查：如果服务显式禁止用户开关且当前非超管，则拦截
+    if not target.allow_user_toggle and not auth.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"MCP 服务 '{server_name}' 属于系统核心受控模块，仅允许超级管理员控制开关"
+        )
+
+    target.enabled = req.enabled
     settings_manager.update_config({"mcp_servers": [s.model_dump() for s in cfg.mcp_servers]})
     await quant_agent.initialize_tools(force_refresh=True)
     return {
         "status": "success",
-        "message": f"MCP 服务 '{server_name}' 已{'启用挂载' if req.enabled else '安全断开'}",
-        "server": target.model_dump()
+        "message": f"MCP 服务 '{server_name}' 已{'成功启用挂载' if req.enabled else '安全断开挂起'}",
+        "server": target.model_dump(),
+        "enabled": target.enabled
+    }
+
+class ToggleToolRequest(BaseModel):
+    enabled: bool
+    server_name: Optional[str] = None
+
+@app.post("/api/v1/agent/mcp/tools/{tool_name}/toggle", tags=["MCP Management"])
+@app.post("/api/v1/agent/mcp/servers/{server_name}/tools/{tool_name}/toggle", tags=["MCP Management"])
+async def toggle_tool_status(
+    tool_name: str,
+    req: ToggleToolRequest,
+    server_name: Optional[str] = None,
+    auth: UserAuth = Depends(get_current_auth)
+):
+    """开关单个具体工具的能力调用 (普通用户可控制 stock/user 等工具，超管可控制运维工具与全局工具)"""
+    cfg = settings_manager.get_config()
+
+    # 判定是否是超管运维工具
+    admin_tool_names = {t.name for t in quant_agent._admin_tool_registry.list_tools()}
+    if tool_name in admin_tool_names:
+        if not auth.is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="控制系统级运维工具开关需要超级管理员权限")
+        current_disabled = set(cfg.disabled_tools or [])
+        if req.enabled:
+            current_disabled.discard(tool_name)
+        else:
+            current_disabled.add(tool_name)
+        settings_manager.update_config({"disabled_tools": list(current_disabled)})
+        return {
+            "status": "success",
+            "message": f"系统级工具 '{tool_name}' 已{'成功启用' if req.enabled else '安全停用'}",
+            "tool": tool_name,
+            "enabled": req.enabled
+        }
+
+    # 查找该工具属于哪个 MCP 服务
+    target_server = None
+    target_server_name = server_name or req.server_name
+
+    if target_server_name:
+        for s in cfg.mcp_servers:
+            if s.name == target_server_name:
+                target_server = s
+                break
+    else:
+        # 自动推断所属服务
+        all_tools = quant_agent.tool_registry.list_tools()
+        for t in all_tools:
+            if t.name == tool_name:
+                if t.category == "user":
+                    target_server = next((s for s in cfg.mcp_servers if s.name == "mcp-user"), None)
+                elif t.category in ("system", "quant", "stock"):
+                    target_server = next((s for s in cfg.mcp_servers if s.name == "mcp-stock"), None)
+                break
+
+    if not target_server:
+        # 未归属具体服务则写入全局禁用表
+        current_disabled = set(cfg.disabled_tools or [])
+        if req.enabled:
+            current_disabled.discard(tool_name)
+        else:
+            current_disabled.add(tool_name)
+        settings_manager.update_config({"disabled_tools": list(current_disabled)})
+        return {
+            "status": "success",
+            "message": f"工具 '{tool_name}' 已{'成功启用' if req.enabled else '安全停用'}",
+            "tool": tool_name,
+            "enabled": req.enabled
+        }
+
+    # 权限检查
+    if not target_server.allow_user_toggle and not auth.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="该服务禁止普通用户修改工具配置")
+
+    # 更新 server 内部的 disabled_tools
+    s_disabled = set(getattr(target_server, "disabled_tools", []) or [])
+    if req.enabled:
+        s_disabled.discard(tool_name)
+    else:
+        s_disabled.add(tool_name)
+    target_server.disabled_tools = list(s_disabled)
+
+    settings_manager.update_config({"mcp_servers": [s.model_dump() for s in cfg.mcp_servers]})
+    return {
+        "status": "success",
+        "message": f"服务 [{target_server.name}] 下工具 '{tool_name}' 已{'成功启用' if req.enabled else '安全停用'}",
+        "server": target_server.name,
+        "tool": tool_name,
+        "enabled": req.enabled
     }
 
 

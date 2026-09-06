@@ -104,14 +104,36 @@ class QuantAgent(BaseAgent):
         )
 
         self._tools_initialized = False
-        # HTTP MCP 客户端，连接统一 MCP 数据网关（无进程 fork）
-        self._mcp_client = MCPHttpClient(
-            url=agent_config.MCP_GATEWAY_URL,
-            server_name="mcp-gateway",
-            category="quant",
-            # 动态获取当前请求用户 token，配合网关 token 透传
-            token_getter=lambda: current_user_token.get(),
-        )
+
+        # 多 MCP 客户端注册表：独立管理各分层分组（系统 stock、用户 user、未来扩展 custom）
+        base_mcp_url = agent_config.MCP_GATEWAY_URL.rstrip('/')
+        if base_mcp_url.endswith("/stock") or base_mcp_url.endswith("/system"):
+            stock_url = base_mcp_url
+            user_url = base_mcp_url.rsplit('/', 1)[0] + "/user"
+        elif base_mcp_url.endswith("/user"):
+            stock_url = base_mcp_url.rsplit('/', 1)[0] + "/stock"
+            user_url = base_mcp_url
+        else:
+            stock_url = f"{base_mcp_url}/stock"
+            user_url = f"{base_mcp_url}/user"
+
+        self._mcp_clients: Dict[str, MCPHttpClient] = {
+            "mcp-stock": MCPHttpClient(
+                url=stock_url,
+                server_name="mcp-stock",
+                category="system",
+                group="system",
+                enabled=True,
+            ),
+            "mcp-user": MCPHttpClient(
+                url=user_url,
+                server_name="mcp-user",
+                category="user",
+                group="user",
+                enabled=True,
+                token_getter=lambda: current_user_token.get(),
+            ),
+        }
 
         # 超级管理员专属 DevOps 运维工具注册表
         self._admin_tool_registry = get_admin_tool_registry()
@@ -123,8 +145,8 @@ class QuantAgent(BaseAgent):
     def _register_internal_quant_tools(self):
         """
         挂载 quant-server 策略诊断与沙箱极速回测专属工具。
-        注意：行情数据（get_realtime_quote 等）与用户数据（get_user_watchlists / get_user_strategies）
-        已统一迁移至 mcp-gateway，由 MCPHttpClient 动态发现，无需在此内联定义。
+        注意：行情数据（get_realtime_quote 等）已在 mcp-stock 分组，
+        用户数据（get_user_watchlists 等）已在 mcp-user 分组，由独立客户端动态发现。
         """
 
         @tool(
@@ -208,34 +230,133 @@ class QuantAgent(BaseAgent):
         self.tool_registry.register(run_backtest_fast)
 
 
+    async def initialize_stock_mcp(self, force_refresh: bool = False):
+        """独立发现并挂载系统级行情中台 MCP 工具 (category='system')"""
+        client = self._mcp_clients.get("mcp-stock")
+        if not client:
+            return []
+        try:
+            tools = await client.register_to(self.tool_registry)
+            logger.info("QuantAgent: Discovered & registered %d system stock tools", len(tools))
+            return tools
+        except Exception as e:
+            logger.error("QuantAgent: Failed to initialize system stock MCP: %s", e)
+            return []
+
+    async def initialize_user_mcp(self, force_refresh: bool = False):
+        """独立发现并挂载用户专属数据 MCP 工具 (category='user')"""
+        client = self._mcp_clients.get("mcp-user")
+        if not client:
+            return []
+        try:
+            tools = await client.register_to(self.tool_registry)
+            logger.info("QuantAgent: Discovered & registered %d user data tools", len(tools))
+            return tools
+        except Exception as e:
+            logger.error("QuantAgent: Failed to initialize user data MCP: %s", e)
+            return []
+
+    async def initialize_custom_mcps(self, force_refresh: bool = False):
+        """加载配置中心中未来扩展添加的自定义/第三方 MCP 服务"""
+        from quant_agent.settings import settings_manager
+        cfg = settings_manager.get_config()
+        loaded = []
+        for s in cfg.mcp_servers:
+            if s.name in ("mcp-stock", "mcp-user"):
+                continue
+            if not s.enabled:
+                continue
+            if s.type == "http" and s.url:
+                if s.name not in self._mcp_clients:
+                    self._mcp_clients[s.name] = MCPHttpClient(
+                        url=s.url,
+                        server_name=s.name,
+                        category=s.category or "custom",
+                        group=s.group or "custom",
+                        enabled=s.enabled,
+                    )
+                try:
+                    tools = await self._mcp_clients[s.name].register_to(self.tool_registry)
+                    loaded.extend(tools)
+                    logger.info("QuantAgent: Loaded %d tools from custom MCP '%s'", len(tools), s.name)
+                except Exception as e:
+                    logger.error("QuantAgent: Failed to load custom MCP '%s': %s", s.name, e)
+        return loaded
 
     async def initialize_tools(self, force_refresh: bool = False):
-        """动态发现并挂载 stock-data MCP 工具"""
+        """动态分步编排发现并挂载所有分组的 MCP 工具"""
         if self._tools_initialized and not force_refresh:
             return
 
-        try:
-            await self._mcp_client.register_to(self.tool_registry)
-            self._tools_initialized = True
-            logger.info("QuantAgent successfully initialized %d tools", len(self.tool_registry.list_tools()))
-        except Exception as e:
-            logger.error("Failed to initialize MCP tools for QuantAgent: %s", e)
+        # 1. 加载系统行情 MCP
+        await self.initialize_stock_mcp(force_refresh=force_refresh)
+
+        # 2. 加载用户专属数据 MCP
+        await self.initialize_user_mcp(force_refresh=force_refresh)
+
+        # 3. 加载扩展 MCP
+        await self.initialize_custom_mcps(force_refresh=force_refresh)
+
+        self._tools_initialized = True
+        logger.info(
+            "QuantAgent successfully initialized all tool groups (total active: %d)",
+            len(self.tool_registry.list_tools())
+        )
 
     def get_active_tool_registry(self, is_admin: bool = False, scope: str = "quant") -> ToolRegistry:
-        """根据用户权限与领域范围 (scope) 动态合成激活的工具注册表"""
-        if not is_admin:
-            # 普通用户模式：严格仅暴露基础量化工具
-            return self.tool_registry.filter_by_categories(["quant", "general"])
+        """
+        根据用户权限与领域范围 (scope) 动态合成激活的工具注册表。
+        已根据 settings 中各 MCP Server 的 enabled 状态动态过滤！
+        """
+        from quant_agent.settings import settings_manager
+        cfg = settings_manager.get_config()
 
-        if scope == "quant":
-            # 专属量化模式：物理屏蔽所有 admin_devops / shell 工具，模型绝无法调用读源码/执行shell
-            return self.tool_registry.filter_by_categories(["quant", "general"])
+        all_disabled_tools = set(getattr(cfg, "disabled_tools", []) or [])
+
+        # 动态统计当前启用的工具分类
+        active_categories = ["quant", "general"]
+        for s in cfg.mcp_servers:
+            if s.enabled:
+                if s.name == "mcp-stock":
+                    active_categories.extend(["system", "stock", "quant"])
+                elif s.name == "mcp-user":
+                    active_categories.append("user")
+                elif s.category:
+                    active_categories.append(s.category)
+                if getattr(s, "disabled_tools", None):
+                    all_disabled_tools.update(s.disabled_tools)
+
+        active_categories = list(set(active_categories))
+
+        if not is_admin:
+            # 普通用户模式：严格暴露当前启用的基础量化、用户自选与通用扩展工具，并排除被禁用的单个工具
+            reg = self.tool_registry.filter_by_categories(active_categories)
+            if all_disabled_tools:
+                reg = reg.exclude_tools(list(all_disabled_tools))
+            return reg
+
+        # 超管系统级运维工具总开关检查
+        admin_tools_enabled = getattr(cfg, "admin_tools_enabled", True)
+
+        if scope == "quant" or not admin_tools_enabled:
+            # 专属量化模式或超管关闭了系统级运维工具：物理屏蔽所有 admin_devops / shell 工具
+            reg = self.tool_registry.filter_by_categories(active_categories)
+            if all_disabled_tools:
+                reg = reg.exclude_tools(list(all_disabled_tools))
+            return reg
         elif scope == "devops":
             # 专属运维模式：仅暴露运维与 Shell 工具
-            return self._admin_tool_registry.copy()
+            reg = self._admin_tool_registry.copy()
+            if all_disabled_tools:
+                reg = reg.exclude_tools(list(all_disabled_tools))
+            return reg
         else:
             # 全栈混合模式 (all)：量化与运维工具全量融合
-            return self.tool_registry.copy().merge(self._admin_tool_registry)
+            base_reg = self.tool_registry.filter_by_categories(active_categories)
+            merged = base_reg.merge(self._admin_tool_registry)
+            if all_disabled_tools:
+                merged = merged.exclude_tools(list(all_disabled_tools))
+            return merged
 
     async def chat_stream(
         self,

@@ -56,6 +56,8 @@ async def test_auth_extraction():
 
 def test_dynamic_tool_registry_rbac():
     """测试不同角色的动态工具隔离策略"""
+    from quant_agent.settings import settings_manager
+    settings_manager.update_config({"admin_tools_enabled": True})
     # 普通用户仅包含 quant 分类或通用工具，严禁暴露 admin 工具
     user_registry = quant_agent.get_active_tool_registry(is_admin=False)
     user_tool_names = [t.name for t in user_registry.list_tools()]

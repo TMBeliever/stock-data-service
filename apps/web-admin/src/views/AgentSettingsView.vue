@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAgentSettingsStore, type ExecutionMode, type McpServerItem } from '@/stores/agentSettings'
 import { useAuthStore } from '@/stores/auth'
@@ -11,6 +11,76 @@ const authStore = useAuthStore()
 const activeTab = ref<'permissions' | 'mcp' | 'runtime'>('permissions')
 const showAddMcpModal = ref(false)
 const toastMsg = ref('')
+
+// 分层解耦服务器引用
+const stockServer = computed(() =>
+  settingsStore.mcpServers.find(
+    (s) => s.name === 'mcp-stock' || s.group === 'stock' || s.group === 'system'
+  )
+)
+const userServer = computed(() =>
+  settingsStore.mcpServers.find((s) => s.name === 'mcp-user' || s.group === 'user')
+)
+const customServers = computed(() =>
+  settingsStore.mcpServers.filter(
+    (s) =>
+      s.name !== 'mcp-stock' &&
+      s.name !== 'stock-data-mcp' &&
+      s.name !== 'mcp-user' &&
+      s.name !== 'admin-system-tools' &&
+      s.group !== 'stock' &&
+      s.group !== 'system' &&
+      s.group !== 'user' &&
+      s.group !== 'admin'
+  )
+)
+const adminServer = computed(() =>
+  settingsStore.mcpServers.find((s) => s.name === 'admin-system-tools' || s.group === 'admin')
+)
+
+// MCP 完整能力详情弹窗
+const detailModalServer = ref<any>(null)
+function openDetailModal(server: any) {
+  detailModalServer.value = server
+}
+function closeDetailModal() {
+  detailModalServer.value = null
+}
+
+// 提取工具参数 Schema
+function getToolParams(parameters: any) {
+  if (!parameters || !parameters.properties) return []
+  const requiredList = parameters.required || []
+  return Object.entries(parameters.properties).map(([name, prop]: [string, any]) => ({
+    name,
+    type: prop.type || 'string',
+    description: prop.description || '',
+    required: requiredList.includes(name),
+    default: prop.default !== undefined ? String(prop.default) : undefined,
+  }))
+}
+
+// 开关整套 MCP 服务
+async function handleToggleMcp(server: any) {
+  const newStatus = !server.enabled
+  const ok = await settingsStore.toggleMcpServer(server.name, newStatus)
+  if (ok) {
+    showToast(newStatus ? `✓ 已启用: ${server.name}` : `⏹ 已停用: ${server.name}`)
+  } else {
+    showToast('❌ 状态切换失败')
+  }
+}
+
+// 精细化独立开关单个工具
+async function handleToggleTool(server: any, tool: any) {
+  const newStatus = !tool.enabled
+  const ok = await settingsStore.toggleTool(server.name, tool.name, newStatus)
+  if (ok) {
+    showToast(newStatus ? `✓ 工具 [${tool.name}] 已启用` : `⏹ 工具 [${tool.name}] 已停用`)
+  } else {
+    showToast(`❌ 工具 [${tool.name}] 切换失败`)
+  }
+}
 
 const newMcp = ref({
   name: '',
@@ -321,66 +391,520 @@ onMounted(() => {
         </button>
       </div>
 
-      <!-- MCP 卡片列表 -->
-      <div class="grid grid-cols-1 gap-4">
-        <div
-          v-for="server in settingsStore.mcpServers"
-          :key="server.name"
-          class="p-5 rounded-2xl bg-[#141418] border border-white/[0.08] shadow-sm space-y-3.5"
-        >
-          <div class="flex items-start justify-between">
-            <div class="space-y-1">
-              <div class="flex items-center space-x-2.5">
-                <span class="text-base">🚀</span>
-                <span class="font-bold text-sm text-white">{{ server.name }}</span>
-                <span
-                  class="px-2 py-0.5 rounded text-[9px] font-mono font-bold"
-                  :class="server.status === 'CONNECTED' ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30' : 'bg-zinc-500/15 text-zinc-400 border border-zinc-500/30'"
-                >
-                  ● {{ server.status }}
-                </span>
-                <span class="px-1.5 py-0.5 rounded text-[9px] bg-white/[0.04] text-zinc-400 font-mono">
-                  {{ server.category }}
-                </span>
-              </div>
-              <p class="text-xs text-zinc-400">{{ server.description }}</p>
-            </div>
-            <div class="text-right text-[11px] font-mono text-zinc-400">
-              <span>提供 <strong class="text-amber-300">{{ server.tools_count }}</strong> 个工具</span>
+      <!-- MCP 分层卡片列表 (4 大治理分区：行情中台、用户专属数据、扩展第三方、超管系统级运维) -->
+      <div class="space-y-8">
+        <!-- ======================================================= -->
+        <!-- 1. 金融行情数据中台 MCP 服务 (mcp-stock) -->
+        <!-- ======================================================= -->
+        <div class="space-y-3.5">
+          <div class="flex items-center justify-between px-1">
+            <h3 class="text-sm font-bold text-sky-400 flex items-center space-x-2">
+              <span>📈</span>
+              <span>金融行情数据 MCP 服务 (mcp-stock)</span>
+            </h3>
+            <div class="flex items-center space-x-2">
+              <span class="text-[11px] font-mono px-2 py-0.5 rounded bg-sky-500/10 text-sky-300 border border-sky-500/20">
+                系统全局标准中台 · 高性能高并发缓存
+              </span>
             </div>
           </div>
 
-          <!-- 启动指令与环境 -->
-          <div class="p-2.5 rounded-xl bg-black/40 border border-white/[0.06] text-[11px] font-mono text-zinc-300 space-y-1">
-            <div class="text-zinc-500 text-[10px]">启动进程指令 (Process Command):</div>
-            <div class="text-amber-200/90 truncate">
-              $ {{ server.command }} {{ server.args.join(' ') }}
-            </div>
-            <div v-if="server.cwd" class="text-zinc-500 text-[10px] truncate pt-0.5">
-              Cwd: {{ server.cwd }}
-            </div>
-          </div>
-
-          <!-- 展开工具列表 -->
-          <details class="group/mcp">
-            <summary class="text-xs text-zinc-400 hover:text-zinc-200 cursor-pointer select-none flex items-center justify-between py-1">
-              <span>查看此 MCP 提供的 {{ server.tools_count }} 个工具详情</span>
-              <span class="text-[10px] group-open/mcp:rotate-180 transition-transform">▼</span>
-            </summary>
-            <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 pt-2 border-t border-white/[0.06]">
-              <div
-                v-for="tool in server.tools"
-                :key="tool.name"
-                class="p-2 rounded-lg bg-white/[0.02] border border-white/[0.04] text-[11px] space-y-1"
-              >
-                <div class="font-mono font-semibold text-white flex items-center justify-between">
-                  <span class="text-emerald-300">{{ tool.name }}</span>
-                  <span class="text-[9px] px-1 rounded bg-white/[0.06] text-zinc-400">{{ tool.category }}</span>
+          <div
+            v-if="stockServer"
+            class="p-5 rounded-2xl bg-[#141418] border border-sky-500/20 shadow-sm space-y-4"
+          >
+            <!-- 服务基本信息与总控开关 -->
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-white/[0.06]">
+              <div class="space-y-1">
+                <div class="flex items-center space-x-2.5">
+                  <span class="text-base">🚀</span>
+                  <span class="font-bold text-sm text-white">{{ stockServer.name }}</span>
+                  <span
+                    class="px-2 py-0.5 rounded text-[10px] font-mono font-bold"
+                    :class="stockServer.status === 'CONNECTED' ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30' : 'bg-zinc-500/15 text-zinc-400 border border-zinc-500/30'"
+                  >
+                    ● {{ stockServer.status }}
+                  </span>
+                  <span class="px-1.5 py-0.5 rounded text-[10px] bg-sky-500/10 text-sky-300 border border-sky-500/20 font-mono">
+                    金融行情中台
+                  </span>
                 </div>
-                <div class="text-[10px] text-zinc-400 truncate">{{ tool.description || '无详细说明' }}</div>
+                <p class="text-xs text-zinc-400 leading-relaxed">{{ stockServer.description }}</p>
+                <div class="text-[11px] font-mono text-zinc-500 flex items-center space-x-3 pt-0.5">
+                  <span>服务端点: <strong class="text-sky-300">{{ stockServer.url || 'http://localhost:8050/mcp/stock' }}</strong></span>
+                  <span>·</span>
+                  <span>已激活工具: <strong class="text-sky-300">{{ stockServer.active_tools_count ?? stockServer.tools_count }}</strong> / {{ stockServer.tools_count }}</span>
+                </div>
+              </div>
+
+              <!-- 右侧控制区 -->
+              <div class="flex items-center space-x-3 shrink-0">
+                <button
+                  @click="openDetailModal(stockServer)"
+                  class="px-2.5 py-1 rounded-xl bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border border-sky-500/30 text-xs font-medium cursor-pointer transition-colors"
+                >
+                  📖 查看服务能力架构
+                </button>
+                <button
+                  @click="handleToggleMcp(stockServer)"
+                  :class="[
+                    'w-11 h-6 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-200',
+                    stockServer.enabled ? 'bg-sky-500' : 'bg-zinc-700',
+                  ]"
+                  :title="stockServer.enabled ? '点击挂起/断开该服务' : '点击挂载/启用该服务'"
+                >
+                  <div
+                    :class="[
+                      'bg-white w-5 h-5 rounded-full shadow-md transform transition-transform duration-200',
+                      stockServer.enabled ? 'translate-x-5' : 'translate-x-0',
+                    ]"
+                  ></div>
+                </button>
               </div>
             </div>
-          </details>
+
+            <!-- 工具与能力精细化矩阵 (每个工具独立开关与参数列表) -->
+            <div class="space-y-2">
+              <div class="flex items-center justify-between text-xs text-zinc-400 font-semibold px-1">
+                <span>包含的 {{ stockServer.tools_count }} 项金融行情工具与参数定义 (支持逐一精细化控制):</span>
+                <span class="text-[10px] text-zinc-500 font-normal">点击开关可精准停用/激活对应能力</span>
+              </div>
+
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+                <div
+                  v-for="tool in stockServer.tools"
+                  :key="tool.name"
+                  :class="[
+                    'p-3 rounded-xl border transition-all space-y-2',
+                    tool.enabled && stockServer.enabled
+                      ? 'bg-white/[0.02] border-sky-500/20 hover:border-sky-500/40'
+                      : 'bg-black/30 border-white/[0.04] opacity-60'
+                  ]"
+                >
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                      <span class="font-mono text-xs font-bold" :class="tool.enabled && stockServer.enabled ? 'text-sky-300' : 'text-zinc-400'">
+                        {{ tool.name }}
+                      </span>
+                      <span class="px-1.5 py-0.2 rounded text-[9px] font-medium" :class="tool.enabled && stockServer.enabled ? 'bg-sky-500/15 text-sky-300' : 'bg-zinc-700 text-zinc-400'">
+                        {{ tool.enabled && stockServer.enabled ? '● 已激活' : '⏹ 已停用' }}
+                      </span>
+                    </div>
+
+                    <!-- 单个工具独立开关 -->
+                    <button
+                      @click.stop="handleToggleTool(stockServer, tool)"
+                      :class="[
+                        'w-8 h-4.5 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-200',
+                        tool.enabled ? 'bg-sky-500' : 'bg-zinc-700'
+                      ]"
+                      :title="tool.enabled ? '点击禁用该工具' : '点击启用该工具'"
+                    >
+                      <div
+                        :class="[
+                          'bg-white w-3.5 h-3.5 rounded-full shadow-sm transform transition-transform duration-200',
+                          tool.enabled ? 'translate-x-3.5' : 'translate-x-0'
+                        ]"
+                      ></div>
+                    </button>
+                  </div>
+
+                  <p class="text-[11px] text-zinc-300 leading-relaxed">{{ tool.description || '无详细功能描述' }}</p>
+
+                  <!-- 工具入参列表 -->
+                  <div v-if="getToolParams(tool.parameters).length > 0" class="pt-1.5 border-t border-white/[0.04] space-y-1">
+                    <div class="text-[10px] text-zinc-500 font-medium">支持入参:</div>
+                    <div class="flex flex-wrap gap-1">
+                      <span
+                        v-for="param in getToolParams(tool.parameters)"
+                        :key="param.name"
+                        class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-black/40 border border-white/[0.06] text-zinc-300 flex items-center space-x-1"
+                        :title="`${param.name} (${param.type}): ${param.description || '无说明'}`"
+                      >
+                        <strong :class="param.required ? 'text-amber-300' : 'text-zinc-400'">{{ param.name }}</strong>
+                        <span class="text-zinc-500 text-[9px]">({{ param.type }}{{ param.required ? ', 必选' : '' }})</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ======================================================= -->
+        <!-- 2. 用户专属数据 MCP 服务 (mcp-user) -->
+        <!-- ======================================================= -->
+        <div class="space-y-3.5">
+          <div class="flex items-center justify-between px-1">
+            <h3 class="text-sm font-bold text-violet-400 flex items-center space-x-2">
+              <span>👤</span>
+              <span>用户专属数据 MCP 服务 (mcp-user)</span>
+            </h3>
+            <div class="flex items-center space-x-2">
+              <span class="text-[11px] font-mono px-2 py-0.5 rounded bg-violet-500/10 text-violet-300 border border-violet-500/20">
+                JWT Token 身份隔离 · 用户自主启停控制
+              </span>
+            </div>
+          </div>
+
+          <div
+            v-if="userServer"
+            class="p-5 rounded-2xl bg-[#141418] border border-violet-500/20 shadow-sm space-y-4"
+          >
+            <!-- 服务基本信息与总控开关 -->
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-white/[0.06]">
+              <div class="space-y-1">
+                <div class="flex items-center space-x-2.5">
+                  <span class="text-base">🚀</span>
+                  <span class="font-bold text-sm text-white">{{ userServer.name }}</span>
+                  <span
+                    class="px-2 py-0.5 rounded text-[10px] font-mono font-bold"
+                    :class="userServer.status === 'CONNECTED' ? 'bg-violet-500/15 text-violet-300 border border-violet-500/30' : 'bg-zinc-500/15 text-zinc-400 border border-zinc-500/30'"
+                  >
+                    ● {{ userServer.status }}
+                  </span>
+                  <span class="px-1.5 py-0.5 rounded text-[10px] bg-violet-500/10 text-violet-300 border border-violet-500/20 font-mono">
+                    私有数据隔离
+                  </span>
+                </div>
+                <p class="text-xs text-zinc-400 leading-relaxed">{{ userServer.description }}</p>
+                <div class="text-[11px] font-mono text-zinc-500 flex items-center space-x-3 pt-0.5">
+                  <span>服务端点: <strong class="text-violet-300">{{ userServer.url || 'http://localhost:8050/mcp/user' }}</strong></span>
+                  <span>·</span>
+                  <span>已激活工具: <strong class="text-violet-300">{{ userServer.active_tools_count ?? userServer.tools_count }}</strong> / {{ userServer.tools_count }}</span>
+                </div>
+              </div>
+
+              <!-- 右侧控制区 -->
+              <div class="flex items-center space-x-3 shrink-0">
+                <button
+                  @click="openDetailModal(userServer)"
+                  class="px-2.5 py-1 rounded-xl bg-violet-500/10 hover:bg-violet-500/20 text-violet-300 border border-violet-500/30 text-xs font-medium cursor-pointer transition-colors"
+                >
+                  📖 查看服务能力架构
+                </button>
+                <button
+                  @click="handleToggleMcp(userServer)"
+                  :class="[
+                    'w-11 h-6 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-200',
+                    userServer.enabled ? 'bg-violet-500' : 'bg-zinc-700',
+                  ]"
+                  :title="userServer.enabled ? '点击断开个人私有数据访问' : '点击授权开启个人数据访问'"
+                >
+                  <div
+                    :class="[
+                      'bg-white w-5 h-5 rounded-full shadow-md transform transition-transform duration-200',
+                      userServer.enabled ? 'translate-x-5' : 'translate-x-0',
+                    ]"
+                  ></div>
+                </button>
+              </div>
+            </div>
+
+            <!-- 工具与能力精细化矩阵 -->
+            <div class="space-y-2">
+              <div class="flex items-center justify-between text-xs text-zinc-400 font-semibold px-1">
+                <span>包含的 {{ userServer.tools_count }} 项用户专属数据工具 (支持自主启停与参数透视):</span>
+                <span class="text-[10px] text-zinc-500 font-normal">支持普通量化用户自主自由开关</span>
+              </div>
+
+              <div class="grid grid-cols-1 lg:grid-cols-3 gap-2.5">
+                <div
+                  v-for="tool in userServer.tools"
+                  :key="tool.name"
+                  :class="[
+                    'p-3 rounded-xl border transition-all space-y-2',
+                    tool.enabled && userServer.enabled
+                      ? 'bg-white/[0.02] border-violet-500/20 hover:border-violet-500/40'
+                      : 'bg-black/30 border-white/[0.04] opacity-60'
+                  ]"
+                >
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                      <span class="font-mono text-xs font-bold" :class="tool.enabled && userServer.enabled ? 'text-violet-300' : 'text-zinc-400'">
+                        {{ tool.name }}
+                      </span>
+                      <span class="px-1.5 py-0.2 rounded text-[9px] font-medium" :class="tool.enabled && userServer.enabled ? 'bg-violet-500/15 text-violet-300' : 'bg-zinc-700 text-zinc-400'">
+                        {{ tool.enabled && userServer.enabled ? '● 已激活' : '⏹ 已停用' }}
+                      </span>
+                    </div>
+
+                    <!-- 单个工具独立开关 -->
+                    <button
+                      @click.stop="handleToggleTool(userServer, tool)"
+                      :class="[
+                        'w-8 h-4.5 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-200',
+                        tool.enabled ? 'bg-violet-500' : 'bg-zinc-700'
+                      ]"
+                      :title="tool.enabled ? '点击禁用该工具' : '点击启用该工具'"
+                    >
+                      <div
+                        :class="[
+                          'bg-white w-3.5 h-3.5 rounded-full shadow-sm transform transition-transform duration-200',
+                          tool.enabled ? 'translate-x-3.5' : 'translate-x-0'
+                        ]"
+                      ></div>
+                    </button>
+                  </div>
+
+                  <p class="text-[11px] text-zinc-300 leading-relaxed">{{ tool.description || '无详细功能描述' }}</p>
+
+                  <!-- 工具入参列表 -->
+                  <div v-if="getToolParams(tool.parameters).length > 0" class="pt-1.5 border-t border-white/[0.04] space-y-1">
+                    <div class="text-[10px] text-zinc-500 font-medium">支持入参:</div>
+                    <div class="flex flex-wrap gap-1">
+                      <span
+                        v-for="param in getToolParams(tool.parameters)"
+                        :key="param.name"
+                        class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-black/40 border border-white/[0.06] text-zinc-300 flex items-center space-x-1"
+                      >
+                        <strong :class="param.required ? 'text-amber-300' : 'text-zinc-400'">{{ param.name }}</strong>
+                        <span class="text-zinc-500 text-[9px]">({{ param.type }})</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ======================================================= -->
+        <!-- 3. 扩展与第三方 MCP 服务 (other / 之后加载的) -->
+        <!-- ======================================================= -->
+        <div class="space-y-3.5">
+          <div class="flex items-center justify-between px-1">
+            <h3 class="text-sm font-bold text-amber-400 flex items-center space-x-2">
+              <span>🧩</span>
+              <span>扩展与第三方 MCP 服务 (other)</span>
+            </h3>
+            <span class="text-[11px] font-mono text-zinc-500">{{ customServers.length }} 个外部扩展服务</span>
+          </div>
+
+          <div v-if="customServers.length > 0" class="space-y-3">
+            <div
+              v-for="server in customServers"
+              :key="server.name"
+              class="p-5 rounded-2xl bg-[#141418] border border-amber-500/20 shadow-sm space-y-4"
+            >
+              <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-white/[0.06]">
+                <div class="space-y-1">
+                  <div class="flex items-center space-x-2.5">
+                    <span class="text-base">🚀</span>
+                    <span class="font-bold text-sm text-white">{{ server.name }}</span>
+                    <span
+                      class="px-2 py-0.5 rounded text-[10px] font-mono font-bold"
+                      :class="server.status === 'CONNECTED' ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30' : 'bg-zinc-500/15 text-zinc-400 border border-zinc-500/30'"
+                    >
+                      ● {{ server.status }}
+                    </span>
+                    <span class="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono">
+                      {{ server.type === 'http' ? '远程 HTTP' : '本地命令行 (Stdio)' }}
+                    </span>
+                  </div>
+                  <p class="text-xs text-zinc-400">{{ server.description || '自定义扩展 MCP' }}</p>
+                  <div class="text-[11px] font-mono text-zinc-500">
+                    端点/命令: {{ server.url || (server.command + ' ' + (server.args || []).join(' ')) }}
+                  </div>
+                </div>
+
+                <div class="flex items-center space-x-3 shrink-0">
+                  <button
+                    @click="openDetailModal(server)"
+                    class="px-2.5 py-1 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-medium cursor-pointer transition-colors"
+                  >
+                    📖 查看能力
+                  </button>
+                  <button
+                    @click="handleToggleMcp(server)"
+                    :class="[
+                      'w-11 h-6 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-200',
+                      server.enabled ? 'bg-amber-500' : 'bg-zinc-700',
+                    ]"
+                  >
+                    <div
+                      :class="[
+                        'bg-white w-5 h-5 rounded-full shadow-md transform transition-transform duration-200',
+                        server.enabled ? 'translate-x-5' : 'translate-x-0',
+                      ]"
+                    ></div>
+                  </button>
+                </div>
+              </div>
+
+              <!-- 工具列表 -->
+              <div v-if="server.tools && server.tools.length > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+                <div
+                  v-for="tool in server.tools"
+                  :key="tool.name"
+                  class="p-3 rounded-xl bg-white/[0.02] border border-amber-500/20 space-y-2"
+                >
+                  <div class="flex items-center justify-between">
+                    <span class="font-mono text-xs text-amber-300 font-bold">{{ tool.name }}</span>
+                    <button
+                      @click.stop="handleToggleTool(server, tool)"
+                      :class="[
+                        'w-8 h-4.5 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-200',
+                        tool.enabled ? 'bg-amber-500' : 'bg-zinc-700'
+                      ]"
+                    >
+                      <div
+                        :class="[
+                          'bg-white w-3.5 h-3.5 rounded-full shadow-sm transform transition-transform duration-200',
+                          tool.enabled ? 'translate-x-3.5' : 'translate-x-0'
+                        ]"
+                      ></div>
+                    </button>
+                  </div>
+                  <p class="text-[11px] text-zinc-300">{{ tool.description }}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div
+            v-else
+            class="p-6 rounded-2xl bg-[#141418] border border-dashed border-white/[0.08] text-center text-xs text-zinc-500 space-y-1.5"
+          >
+            <div class="text-sm">暂无第三方扩展 MCP 服务</div>
+            <div class="text-[11px] text-zinc-500">点击右上角「＋ 添加自定义 MCP」可接入外部天气、研报、知识库或自建脚本服务</div>
+          </div>
+        </div>
+
+        <!-- ======================================================= -->
+        <!-- 4. 超级管理员系统级运维工具调用 (admin) -->
+        <!-- ======================================================= -->
+        <div v-if="authStore.isAdmin" class="space-y-3.5">
+          <div class="flex items-center justify-between px-1">
+            <h3 class="text-sm font-bold text-rose-400 flex items-center space-x-2">
+              <span>🛠️</span>
+              <span>超级管理员系统级运维工具调用 (admin)</span>
+            </h3>
+            <span class="text-[11px] font-mono text-rose-400 bg-rose-500/10 px-2.5 py-0.5 rounded border border-rose-500/20 font-bold">
+              超管专属治理矩阵 · 严格沙箱鉴权
+            </span>
+          </div>
+
+          <div
+            v-if="adminServer"
+            class="p-5 rounded-2xl bg-[#141418] border border-rose-500/25 shadow-sm space-y-4"
+          >
+            <!-- 基本信息与超管总开关 -->
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-white/[0.06]">
+              <div class="space-y-1">
+                <div class="flex items-center space-x-2.5">
+                  <span class="text-base">⚡</span>
+                  <span class="font-bold text-sm text-rose-200">{{ adminServer.name }}</span>
+                  <span
+                    class="px-2 py-0.5 rounded text-[10px] font-mono font-bold"
+                    :class="adminServer.status === 'CONNECTED' ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30' : 'bg-zinc-500/15 text-zinc-400 border border-zinc-500/30'"
+                  >
+                    ● {{ adminServer.status }}
+                  </span>
+                  <span class="px-1.5 py-0.5 rounded text-[10px] bg-rose-500/10 text-rose-300 border border-rose-500/20 font-mono">
+                    系统级运维治理
+                  </span>
+                </div>
+                <p class="text-xs text-zinc-400 leading-relaxed">{{ adminServer.description }}</p>
+                <div class="text-[11px] font-mono text-zinc-500 flex items-center space-x-3 pt-0.5">
+                  <span>管控范围: <strong class="text-rose-300">宿主机 Shell 终端 · 源码读写 · Docker 容器治理 · 服务运维</strong></span>
+                  <span>·</span>
+                  <span>已激活工具: <strong class="text-rose-300">{{ adminServer.active_tools_count ?? adminServer.tools_count }}</strong> / {{ adminServer.tools_count }}</span>
+                </div>
+              </div>
+
+              <!-- 超管总开关 -->
+              <div class="flex items-center space-x-3 shrink-0">
+                <button
+                  @click="openDetailModal(adminServer)"
+                  class="px-2.5 py-1 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-medium cursor-pointer transition-colors"
+                >
+                  📖 查看运维能力
+                </button>
+                <button
+                  @click="handleToggleMcp(adminServer)"
+                  :class="[
+                    'w-11 h-6 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-200',
+                    adminServer.enabled ? 'bg-rose-500' : 'bg-zinc-700',
+                  ]"
+                  :title="adminServer.enabled ? '点击禁用系统级运维工具' : '点击启用系统级运维工具'"
+                >
+                  <div
+                    :class="[
+                      'bg-white w-5 h-5 rounded-full shadow-md transform transition-transform duration-200',
+                      adminServer.enabled ? 'translate-x-5' : 'translate-x-0',
+                    ]"
+                  ></div>
+                </button>
+              </div>
+            </div>
+
+            <!-- 8 项运维工具精细化矩阵 -->
+            <div class="space-y-2">
+              <div class="flex items-center justify-between text-xs text-zinc-400 font-semibold px-1">
+                <span>包含的 {{ adminServer.tools_count }} 项系统级运维治理工具 (每个工具均支持独立开关停用):</span>
+                <span class="text-[10px] text-zinc-500 font-normal">支持超管精确控制 Shell 或源码修改权限</span>
+              </div>
+
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+                <div
+                  v-for="tool in adminServer.tools"
+                  :key="tool.name"
+                  :class="[
+                    'p-3 rounded-xl border transition-all space-y-2',
+                    tool.enabled && adminServer.enabled
+                      ? 'bg-white/[0.02] border-rose-500/20 hover:border-rose-500/40'
+                      : 'bg-black/30 border-white/[0.04] opacity-60'
+                  ]"
+                >
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                      <span class="font-mono text-xs font-bold" :class="tool.enabled && adminServer.enabled ? 'text-rose-300' : 'text-zinc-400'">
+                        {{ tool.name }}
+                      </span>
+                      <span class="px-1.5 py-0.2 rounded text-[9px] font-medium" :class="tool.enabled && adminServer.enabled ? 'bg-rose-500/15 text-rose-300' : 'bg-zinc-700 text-zinc-400'">
+                        {{ tool.enabled && adminServer.enabled ? '● 已激活' : '⏹ 已停用' }}
+                      </span>
+                    </div>
+
+                    <!-- 单个工具独立开关 -->
+                    <button
+                      @click.stop="handleToggleTool(adminServer, tool)"
+                      :class="[
+                        'w-8 h-4.5 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-200',
+                        tool.enabled ? 'bg-rose-500' : 'bg-zinc-700'
+                      ]"
+                      :title="tool.enabled ? '点击停用该运维工具' : '点击启用该运维工具'"
+                    >
+                      <div
+                        :class="[
+                          'bg-white w-3.5 h-3.5 rounded-full shadow-sm transform transition-transform duration-200',
+                          tool.enabled ? 'translate-x-3.5' : 'translate-x-0'
+                        ]"
+                      ></div>
+                    </button>
+                  </div>
+
+                  <p class="text-[11px] text-zinc-300 leading-relaxed">{{ tool.description || '无详细功能描述' }}</p>
+
+                  <!-- 工具入参列表 -->
+                  <div v-if="getToolParams(tool.parameters).length > 0" class="pt-1.5 border-t border-white/[0.04] space-y-1">
+                    <div class="text-[10px] text-zinc-500 font-medium">支持入参:</div>
+                    <div class="flex flex-wrap gap-1">
+                      <span
+                        v-for="param in getToolParams(tool.parameters)"
+                        :key="param.name"
+                        class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-black/40 border border-white/[0.06] text-zinc-300 flex items-center space-x-1"
+                      >
+                        <strong :class="param.required ? 'text-rose-300' : 'text-zinc-400'">{{ param.name }}</strong>
+                        <span class="text-zinc-500 text-[9px]">({{ param.type }})</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -571,6 +1095,147 @@ onMounted(() => {
             class="px-4 py-1.5 rounded-xl bg-gradient-to-r from-red-500 to-amber-500 text-white font-semibold text-xs cursor-pointer"
           >
             确认添加
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模态框: MCP 服务详细能力架构与白皮书 (detailModalServer) -->
+    <div
+      v-if="detailModalServer"
+      class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4"
+    >
+      <div class="bg-[#181924] border border-white/[0.12] rounded-3xl w-full max-w-3xl max-h-[88vh] overflow-hidden flex flex-col shadow-2xl">
+        <!-- 头部 -->
+        <div class="px-6 py-4 border-b border-white/[0.08] flex items-center justify-between bg-white/[0.02]">
+          <div class="flex items-center space-x-3">
+            <span class="text-xl">📖</span>
+            <div>
+              <div class="flex items-center space-x-2">
+                <h3 class="text-sm font-bold text-white">{{ detailModalServer.name }}</h3>
+                <span
+                  class="px-2 py-0.5 rounded text-[10px] font-mono font-bold"
+                  :class="detailModalServer.status === 'CONNECTED' ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30' : 'bg-zinc-500/15 text-zinc-400 border border-zinc-500/30'"
+                >
+                  ● {{ detailModalServer.status }}
+                </span>
+                <span class="px-2 py-0.5 rounded text-[10px] bg-white/[0.06] text-zinc-300 font-mono">
+                  {{ detailModalServer.type === 'http' ? 'Streamable HTTP' : (detailModalServer.type === 'internal' ? '系统内部工具' : 'Stdio 管道') }}
+                </span>
+              </div>
+              <p class="text-[11px] text-zinc-400 mt-0.5">{{ detailModalServer.description }}</p>
+            </div>
+          </div>
+          <button
+            @click="closeDetailModal"
+            class="text-zinc-400 hover:text-white p-1.5 rounded-lg hover:bg-white/[0.08] text-sm cursor-pointer transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+
+        <!-- 架构与端点详情 -->
+        <div class="p-6 space-y-5 overflow-y-auto flex-1">
+          <!-- 协议架构元信息 -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5 text-xs">
+            <div class="p-3 rounded-xl bg-black/40 border border-white/[0.06] space-y-1">
+              <div class="text-[10px] text-zinc-500">传输传输层:</div>
+              <div class="font-mono text-zinc-200 font-semibold">{{ detailModalServer.type === 'http' ? 'Streamable HTTP' : '系统内置/管道' }}</div>
+            </div>
+            <div class="p-3 rounded-xl bg-black/40 border border-white/[0.06] space-y-1">
+              <div class="text-[10px] text-zinc-500">挂载端点:</div>
+              <div class="font-mono text-sky-300 font-semibold truncate">{{ detailModalServer.url || '宿主机内核' }}</div>
+            </div>
+            <div class="p-3 rounded-xl bg-black/40 border border-white/[0.06] space-y-1">
+              <div class="text-[10px] text-zinc-500">隔离模型:</div>
+              <div class="font-mono text-violet-300 font-semibold">{{ detailModalServer.name === 'mcp-user' ? 'JWT Token 独立会话' : (detailModalServer.name === 'admin-system-tools' ? '超管沙箱' : '全局共享') }}</div>
+            </div>
+            <div class="p-3 rounded-xl bg-black/40 border border-white/[0.06] space-y-1">
+              <div class="text-[10px] text-zinc-500">工具就绪度:</div>
+              <div class="font-mono text-emerald-300 font-semibold">
+                {{ detailModalServer.active_tools_count ?? detailModalServer.tools_count }} / {{ detailModalServer.tools_count }} 工具已激活
+              </div>
+            </div>
+          </div>
+
+          <!-- 工具清单与参数白皮书 -->
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <h4 class="text-xs font-bold text-white flex items-center space-x-1.5">
+                <span>⚡</span>
+                <span>支持的能力清单与参数 Schema 白皮书 (共 {{ detailModalServer.tools_count }} 项能力)</span>
+              </h4>
+              <span class="text-[10px] text-zinc-500">可直接在此弹窗中开启/关闭工具</span>
+            </div>
+
+            <div class="space-y-2.5">
+              <div
+                v-for="tool in detailModalServer.tools"
+                :key="tool.name"
+                class="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.08] hover:border-white/[0.15] transition-all space-y-2.5"
+              >
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center space-x-2.5">
+                    <span class="font-mono text-xs font-bold text-white">{{ tool.name }}</span>
+                    <span class="px-2 py-0.2 rounded text-[9px] font-mono bg-white/[0.06] text-zinc-300">
+                      {{ tool.category }}
+                    </span>
+                    <span
+                      class="px-2 py-0.2 rounded text-[9px] font-mono font-medium"
+                      :class="tool.enabled && detailModalServer.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-700 text-zinc-400'"
+                    >
+                      {{ tool.enabled && detailModalServer.enabled ? '● 运行中' : '⏹ 已停用' }}
+                    </span>
+                  </div>
+
+                  <!-- 独立开关 -->
+                  <button
+                    @click="handleToggleTool(detailModalServer, tool)"
+                    :class="[
+                      'w-9 h-5 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-200',
+                      tool.enabled ? 'bg-emerald-500' : 'bg-zinc-700',
+                    ]"
+                  >
+                    <div
+                      :class="[
+                        'bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-200',
+                        tool.enabled ? 'translate-x-4' : 'translate-x-0',
+                      ]"
+                    ></div>
+                  </button>
+                </div>
+
+                <p class="text-xs text-zinc-300 leading-relaxed">{{ tool.description || '无功能描述' }}</p>
+
+                <!-- 参数规范表格 -->
+                <div v-if="getToolParams(tool.parameters).length > 0" class="p-2.5 rounded-xl bg-black/40 border border-white/[0.04] space-y-1.5">
+                  <div class="text-[10px] text-zinc-400 font-semibold">入参规范 (Input Schema):</div>
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+                    <div
+                      v-for="p in getToolParams(tool.parameters)"
+                      :key="p.name"
+                      class="text-[10px] font-mono p-1.5 rounded bg-white/[0.02] border border-white/[0.03] flex items-start space-x-1.5"
+                    >
+                      <strong :class="p.required ? 'text-amber-300' : 'text-zinc-300'">{{ p.name }}</strong>
+                      <span class="text-zinc-500">({{ p.type }}{{ p.required ? ', 必填' : ', 可选' }}):</span>
+                      <span class="text-zinc-400 flex-1 truncate">{{ p.description || '无参数说明' }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="text-[10px] text-zinc-500 italic">无额外必填参数 (无需入参直接执行)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部 -->
+        <div class="px-6 py-3 border-t border-white/[0.08] flex items-center justify-between bg-white/[0.02]">
+          <span class="text-xs text-zinc-400">所有工具开关即时保存至云端运行时并立即生效</span>
+          <button
+            @click="closeDetailModal"
+            class="px-4 py-1.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] text-white text-xs font-semibold cursor-pointer transition-colors"
+          >
+            完成并关闭
           </button>
         </div>
       </div>

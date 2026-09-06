@@ -134,17 +134,23 @@ class MCPHttpClient:
         url: str,
         server_name: str = "mcp-http-server",
         category: str = "quant",
+        group: str = "system",
+        enabled: bool = True,
         token_getter: Optional[Any] = None,
     ):
         """
-        :param url: MCP Gateway 的 HTTP 端点，如 http://localhost:8050/mcp
+        :param url: MCP Gateway 的 HTTP 端点，如 http://localhost:8050/mcp/stock
         :param server_name: 服务名称（日志标识）
         :param category: 工具注册分类（用于 ToolRegistry 过滤）
+        :param group: 工具分组（'system' | 'user' | 'custom'）
+        :param enabled: 是否默认启用
         :param token_getter: 可选回调，签名为 () -> str，返回当前用户 JWT token
         """
         self.url = url
         self.server_name = server_name
         self.category = category
+        self.group = group
+        self.enabled = enabled
         self._token_getter = token_getter
         self._discovered_tools: Dict[str, ToolDefinition] = {}
         self._initialized: bool = False
@@ -166,7 +172,7 @@ class MCPHttpClient:
         if self._initialized and self._discovered_tools:
             return list(self._discovered_tools.values())
         try:
-            async with httpx.AsyncClient(headers=self._extra_headers()) as http_client:
+            async with httpx.AsyncClient(headers=self._extra_headers(), timeout=15.0) as http_client:
                 async with streamable_http_client(
                     self.url, http_client=http_client
                 ) as (read_stream, write_stream):   # mcp 2.x 返回 2 个值
@@ -176,7 +182,15 @@ class MCPHttpClient:
 
                         tools: List[ToolDefinition] = []
                         for t in mcp_tools_res.tools:
-                            raw_schema = getattr(t, "inputSchema", None) or getattr(t, "input_schema", None) or {}
+                            # 遵循 MCP 规范，安全读取 input_schema
+                            raw_schema = getattr(t, "input_schema", None)
+                            if raw_schema is None:
+                                try:
+                                    raw_schema = getattr(t, "inputSchema", None)
+                                except Exception:
+                                    raw_schema = None
+                            raw_schema = raw_schema or {}
+
                             tool_def = ToolDefinition(
                                 name=t.name,
                                 description=t.description or f"MCP tool: {t.name}",
@@ -187,8 +201,8 @@ class MCPHttpClient:
 
                         self._initialized = True
                         logger.info(
-                            "MCPHttpClient: discovered %d tools from '%s' (%s)",
-                            len(tools), self.server_name, self.url
+                            "MCPHttpClient: discovered %d tools from '%s' (%s, group=%s)",
+                            len(tools), self.server_name, self.url, self.group
                         )
                         return tools
         except BaseException as e:  # ExceptionGroup (anyio TaskGroup) 不被 except Exception 捕获
@@ -198,7 +212,7 @@ class MCPHttpClient:
     async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
         """通过 MCP Streamable HTTP 调用指定工具（无进程 fork，纯 HTTP 请求）"""
         try:
-            async with httpx.AsyncClient(headers=self._extra_headers()) as http_client:
+            async with httpx.AsyncClient(headers=self._extra_headers(), timeout=30.0) as http_client:
                 async with streamable_http_client(
                     self.url, http_client=http_client
                 ) as (read_stream, write_stream):   # mcp 2.x 返回 2 个值
@@ -206,7 +220,12 @@ class MCPHttpClient:
                         await session.initialize()
                         res = await session.call_tool(name=name, arguments=arguments)
 
+                        # 检查 MCP 官方 isError 状态
+                        is_error = getattr(res, "isError", False) or getattr(res, "is_error", False)
+
                         if not res.content:
+                            if is_error:
+                                return "Error: MCP Tool executed with error flag but no details returned."
                             return "Success: Tool executed with no content returned."
 
                         text_parts = []
@@ -217,6 +236,9 @@ class MCPHttpClient:
                                 text_parts.append(str(item))
 
                         combined = "\n".join(text_parts)
+                        if is_error:
+                            return f"[MCP Tool Error]: {combined}"
+
                         try:
                             return json.loads(combined)
                         except Exception:
@@ -250,3 +272,4 @@ class MCPHttpClient:
             registered.append(tool_obj)
 
         return registered
+

@@ -137,6 +137,17 @@ class ToolRegistry:
     def get_tool(self, name: str) -> Optional[BaseTool]:
         return self._tools.get(name)
 
+    def unregister(self, name: str) -> Optional[BaseTool]:
+        """按工具名称卸载已注册工具"""
+        return self._tools.pop(name, None)
+
+    def unregister_category(self, category: str) -> List[str]:
+        """按分类批量卸载已注册工具，返回已卸载工具名称列表"""
+        removed = [k for k, v in self._tools.items() if v.category == category]
+        for k in removed:
+            self._tools.pop(k, None)
+        return removed
+
     def list_tools(self, category: Optional[str] = None) -> List[BaseTool]:
         """列出工具列表，支持按分类过滤"""
         if category:
@@ -159,6 +170,13 @@ class ToolRegistry:
         blocked = set(categories)
         cloned = ToolRegistry()
         cloned._tools = {k: v for k, v in self._tools.items() if v.category not in blocked}
+        return cloned
+
+    def exclude_tools(self, tool_names: List[str]) -> "ToolRegistry":
+        """根据工具名称黑名单剔除工具并生成子注册表"""
+        blocked = set(tool_names)
+        cloned = ToolRegistry()
+        cloned._tools = {k: v for k, v in self._tools.items() if k not in blocked}
         return cloned
 
     def copy(self) -> "ToolRegistry":

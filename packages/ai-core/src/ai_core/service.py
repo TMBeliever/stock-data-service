@@ -1,4 +1,5 @@
 import json
+from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any, AsyncGenerator
 from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,11 +11,20 @@ from ai_core.models import Message, AIResponse, ToolDefinition
 from ai_core.orchestrator import ai_orchestrator
 from ai_core.openai_api import openai_router
 from ai_core.anthropic_api import anthropic_router
+from ai_core.session_manager import session_worker_manager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理：启动空闲会话定时巡检，退出时释放所有会话资源"""
+    session_worker_manager.start_sweeper()
+    yield
+    await session_worker_manager.stop_sweeper()
 
 app = FastAPI(
     title="AI Core Service",
     description="Universal AI Foundation Microservice supporting API Key & CLI Process drivers with Streaming SSE",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan
 )
 
 # 挂载 OpenAI 标准兼容路由 (/v1/chat/completions, /v1/models 等)
@@ -43,6 +53,7 @@ class GenerateRequest(BaseModel):
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="采样随机度")
     cli_executable: Optional[str] = Field(None, description="CLI 执行程序名称或绝对路径 (例如 'agy', 'claude', '/usr/local/bin/agy')")
     cli_args: Optional[List[str]] = Field(None, description="CLI 参数模板列表 (例如 ['-p', '{prompt}', '--dangerously-skip-permissions'])")
+    session_id: Optional[str] = Field(None, description="会话标识符 (用于绑定专属温备 Worker)")
 
 def _resolve_messages(req: GenerateRequest) -> List[Message]:
     """解析请求中的消息列表"""
@@ -92,6 +103,8 @@ async def generate_completion(req: GenerateRequest):
         extra_kwargs["executable"] = req.cli_executable
     if req.cli_args:
         extra_kwargs["args_template"] = req.cli_args
+    if req.session_id:
+        extra_kwargs["session_id"] = req.session_id
 
     try:
         response = await ai_orchestrator.generate(
@@ -120,6 +133,8 @@ async def stream_completion_post(req: GenerateRequest):
         extra_kwargs["executable"] = req.cli_executable
     if req.cli_args:
         extra_kwargs["args_template"] = req.cli_args
+    if req.session_id:
+        extra_kwargs["session_id"] = req.session_id
 
     async def event_generator() -> AsyncGenerator[Dict[str, Any], None]:
         try:
@@ -148,7 +163,8 @@ async def stream_completion_get(
     system_prompt: Optional[str] = Query(None, description="系统提示词"),
     provider: Optional[str] = Query(None, description="驱动类型 ('key' 或 'cli')"),
     model: Optional[str] = Query(None, description="模型名称"),
-    cli_executable: Optional[str] = Query(None, description="CLI 执行程序名称或绝对路径 (如 'agy')")
+    cli_executable: Optional[str] = Query(None, description="CLI 执行程序名称或绝对路径 (如 'agy')"),
+    session_id: Optional[str] = Query(None, description="会话标识符 (可选)")
 ):
     """流式生成 (GET 快捷测试)：直接在浏览器或 EventSource 客户端调用的 SSE 端点"""
     req = GenerateRequest(
@@ -156,7 +172,8 @@ async def stream_completion_get(
         system_prompt=system_prompt,
         provider=provider,
         model=model,
-        cli_executable=cli_executable
+        cli_executable=cli_executable,
+        session_id=session_id
     )
     return await stream_completion_post(req)
 

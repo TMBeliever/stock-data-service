@@ -1,6 +1,7 @@
 import json
 import time
 import uuid
+import hashlib
 from typing import Optional, List, Dict, Any, Union, AsyncGenerator
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field
@@ -30,6 +31,7 @@ class AnthropicMessagesRequest(BaseModel):
     stream: Optional[bool] = Field(False, description="是否启用 SSE 流式输出")
     temperature: Optional[float] = Field(None, ge=0.0, le=1.0, description="采样随机度")
     tools: Optional[List[Dict[str, Any]]] = Field(None, description="可选挂载的工具列表")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="元数据 (如 user_id 等)")
 
 def _extract_text_content(content: Any) -> str:
     """提取 Anthropic 格式（支持纯字符串或 ContentBlock 数组）中的纯文本内容"""
@@ -126,6 +128,17 @@ async def messages_completion(req: AnthropicMessagesRequest):
 
     internal_messages = _to_internal_messages(req)
     provider_type, extra_kwargs = _resolve_provider_and_kwargs(req)
+
+    # 提取或自动绑定 session_id (优先使用 metadata.user_id, 其次基于首句指纹)
+    session_id = None
+    if req.metadata and isinstance(req.metadata, dict):
+        session_id = req.metadata.get("user_id")
+    if not session_id and req.messages and len(req.messages) > 0:
+        first_text = _extract_text_content(req.messages[0].content)
+        if first_text:
+            session_id = f"claude_{hashlib.md5(first_text.encode('utf-8')).hexdigest()[:16]}"
+    if session_id:
+        extra_kwargs["session_id"] = session_id
 
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
 

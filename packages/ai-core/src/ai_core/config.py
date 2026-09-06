@@ -21,6 +21,11 @@ class AIConfig(BaseSettings):
     CLI_TIMEOUT: float = 120.0
     CLI_CWD: Optional[str] = None
 
+    # 会话亲和性惰性温备配置 (Session-Affinity Lazy Warm Worker)
+    CLI_SESSION_TTL: float = 300.0  # 闲置超过 5 分钟自动自毁回收，释放服务器内存
+    CLI_SESSION_SWEEP_INTERVAL: float = 30.0  # 后台定时巡检清理周期 (秒)
+    CLI_MAX_ACTIVE_SESSIONS: int = 20  # 最大同时温存的并发会话上限
+
     # 对外 OpenAI 兼容接口固定安全鉴权密钥 (仅授权持有该 key 的客户端调用)
     GATEWAY_API_KEY: str = "sk-quant-agy-8f92e10c74b6"
 

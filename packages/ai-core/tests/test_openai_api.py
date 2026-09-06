@@ -140,3 +140,37 @@ async def test_openai_chat_completions_key_routing(monkeypatch):
         assert resp.status_code == 200
         assert captured_kwargs.get("provider_type") == "key"
         assert captured_kwargs.get("model") == "minimax/minimax-m3:free"
+
+@pytest.mark.asyncio
+async def test_openai_session_affinity_binding(monkeypatch):
+    """测试 OpenAI chat/completions 能够根据 user 字段或首句自动绑定 session_id"""
+    captured_kwargs = {}
+    async def mock_generate(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return AIResponse(content="ok", model="agy", provider_type="cli")
+
+    from ai_core.orchestrator import ai_orchestrator
+    monkeypatch.setattr(ai_orchestrator, "generate", mock_generate)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Case 1: 携带 user 字段
+        payload1 = {
+            "model": "agy",
+            "messages": [{"role": "user", "content": "Question with user"}],
+            "user": "custom_user_123",
+            "stream": False
+        }
+        await client.post("/v1/chat/completions", headers=VALID_AUTH_HEADER, json=payload1)
+        assert captured_kwargs.get("session_id") == "custom_user_123"
+
+        # Case 2: 未携带 user 字段，自动由首句指纹生成
+        payload2 = {
+            "model": "agy",
+            "messages": [{"role": "user", "content": "Topic fingerprint test"}],
+            "stream": False
+        }
+        await client.post("/v1/chat/completions", headers=VALID_AUTH_HEADER, json=payload2)
+        sess2 = captured_kwargs.get("session_id")
+        assert sess2 is not None
+        assert sess2.startswith("openai_")

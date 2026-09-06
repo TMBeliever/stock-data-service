@@ -101,7 +101,12 @@ class CLIProcessProvider(BaseAIProvider):
             blocks.append(f"[{role_tag}]\n{content}\n")
         return "\n".join(blocks).strip()
 
-    def _build_command(self, prompt: str, model: Optional[str] = None) -> tuple[List[str], bool]:
+    def _build_command(
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        conversation_uuid: Optional[str] = None
+    ) -> tuple[List[str], bool]:
         """
         构建 argv 参数列表：
         返回 (cmd_args, needs_stdin_pipe)
@@ -127,12 +132,17 @@ class CLIProcessProvider(BaseAIProvider):
                 cmd_args.append("--dangerously-skip-permissions")
             if model and "--model" not in cmd_args and "-m" not in cmd_args:
                 cmd_args.extend(["--model", model])
+            # 会话温备与原生多轮记忆注入
+            if conversation_uuid and "--conversation" not in cmd_args and "-c" not in cmd_args:
+                cmd_args.extend(["--conversation", conversation_uuid])
         elif "gemini" in exe_lower:
             # gemini-cli node 包装器: 带有 -y (YOLO 模式自动执行)
             if "-y" not in cmd_args and "--yolo" not in cmd_args and "--approval-mode" not in cmd_args:
                 cmd_args.append("-y")
             if model and "-m" not in cmd_args and "--model" not in cmd_args:
                 cmd_args.extend(["-m", model])
+            if conversation_uuid and "--conversation" not in cmd_args:
+                cmd_args.extend(["--conversation", conversation_uuid])
 
         needs_stdin = not has_prompt_placeholder
         return cmd_args, needs_stdin
@@ -159,38 +169,17 @@ class CLIProcessProvider(BaseAIProvider):
             cur_path = env.get("PATH", "")
             env["PATH"] = ":".join(valid_paths) + ":" + cur_path
 
-        # 认证目录配置补全与软链接映射：优先使用宿主机已认证的凭据
-        if os.path.exists("/host_root/.gemini"):
-            env["GEMINI_CONFIG_DIR"] = "/host_root/.gemini"
-            if not os.path.exists("/root/.gemini"):
-                try:
-                    os.symlink("/host_root/.gemini", "/root/.gemini")
-                except Exception:
-                    pass
-        elif not os.path.exists("/root/.gemini"):
-            home_gemini = glob.glob("/host_home/*/.gemini")
-            if home_gemini:
-                env["GEMINI_CONFIG_DIR"] = home_gemini[0]
-                try:
-                    os.symlink(home_gemini[0], "/root/.gemini")
-                except Exception:
-                    pass
+        # 认证目录环境配置：确保容器内 /root/.gemini 与 /root/.antigravity 具备真实读写能力
+        try:
+            from ai_core.session_manager import ensure_writable_gemini_environment
+            ensure_writable_gemini_environment()
+        except Exception:
+            pass
 
-        if os.path.exists("/host_root/.antigravity"):
-            env["ANTIGRAVITY_CONFIG_DIR"] = "/host_root/.antigravity"
-            if not os.path.exists("/root/.antigravity"):
-                try:
-                    os.symlink("/host_root/.antigravity", "/root/.antigravity")
-                except Exception:
-                    pass
-        elif not os.path.exists("/root/.antigravity"):
-            home_ag = glob.glob("/host_home/*/.antigravity")
-            if home_ag:
-                env["ANTIGRAVITY_CONFIG_DIR"] = home_ag[0]
-                try:
-                    os.symlink(home_ag[0], "/root/.antigravity")
-                except Exception:
-                    pass
+        if os.path.exists("/root/.gemini"):
+            env["GEMINI_CONFIG_DIR"] = "/root/.gemini"
+        if os.path.exists("/root/.antigravity"):
+            env["ANTIGRAVITY_CONFIG_DIR"] = "/root/.antigravity"
 
         # 强制禁用 ANSI 终端着色，保证流式文本纯净
         env["NO_COLOR"] = "1"
@@ -205,48 +194,68 @@ class CLIProcessProvider(BaseAIProvider):
         **kwargs
     ) -> AIResponse:
         """非流式调用 CLI 进程：等待进程执行完毕并捕获 stdout"""
+        session_id = kwargs.get("session_id")
+        worker = None
+        conv_uuid = None
+        if session_id:
+            from ai_core.session_manager import session_worker_manager
+            worker = await session_worker_manager.get_or_create_worker(session_id)
+            conv_uuid = worker.conversation_uuid
+
         prompt = self._format_messages_to_prompt(messages)
-        cmd_args, needs_stdin = self._build_command(prompt, model=kwargs.get("model"))
+        cmd_args, needs_stdin = self._build_command(
+            prompt,
+            model=kwargs.get("model"),
+            conversation_uuid=conv_uuid
+        )
         timeout = kwargs.get("timeout", self.timeout)
 
-        stdin_dest = asyncio.subprocess.PIPE if needs_stdin else asyncio.subprocess.DEVNULL
-        proc = await asyncio.create_subprocess_exec(
-            *cmd_args,
-            stdin=stdin_dest,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=self.cwd,
-            env=self._get_env()
-        )
-
-        try:
-            stdin_data = prompt.encode("utf-8") if needs_stdin else None
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(input=stdin_data),
-                timeout=timeout
+        async def _execute():
+            stdin_dest = asyncio.subprocess.PIPE if needs_stdin else asyncio.subprocess.DEVNULL
+            proc = await asyncio.create_subprocess_exec(
+                *cmd_args,
+                stdin=stdin_dest,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.cwd,
+                env=self._get_env()
             )
-        except asyncio.TimeoutError:
+
             try:
-                proc.kill()
-            except Exception:
-                pass
-            raise TimeoutError(f"[CLIProcessProvider] 进程执行超时 (超限 {timeout}s): {cmd_args}")
+                stdin_data = prompt.encode("utf-8") if needs_stdin else None
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(input=stdin_data),
+                    timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                raise TimeoutError(f"[CLIProcessProvider] 进程执行超时 (超限 {timeout}s): {cmd_args}")
 
-        stdout_text = stdout_bytes.decode("utf-8", errors="replace").strip()
-        stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+            stdout_text = stdout_bytes.decode("utf-8", errors="replace").strip()
+            stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
 
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"[CLIProcessProvider] 进程异常退出 (退出码 {proc.returncode}):\n{stderr_text or stdout_text}"
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"[CLIProcessProvider] 进程异常退出 (退出码 {proc.returncode}):\n{stderr_text or stdout_text}"
+                )
+
+            return AIResponse(
+                content=stdout_text,
+                model=self.executable,
+                provider_type="cli",
+                finish_reason="stop",
+                raw_response={"stdout": stdout_text, "stderr": stderr_text, "returncode": proc.returncode}
             )
 
-        return AIResponse(
-            content=stdout_text,
-            model=self.executable,
-            provider_type="cli",
-            finish_reason="stop",
-            raw_response={"stdout": stdout_text, "stderr": stderr_text, "returncode": proc.returncode}
-        )
+        if worker:
+            async with worker.lock:
+                res = await _execute()
+                worker.touch()
+                return res
+        return await _execute()
 
     async def generate_stream(
         self,
@@ -255,52 +264,72 @@ class CLIProcessProvider(BaseAIProvider):
         **kwargs
     ) -> AsyncGenerator[StreamChunk, None]:
         """流式调用 CLI 进程：逐块从 stdout 管道读取输出并 yield"""
+        session_id = kwargs.get("session_id")
+        worker = None
+        conv_uuid = None
+        if session_id:
+            from ai_core.session_manager import session_worker_manager
+            worker = await session_worker_manager.get_or_create_worker(session_id)
+            conv_uuid = worker.conversation_uuid
+
         prompt = self._format_messages_to_prompt(messages)
-        cmd_args, needs_stdin = self._build_command(prompt, model=kwargs.get("model"))
+        cmd_args, needs_stdin = self._build_command(
+            prompt,
+            model=kwargs.get("model"),
+            conversation_uuid=conv_uuid
+        )
         timeout = kwargs.get("timeout", self.timeout)
 
-        stdin_dest = asyncio.subprocess.PIPE if needs_stdin else asyncio.subprocess.DEVNULL
-        proc = await asyncio.create_subprocess_exec(
-            *cmd_args,
-            stdin=stdin_dest,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=self.cwd,
-            env=self._get_env()
-        )
+        async def _stream_internal():
+            stdin_dest = asyncio.subprocess.PIPE if needs_stdin else asyncio.subprocess.DEVNULL
+            proc = await asyncio.create_subprocess_exec(
+                *cmd_args,
+                stdin=stdin_dest,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.cwd,
+                env=self._get_env()
+            )
 
-        if needs_stdin and proc.stdin:
-            proc.stdin.write(prompt.encode("utf-8"))
-            await proc.stdin.drain()
-            proc.stdin.close()
+            if needs_stdin and proc.stdin:
+                proc.stdin.write(prompt.encode("utf-8"))
+                await proc.stdin.drain()
+                proc.stdin.close()
 
-        async def read_stream():
-            if not proc.stdout:
-                return
-            while True:
-                # 按照块 (chunk) 或行读取，保障打字机实时体验
-                line = await proc.stdout.readline()
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace")
-                yield StreamChunk(delta=text, role="assistant")
+            async def read_stream():
+                if not proc.stdout:
+                    return
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+                    text = line.decode("utf-8", errors="replace")
+                    yield StreamChunk(delta=text, role="assistant")
 
-        try:
-            async for chunk in read_stream():
-                yield chunk
-
-            # 等待进程退出
-            await asyncio.wait_for(proc.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
             try:
-                proc.kill()
-            except Exception:
-                pass
-            raise TimeoutError(f"[CLIProcessProvider] 进程执行超时 (超限 {timeout}s)")
+                async for chunk in read_stream():
+                    yield chunk
 
-        if proc.returncode != 0:
-            stderr_bytes = await proc.stderr.read() if proc.stderr else b""
-            err = stderr_bytes.decode("utf-8", errors="replace").strip()
-            raise RuntimeError(f"[CLIProcessProvider Stream] 进程异常退出 ({proc.returncode}): {err}")
+                await asyncio.wait_for(proc.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                raise TimeoutError(f"[CLIProcessProvider] 进程执行超时 (超限 {timeout}s)")
 
-        yield StreamChunk(finish_reason="stop")
+            if proc.returncode != 0:
+                stderr_bytes = await proc.stderr.read() if proc.stderr else b""
+                err = stderr_bytes.decode("utf-8", errors="replace").strip()
+                raise RuntimeError(f"[CLIProcessProvider Stream] 进程异常退出 ({proc.returncode}): {err}")
+
+            yield StreamChunk(finish_reason="stop")
+
+        if worker:
+            async with worker.lock:
+                async for chunk in _stream_internal():
+                    yield chunk
+                worker.touch()
+        else:
+            async for chunk in _stream_internal():
+                yield chunk

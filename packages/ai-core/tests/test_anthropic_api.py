@@ -126,3 +126,37 @@ async def test_anthropic_messages_stream(monkeypatch):
         assert "event: message_delta" in raw_text
         assert "event: message_stop" in raw_text
         assert "Claude!" in raw_text
+
+@pytest.mark.asyncio
+async def test_anthropic_session_affinity_binding(monkeypatch):
+    """测试 Anthropic 请求能自动提取或根据首句生成 session_id 并绑定到 extra_kwargs"""
+    captured_kwargs = {}
+    async def mock_generate(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return AIResponse(content="ok", model="agy", provider_type="cli")
+
+    from ai_core.orchestrator import ai_orchestrator
+    monkeypatch.setattr(ai_orchestrator, "generate", mock_generate)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Case 1: 自动根据首句指纹生成 session_id
+        payload1 = {
+            "model": "claude-3-5-sonnet",
+            "messages": [{"role": "user", "content": "Conversation Topic Alpha"}],
+            "stream": False
+        }
+        await client.post("/v1/messages", headers=VALID_ANTHROPIC_HEADER, json=payload1)
+        sess1 = captured_kwargs.get("session_id")
+        assert sess1 is not None
+        assert sess1.startswith("claude_")
+
+        # Case 2: 携带 metadata.user_id
+        payload2 = {
+            "model": "claude-3-5-sonnet",
+            "messages": [{"role": "user", "content": "Another question"}],
+            "metadata": {"user_id": "claude_user_999"},
+            "stream": False
+        }
+        await client.post("/v1/messages", headers=VALID_ANTHROPIC_HEADER, json=payload2)
+        assert captured_kwargs.get("session_id") == "claude_user_999"

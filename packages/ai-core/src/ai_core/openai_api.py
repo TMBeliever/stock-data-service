@@ -1,6 +1,7 @@
 import json
 import time
 import uuid
+import hashlib
 from typing import Optional, List, Dict, Any, AsyncGenerator
 from fastapi import APIRouter, HTTPException, Header, Depends, Query, Security, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -185,6 +186,15 @@ async def chat_completions(req: OpenAIChatCompletionRequest):
 
     internal_messages = _to_internal_messages(req.messages)
     provider_type, extra_kwargs = _resolve_provider_and_kwargs(req)
+
+    # 提取或自动绑定 session_id (优先使用 user 字段，或首句指纹)
+    session_id = req.user
+    if not session_id and req.messages and len(req.messages) > 0:
+        first_content = req.messages[0].content or ""
+        if first_content:
+            session_id = f"openai_{hashlib.md5(first_content.encode('utf-8')).hexdigest()[:16]}"
+    if session_id:
+        extra_kwargs["session_id"] = session_id
 
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     created_ts = int(time.time())

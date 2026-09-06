@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from ai_core.config import ai_config
-from ai_core.models import Message, ToolDefinition, resolve_agt_model
+from ai_core.models import Message, ToolDefinition, ToolCall, resolve_agt_model
 from ai_core.orchestrator import ai_orchestrator
 
 security = HTTPBearer(auto_error=False)
@@ -74,7 +74,8 @@ class OpenAIChatCompletionRequest(BaseModel):
 
 class OpenAIChoiceMessage(BaseModel):
     role: str = "assistant"
-    content: str = ""
+    content: Optional[str] = ""
+    tool_calls: Optional[List[Dict[str, Any]]] = None
 
 class OpenAIChoice(BaseModel):
     index: int = 0
@@ -96,15 +97,52 @@ class OpenAIChatCompletionResponse(BaseModel):
     usage: OpenAIUsage
 
 def _to_internal_messages(openai_msgs: List[OpenAIChatMessage]) -> List[Message]:
-    """将 OpenAI 格式消息转换为内部通用 Message 列表"""
+    """将 OpenAI 格式消息转换为内部通用 Message 列表 (支持双向携带 tool_calls 与 tool_call_id)"""
     msgs: List[Message] = []
     for m in openai_msgs:
+        internal_tc = None
+        if m.tool_calls:
+            internal_tc = []
+            for tc in m.tool_calls:
+                fn = tc.get("function") or {}
+                raw_args = fn.get("arguments", "{}")
+                if isinstance(raw_args, dict):
+                    args_dict = raw_args
+                    raw_args_str = json.dumps(raw_args, ensure_ascii=False)
+                else:
+                    raw_args_str = str(raw_args)
+                    try:
+                        args_dict = json.loads(raw_args_str)
+                    except Exception:
+                        args_dict = {}
+                internal_tc.append(ToolCall(
+                    id=tc.get("id", f"call_{uuid.uuid4().hex[:8]}"),
+                    name=fn.get("name") or tc.get("name", ""),
+                    arguments=args_dict,
+                    raw_arguments=raw_args_str
+                ))
         msgs.append(Message(
             role=m.role,
             content=m.content or "",
+            tool_calls=internal_tc,
+            tool_call_id=m.tool_call_id,
             name=m.name
         ))
     return msgs
+
+def _to_internal_tools(openai_tools: Optional[List[Dict[str, Any]]]) -> Optional[List[ToolDefinition]]:
+    """将 OpenAI 声明的 tools 格式映射为内部 ToolDefinition 列表"""
+    if not openai_tools:
+        return None
+    tools: List[ToolDefinition] = []
+    for t in openai_tools:
+        fn = t.get("function") or t
+        tools.append(ToolDefinition(
+            name=fn.get("name", ""),
+            description=fn.get("description", ""),
+            parameters=fn.get("parameters") or {}
+        ))
+    return tools
 
 def _resolve_provider_and_kwargs(req: OpenAIChatCompletionRequest) -> tuple[str, Dict[str, Any]]:
     """根据请求的模型名称智能分流到 key 驱动或 agt cli 驱动"""
@@ -162,8 +200,8 @@ async def chat_completions(req: OpenAIChatCompletionRequest):
         )
 
     internal_messages = _to_internal_messages(req.messages)
+    internal_tools = _to_internal_tools(req.tools)
     provider_type, extra_kwargs = _resolve_provider_and_kwargs(req)
-
 
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     created_ts = int(time.time())
@@ -192,6 +230,7 @@ async def chat_completions(req: OpenAIChatCompletionRequest):
                 async for chunk in ai_orchestrator.generate_stream(
                     messages=internal_messages,
                     provider_type=provider_type,
+                    tools=internal_tools,
                     **extra_kwargs
                 ):
                     if chunk.delta:
@@ -247,10 +286,25 @@ async def chat_completions(req: OpenAIChatCompletionRequest):
         response = await ai_orchestrator.generate(
             messages=internal_messages,
             provider_type=provider_type,
+            tools=internal_tools,
             **extra_kwargs
         )
 
         content = response.content or ""
+        out_tool_calls = None
+        if response.tool_calls:
+            out_tool_calls = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.name,
+                        "arguments": tc.raw_arguments or json.dumps(tc.arguments, ensure_ascii=False)
+                    }
+                }
+                for tc in response.tool_calls
+            ]
+
         # 简单估算 Token 满足第三方客户端统计校验
         prompt_len = sum(len(m.content or "") for m in internal_messages)
         prompt_tokens = max(1, prompt_len // 4)
@@ -265,9 +319,10 @@ async def chat_completions(req: OpenAIChatCompletionRequest):
                     index=0,
                     message=OpenAIChoiceMessage(
                         role="assistant",
-                        content=content
+                        content=content,
+                        tool_calls=out_tool_calls
                     ),
-                    finish_reason="stop"
+                    finish_reason="tool_calls" if out_tool_calls else (response.finish_reason or "stop")
                 )
             ],
             usage=OpenAIUsage(

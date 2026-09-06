@@ -11,10 +11,11 @@ class AgentConfig(BaseSettings):
     
     # 底层通用 AI 模型网关地址
     AI_CORE_URL: str = os.getenv("AI_CORE_URL", "http://localhost:8070")
+    AI_CORE_API_KEY: str = os.getenv("AI_CORE_API_KEY", "sk-quant-agy-8f92e10c74b6")
     
-    # 默认模型与驱动
-    DEFAULT_MODEL: str = os.getenv("AI_MODEL", "gemini-flash-lite-latest")
-    DEFAULT_PROVIDER: str = os.getenv("AI_PROVIDER", "key")
+    # 默认模型 (统一由 ai-core 网关路由分流)
+    DEFAULT_MODEL: str = os.getenv("AI_MODEL", "agt-claude-sonnet-4.6")
+    DEFAULT_PROVIDER: str = os.getenv("AI_PROVIDER", "cli")
     
     # 金融数据中台 stock-data 路径 (用于启动其 MCP 进程)
     STOCK_DATA_DIR: str = os.getenv(

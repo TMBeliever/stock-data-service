@@ -1,4 +1,7 @@
 import os
+import re
+import json
+import uuid
 import glob
 import shutil
 import asyncio
@@ -6,7 +9,7 @@ import logging
 from typing import AsyncGenerator, List, Optional, Dict
 from ai_core.base import BaseAIProvider
 from ai_core.config import ai_config
-from ai_core.models import Message, AIResponse, StreamChunk, ToolDefinition
+from ai_core.models import Message, AIResponse, StreamChunk, ToolDefinition, ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -88,17 +91,81 @@ class CLIProcessProvider(BaseAIProvider):
     def provider_type(self) -> str:
         return "cli"
 
-    def _format_messages_to_prompt(self, messages: List[Message]) -> str:
-        """将标准 Message 列表渲染为适合 CLI 消费的纯文本提示词"""
-        if len(messages) == 1 and messages[0].role == "user" and messages[0].content:
+    def _format_messages_to_prompt(
+        self,
+        messages: List[Message],
+        tools: Optional[List[ToolDefinition]] = None
+    ) -> str:
+        """将标准 Message 列表与可选工具声明渲染为适合 CLI 消费的纯文本提示词"""
+        blocks: List[str] = []
+
+        if tools:
+            tool_schemas = [
+                {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters
+                }
+                for t in tools
+            ]
+            blocks.append(
+                "[SYSTEM_TOOLS_DEFINITIONS]\n"
+                "You have access to the following tools. If you decide to call tools, respond with a JSON code block in this exact format:\n"
+                "```json\n"
+                "[\n"
+                "  {\"tool_call\": {\"name\": \"tool_name\", \"arguments\": {\"arg1\": \"value1\"}}}\n"
+                "]\n"
+                "```\n"
+                f"Available tools:\n{json.dumps(tool_schemas, ensure_ascii=False, indent=2)}\n"
+            )
+
+        if len(messages) == 1 and messages[0].role == "user" and messages[0].content and not tools:
             return messages[0].content
 
-        blocks: List[str] = []
         for m in messages:
             role_tag = m.role.upper()
             content = m.content or ""
+            if m.tool_calls:
+                tc_data = [
+                    {"name": tc.name, "arguments": tc.arguments}
+                    for tc in m.tool_calls
+                ]
+                content = f"{content}\n[ASSISTANT_TOOL_CALLS]\n{json.dumps(tc_data, ensure_ascii=False)}"
+            if m.tool_call_id:
+                content = f"[TOOL_OUTPUT id={m.tool_call_id} name={m.name or ''}]\n{content}"
             blocks.append(f"[{role_tag}]\n{content}\n")
         return "\n".join(blocks).strip()
+
+    def _parse_tool_calls_from_text(self, text: str) -> tuple[str, Optional[List[ToolCall]]]:
+        """从 CLI 文本中提取 JSON 格式工具调用"""
+        if not text:
+            return text, None
+        pattern = re.compile(r"```(?:json)?\s*([\[\{].*?[\]\}])\s*```", re.DOTALL)
+        matches = pattern.findall(text)
+        tool_calls: List[ToolCall] = []
+
+        for raw_json in matches:
+            try:
+                parsed = json.loads(raw_json)
+                items = parsed if isinstance(parsed, list) else [parsed]
+                for item in items:
+                    if isinstance(item, dict) and "tool_call" in item:
+                        tc_info = item["tool_call"]
+                        t_name = tc_info.get("name")
+                        t_args = tc_info.get("arguments") or {}
+                        if t_name:
+                            tool_calls.append(ToolCall(
+                                id=f"call_{uuid.uuid4().hex[:8]}",
+                                name=t_name,
+                                arguments=t_args,
+                                raw_arguments=json.dumps(t_args, ensure_ascii=False)
+                            ))
+            except Exception:
+                continue
+
+        if tool_calls:
+            return text, tool_calls
+        return text, None
 
     def _build_command(
         self,
@@ -186,7 +253,7 @@ class CLIProcessProvider(BaseAIProvider):
         **kwargs
     ) -> AIResponse:
         """非流式调用 CLI 进程：优先从预热池获取就绪 Worker，用完即焚"""
-        prompt = self._format_messages_to_prompt(messages)
+        prompt = self._format_messages_to_prompt(messages, tools=tools)
         timeout = kwargs.get("timeout", self.timeout)
         resolved_exe = resolve_executable_path(self.executable)
         exe_lower = os.path.basename(resolved_exe).lower()
@@ -201,11 +268,13 @@ class CLIProcessProvider(BaseAIProvider):
             )
             try:
                 content_text = await worker.execute(prompt, timeout=timeout)
+                clean_content, parsed_tools = self._parse_tool_calls_from_text(content_text)
                 return AIResponse(
-                    content=content_text,
+                    content=clean_content,
+                    tool_calls=parsed_tools,
                     model=self.executable,
                     provider_type="cli",
-                    finish_reason="stop",
+                    finish_reason="tool_calls" if parsed_tools else "stop",
                     raw_response={"stdout": content_text}
                 )
             finally:
@@ -247,11 +316,13 @@ class CLIProcessProvider(BaseAIProvider):
                 f"[CLIProcessProvider] 进程异常退出 (退出码 {proc.returncode}):\n{stderr_text or stdout_text}"
             )
 
+        clean_content, parsed_tools = self._parse_tool_calls_from_text(stdout_text)
         return AIResponse(
-            content=stdout_text,
+            content=clean_content,
+            tool_calls=parsed_tools,
             model=self.executable,
             provider_type="cli",
-            finish_reason="stop",
+            finish_reason="tool_calls" if parsed_tools else "stop",
             raw_response={"stdout": stdout_text, "stderr": stderr_text, "returncode": proc.returncode}
         )
 
@@ -262,7 +333,7 @@ class CLIProcessProvider(BaseAIProvider):
         **kwargs
     ) -> AsyncGenerator[StreamChunk, None]:
         """流式调用 CLI 进程：优先从预热池获取就绪 Worker，用完即焚"""
-        prompt = self._format_messages_to_prompt(messages)
+        prompt = self._format_messages_to_prompt(messages, tools=tools)
         timeout = kwargs.get("timeout", self.timeout)
         resolved_exe = resolve_executable_path(self.executable)
         exe_lower = os.path.basename(resolved_exe).lower()

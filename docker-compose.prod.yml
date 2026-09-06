@@ -39,6 +39,8 @@ services:
     environment:
       - ENVIRONMENT=production
       - AI_CORE_URL=http://ai-core:8070
+      - AI_CORE_API_KEY=${AI_CORE_API_KEY:-sk-quant-agy-8f92e10c74b6}
+      - AI_MODEL=${AI_MODEL:-agt-claude-sonnet-4.6}
       - QUANT_SERVER_URL=http://quant-server:8080
       - STOCK_DATA_API_URL=http://stock-data:8000
       - COMMON_SERVER_URL=http://common-server:8090
@@ -79,7 +81,7 @@ services:
     environment:
       - AI_OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://43.155.186.45:3000/v1}
       - AI_OPENAI_API_KEY=${OPENAI_API_KEY:-sk-W91gp63k2tmArgtL8wxIMoQaYj8CmFtumeF9T34xSpuIZj34}
-      - AI_DEFAULT_PROVIDER=${AI_DEFAULT_PROVIDER:-key}
+      - AI_DEFAULT_PROVIDER=${AI_DEFAULT_PROVIDER:-cli}
       - AI_CLI_EXECUTABLE=${AI_CLI_EXECUTABLE:-agy}
     volumes:
       # 挂载宿主机二进制工具目录，使容器可直接调用宿主机安装的 agy 及外部工具

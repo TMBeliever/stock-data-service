@@ -128,58 +128,58 @@ export interface AvailableModelItem {
   isDefault?: boolean
 }
 
-// 严格从用户网关渠道筛选的真实可用模型列表
+// 统一大模型网关支持的真实可用模型列表 (涵盖 Antigravity 原生预热池模型与外部 Key 代理模型)
 export const AVAILABLE_MODELS: AvailableModelItem[] = [
+  {
+    id: 'agt-claude-sonnet-4.6',
+    name: 'Claude 3.7 Sonnet (Thinking)',
+    series: 'Claude',
+    tag: '顶级推理',
+    description: 'Anthropic 前沿推理旗舰，具备深度思维链与高难度量化代码编写能力 (Antigravity 预热池直通)',
+    isDefault: true,
+  },
+  {
+    id: 'agt-gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash (High)',
+    series: 'Gemini',
+    tag: '最新旗舰',
+    description: 'Google 2026 前沿推理旗舰，毫秒级极速响应与全市场深度感知 (Antigravity 预热池直通)',
+    isLatest: true,
+  },
+  {
+    id: 'agt-gemini-3.7-flash',
+    name: 'Gemini 3.7 Flash',
+    series: 'Gemini',
+    tag: '均衡推演',
+    description: 'Google 经典平衡旗舰，兼顾高推理质量与吞吐量 (Antigravity 预热池直通)',
+  },
+  {
+    id: 'agt-claude-opus-4.6',
+    name: 'Claude 3.7 Opus',
+    series: 'Claude',
+    tag: '全能架构',
+    description: '超强全能综合架构模型，复杂量化系统设计与回测分析 (Antigravity 预热池直通)',
+  },
+  {
+    id: 'agt-gemini-3.1-pro',
+    name: 'Gemini 3.1 Pro',
+    series: 'Gemini',
+    tag: '专业长文',
+    description: '专业级长上下文多模态推理模型 (Antigravity 预热池直通)',
+  },
   {
     id: 'minimax/minimax-m3:free',
     name: 'MiniMax M3 (Free)',
     series: 'MiniMax',
-    tag: '推荐默认',
-    description: 'MiniMax 官方高推理大模型，代码编写与工具推演能力极强，免受安全误杀 (推荐默认)',
-    isDefault: true,
+    tag: '外部备选',
+    description: 'MiniMax 官方高推理大模型，代码编写与工具推演能力极强 (外部 Key 代理网关)',
   },
   {
     id: 'gemini-flash-lite-latest',
     name: 'Gemini Flash Lite',
     series: 'Lite',
     tag: '极速低延',
-    description: '轻量极速模型，毫秒级响应与超低延迟',
-  },
-  {
-    id: 'gemini-3.7-flash',
-    name: 'Gemini 3.7 Flash',
-    series: '3.7',
-    tag: '最新旗舰',
-    description: '2026 前沿推理旗舰，超快响应与深度多模态思考',
-    isLatest: true,
-  },
-  {
-    id: 'gemini-3.6-flash',
-    name: 'Gemini 3.6 Flash',
-    series: '3.6',
-    tag: '前沿高精',
-    description: '新一代深度推演模型，极速量化分析与代码生成',
-  },
-  {
-    id: 'gemini-3.5-flash',
-    name: 'Gemini 3.5 Flash',
-    series: '3.5',
-    tag: '均衡稳健',
-    description: '生产级标杆模型，逻辑严密，兼顾质量与速率',
-  },
-  {
-    id: 'gemini-3.1-flash-lite',
-    name: 'Gemini 3.1 Flash Lite',
-    series: '3.1',
-    tag: '轻量前沿',
-    description: '毫秒级轻量模型，快速行情指标解析与工具调度',
-  },
-  {
-    id: 'gemini-2.5-flash',
-    name: 'Gemini 2.5 Flash',
-    series: '2.5',
-    tag: '经典基线',
-    description: '成熟长上下文模型与结构化数据提取基准',
+    description: '轻量极速模型，毫秒级响应与超低延迟 (外部 Key 代理网关)',
   },
 ]
 
@@ -251,7 +251,7 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
         return val
       }
     } catch {}
-    return 'minimax/minimax-m3:free'
+    return 'agt-claude-sonnet-4.6'
   }
 
   const getInitialThinkingLevel = (): ThinkingLevel => {
@@ -739,7 +739,6 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
         body: JSON.stringify({
           messages: history,
           model: aiModel.value,
-          provider: 'key',
           thinking_level: thinkingLevel.value,
           project_id: curProj.id,
           project_path: curProj.path,

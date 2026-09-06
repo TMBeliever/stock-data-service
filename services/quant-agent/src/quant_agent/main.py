@@ -383,8 +383,8 @@ async def chat_stream(req: AgentChatRequest, auth: UserAuth = Depends(get_curren
 
     stream = quant_agent.chat_stream(
         messages=messages,
-        model=req.model or cfg.default_model or "minimax/minimax-m3:free",
-        provider=req.provider or "key",
+        model=req.model or cfg.default_model or "agt-claude-sonnet-4.6",
+        provider=req.provider,  # 标准 OpenAI 网关通过 model 自动分流，无需外部写死
         system_prompt=req.system_prompt,
         page_context=page_ctx,
         temperature=temp,

@@ -33,7 +33,7 @@ class McpServerConfig(BaseModel):
 class AgentRuntimeConfig(BaseModel):
     """智能体全局运行与安全配置模型"""
     execution_mode: str = "confirm_sensitive"  # 'auto' | 'confirm_sensitive' | 'confirm_all'
-    default_model: str = "minimax/minimax-m3:free"
+    default_model: str = "agt-claude-sonnet-4.6"
     temperature: float = 0.2
     max_steps: int = 0  # 0 为无限制 (对标 DSH)
     max_observation_chars: int = 3500

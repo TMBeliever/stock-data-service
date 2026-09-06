@@ -61,6 +61,7 @@ class BaseAgent:
         max_steps: Optional[int] = 0,
         max_error_budget: int = 3,
         repeat_guard: Optional[RepeatToolGuard] = None,
+        api_key: Optional[str] = None,
     ):
         self.name = name
         self.system_prompt = system_prompt
@@ -68,6 +69,8 @@ class BaseAgent:
         self.token_governor = token_governor or TokenGovernor()
         self.repeat_guard = repeat_guard or RepeatToolGuard()
         self.ai_core_url = (ai_core_url or "http://localhost:8070").rstrip("/")
+        import os
+        self.api_key = api_key or os.getenv("AI_GATEWAY_API_KEY") or os.getenv("GATEWAY_API_KEY") or "sk-quant-agy-8f92e10c74b6"
         # max_steps <= 0 或 None 表示无限制模式 (对标 DSH，由模型自然终结或由 RepeatGuard/中断拦截；内置 100 步防失控兜底)
         self.max_steps = max_steps if max_steps is not None else 0
         self.max_error_budget = max_error_budget
@@ -80,20 +83,60 @@ class BaseAgent:
         provider: Optional[str] = None,
         temperature: Optional[float] = 0.2
     ) -> Dict[str, Any]:
-        """向底层模型网关发起单次结构化生成请求"""
-        url = f"{self.ai_core_url}/api/v1/ai/generate"
-        payload = {
-            "messages": [m.model_dump(exclude_none=True) for m in messages],
-            "tools": [t.model_dump() for t in tools] if tools else None,
-            "model": model,
-            "provider": provider,
-            "temperature": temperature
+        """通过标准 OpenAI 协议 (/v1/chat/completions) 向底层统一 AI 网关发起生成请求"""
+        url = f"{self.ai_core_url}/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
         }
+
+        openai_messages: List[Dict[str, Any]] = []
+        for m in messages:
+            msg_dict: Dict[str, Any] = {
+                "role": m.role,
+                "content": m.content or ""
+            }
+            if m.tool_calls:
+                msg_dict["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": tc.raw_arguments or (json.dumps(tc.arguments, ensure_ascii=False) if isinstance(tc.arguments, dict) else str(tc.arguments))
+                        }
+                    }
+                    for tc in m.tool_calls
+                ]
+            if m.tool_call_id:
+                msg_dict["tool_call_id"] = m.tool_call_id
+            if m.name:
+                msg_dict["name"] = m.name
+            openai_messages.append(msg_dict)
+
+        payload: Dict[str, Any] = {
+            "model": model or "agt-gemini-3.8-flash",
+            "messages": openai_messages,
+            "temperature": temperature if temperature is not None else 0.2,
+            "stream": False
+        }
+        if tools:
+            payload["tools"] = [t.to_openai_dict() for t in tools]
+
         async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(url, json=payload)
+            resp = await client.post(url, headers=headers, json=payload)
             if resp.status_code != 200:
-                raise RuntimeError(f"AI Core error ({resp.status_code}): {resp.text}")
-            return resp.json()
+                raise RuntimeError(f"AI Gateway error ({resp.status_code}): {resp.text}")
+            data = resp.json()
+            choices = data.get("choices", [])
+            if not choices:
+                return {"content": "", "tool_calls": []}
+            first_msg = choices[0].get("message", {})
+            return {
+                "content": first_msg.get("content") or "",
+                "tool_calls": first_msg.get("tool_calls") or [],
+                "finish_reason": choices[0].get("finish_reason", "stop")
+            }
 
     async def _execute_tool_single(
         self,
@@ -323,14 +366,24 @@ class BaseAgent:
 
             # ── 5A. 模型发起工具调用 ──
             if raw_tool_calls:
-                parsed_calls = [
-                    ToolCall(
+                parsed_calls = []
+                for i, c in enumerate(raw_tool_calls):
+                    fn = c.get("function") or {}
+                    t_name = c.get("name") or fn.get("name", "")
+                    raw_args = c.get("arguments") or fn.get("arguments", {})
+                    if isinstance(raw_args, str):
+                        try:
+                            args_dict = json.loads(raw_args)
+                        except Exception:
+                            args_dict = {}
+                    else:
+                        args_dict = raw_args or {}
+                    parsed_calls.append(ToolCall(
                         id=c.get("id", f"call_{step}_{i}"),
-                        name=c.get("name") or (c.get("function") or {}).get("name", ""),
-                        arguments=c.get("arguments") or (c.get("function") or {}).get("arguments", {})
-                    )
-                    for i, c in enumerate(raw_tool_calls)
-                ]
+                        name=t_name,
+                        arguments=args_dict,
+                        raw_arguments=raw_args if isinstance(raw_args, str) else json.dumps(args_dict, ensure_ascii=False)
+                    ))
 
                 history.append(Message.assistant(content=resp_content, tool_calls=parsed_calls))
 

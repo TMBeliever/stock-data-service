@@ -31,6 +31,7 @@ class QuantAgent(BaseAgent):
             tool_registry=ToolRegistry(),
             token_governor=token_governor,
             ai_core_url=agent_config.AI_CORE_URL,
+            api_key=agent_config.AI_CORE_API_KEY,
             max_steps=agent_config.MAX_AGENT_STEPS
         )
 

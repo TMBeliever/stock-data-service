@@ -260,4 +260,86 @@ async def test_unbounded_steps_natural_completion():
     assert "步数上限" not in full_msg
     assert "所有复杂任务步骤均已顺利执行完毕！" in full_msg
 
+@pytest.mark.asyncio
+async def test_base_agent_calls_openai_completions_endpoint(monkeypatch):
+    """测试 BaseAgent 严格按照标准 OpenAI /v1/chat/completions 规范构造请求并解析响应"""
+    import httpx
+    from ai_core.models import ToolDefinition
+
+    agent = BaseAgent(ai_core_url="http://mock-ai-gateway:8070", api_key="sk-test-key-123")
+    captured_request = {}
+
+    async def mock_post(self, url, headers=None, json=None, **kwargs):
+        captured_request["url"] = url
+        captured_request["headers"] = headers
+        captured_request["json"] = json
+
+        # 模拟标准 OpenAI /v1/chat/completions 响应体
+        mock_response_data = {
+            "id": "chatcmpl-mock-999",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": json.get("model"),
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "这是标准 OpenAI 返回的推理文本",
+                        "tool_calls": [
+                            {
+                                "id": "call_abc123",
+                                "type": "function",
+                                "function": {
+                                    "name": "mock_tool",
+                                    "arguments": "{\"param1\": \"val1\"}"
+                                }
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls"
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+        }
+
+        class MockResponse:
+            status_code = 200
+            text = "ok"
+            def json(self):
+                return mock_response_data
+
+        return MockResponse()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    messages = [Message.user("分析 A 股大盘行情")]
+    tools = [ToolDefinition(name="mock_tool", description="测试工具", parameters={"type": "object"})]
+
+    result = await agent._call_llm_generate(
+        messages=messages,
+        tools=tools,
+        model="agt-claude-sonnet-4.6",
+        temperature=0.3
+    )
+
+    # 验证请求 URL
+    assert captured_request["url"] == "http://mock-ai-gateway:8070/v1/chat/completions"
+    # 验证 Bearer 鉴权头
+    assert captured_request["headers"]["Authorization"] == "Bearer sk-test-key-123"
+    # 验证 Payload 符合 OpenAI 规范
+    req_payload = captured_request["json"]
+    assert req_payload["model"] == "agt-claude-sonnet-4.6"
+    assert req_payload["temperature"] == 0.3
+    assert req_payload["messages"][0]["role"] == "user"
+    assert req_payload["messages"][0]["content"] == "分析 A 股大盘行情"
+    assert req_payload["tools"][0]["type"] == "function"
+    assert req_payload["tools"][0]["function"]["name"] == "mock_tool"
+
+    # 验证响应解析
+    assert result["content"] == "这是标准 OpenAI 返回的推理文本"
+    assert len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["function"]["name"] == "mock_tool"
+
+
 

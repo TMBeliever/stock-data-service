@@ -44,6 +44,18 @@ const showModelPopover = ref(false)
 const expandedProjects = ref<Record<string, boolean>>({})
 
 // 当前激活模型与思考程度
+const modelFilterTab = ref<'all' | 'agy' | 'standard'>('all')
+
+const filteredModelList = computed(() => {
+  if (modelFilterTab.value === 'agy') {
+    return AVAILABLE_MODELS.filter((m) => m.isAgy)
+  }
+  if (modelFilterTab.value === 'standard') {
+    return AVAILABLE_MODELS.filter((m) => !m.isAgy)
+  }
+  return AVAILABLE_MODELS
+})
+
 const currentModelItem = computed(() => {
   return AVAILABLE_MODELS.find((m) => m.id === codexStore.aiModel) || AVAILABLE_MODELS[0]
 })
@@ -1924,9 +1936,15 @@ onUnmounted(() => {
                     <button
                       @click.stop="showModelPopover = !showModelPopover"
                       class="flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.1] text-zinc-300 hover:text-white transition-all cursor-pointer shadow-xs"
-                      title="点击切换推理模型与思考程度"
+                      title="点击切换推理模型 (支持 AGY 与标准双矩阵)"
                     >
                       <span class="text-[11px]">{{ currentThinkingOption.icon }}</span>
+                      <span
+                        class="px-1 py-0.1 rounded text-[8px] font-mono font-bold"
+                        :class="currentModelItem?.isAgy ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'"
+                      >
+                        {{ currentModelItem?.isAgy ? 'AGY' : '标准' }}
+                      </span>
                       <span class="font-mono text-zinc-200 font-semibold">{{ currentModelItem?.name }}</span>
                       <span class="px-1 py-0.1 rounded text-[8px] font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30">
                         {{ currentThinkingOption.badge }}
@@ -1938,27 +1956,57 @@ onUnmounted(() => {
                     <transition name="popover">
                       <div
                         v-if="showModelPopover"
-                        class="absolute bottom-full mb-2 right-0 w-80 rounded-2xl bg-[#1c1d25] border border-white/[0.14] shadow-2xl p-3 z-50 text-xs space-y-3 backdrop-blur-2xl"
+                        class="absolute bottom-full mb-2 right-0 w-88 rounded-2xl bg-[#1c1d25] border border-white/[0.14] shadow-2xl p-3 z-50 text-xs space-y-3 backdrop-blur-2xl"
                       >
-                        <!-- 模块 1: 推理模型 (从新到旧 5 个已验通模型) -->
-                        <div class="space-y-1.5">
+                        <!-- 模块 1: 推理模型 -->
+                        <div class="space-y-2">
                           <div class="flex items-center justify-between pb-1 border-b border-white/[0.06]">
-                            <span class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider flex items-center space-x-1">
+                            <span class="text-[10px] font-bold text-zinc-300 uppercase tracking-wider flex items-center space-x-1">
                               <span>🤖</span>
-                              <span>推理模型矩阵 (内置 AI 服务直连)</span>
+                              <span>推理模型矩阵 (AGY & 标准)</span>
                             </span>
-                            <span class="text-[9px] text-emerald-400 font-mono">标准 API 驱动</span>
+                            <span
+                              class="text-[9px] font-mono px-1.5 py-0.2 rounded border"
+                              :class="currentModelItem?.isAgy ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'"
+                            >
+                              {{ currentModelItem?.isAgy ? '⚡ AGY 预热池' : '🌐 标准直连' }}
+                            </span>
                           </div>
 
-                          <div class="space-y-1 max-h-48 overflow-y-auto pr-0.5">
+                          <!-- 专区筛选切换 Tab: 全部 / AGY 预热池 / 标准直连 -->
+                          <div class="flex items-center p-0.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[10px]">
                             <button
-                              v-for="m in AVAILABLE_MODELS"
+                              @click.stop="modelFilterTab = 'all'"
+                              :class="modelFilterTab === 'all' ? 'bg-white/10 text-white font-bold shadow-xs' : 'text-zinc-400 hover:text-zinc-200'"
+                              class="flex-1 py-0.8 rounded-md transition-all cursor-pointer text-center"
+                            >
+                              全部 ({{ AVAILABLE_MODELS.length }})
+                            </button>
+                            <button
+                              @click.stop="modelFilterTab = 'agy'"
+                              :class="modelFilterTab === 'agy' ? 'bg-amber-500/20 text-amber-300 font-bold shadow-xs' : 'text-zinc-400 hover:text-zinc-200'"
+                              class="flex-1 py-0.8 rounded-md transition-all cursor-pointer text-center flex items-center justify-center space-x-1"
+                            >
+                              <span>⚡ AGY ({{ AVAILABLE_MODELS.filter(m => m.isAgy).length }})</span>
+                            </button>
+                            <button
+                              @click.stop="modelFilterTab = 'standard'"
+                              :class="modelFilterTab === 'standard' ? 'bg-emerald-500/20 text-emerald-300 font-bold shadow-xs' : 'text-zinc-400 hover:text-zinc-200'"
+                              class="flex-1 py-0.8 rounded-md transition-all cursor-pointer text-center flex items-center justify-center space-x-1"
+                            >
+                              <span>🌐 标准 ({{ AVAILABLE_MODELS.filter(m => !m.isAgy).length }})</span>
+                            </button>
+                          </div>
+
+                          <div class="space-y-1 max-h-52 overflow-y-auto pr-0.5">
+                            <button
+                              v-for="m in filteredModelList"
                               :key="m.id"
                               @click.stop="selectModel(m.id)"
                               :class="[
                                 'w-full text-left p-2 rounded-xl transition-all cursor-pointer flex items-start space-x-2 border',
                                 codexStore.aiModel === m.id
-                                  ? 'bg-purple-500/20 border-purple-500/40 text-purple-200 shadow-xs'
+                                  ? (m.isAgy ? 'bg-amber-500/15 border-amber-500/40 text-amber-100 shadow-xs' : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-100 shadow-xs')
                                   : 'bg-white/[0.02] border-transparent hover:bg-white/[0.06] text-zinc-300',
                               ]"
                             >
@@ -1969,13 +2017,13 @@ onUnmounted(() => {
                                     <span
                                       :class="[
                                         'px-1.5 py-0.2 rounded text-[9px] font-mono',
-                                        m.isDefault ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold' : m.isLatest ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold' : 'bg-white/[0.06] text-zinc-400',
+                                        m.isDefault ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold' : (m.isAgy ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold'),
                                       ]"
                                     >
                                       {{ m.tag }}
                                     </span>
                                   </div>
-                                  <span v-if="codexStore.aiModel === m.id" class="text-purple-400 font-bold text-xs">✓</span>
+                                  <span v-if="codexStore.aiModel === m.id" class="text-amber-400 font-bold text-xs">✓</span>
                                 </div>
                                 <div class="text-[10px] text-zinc-400 mt-0.5 truncate leading-tight">
                                   {{ m.description }}

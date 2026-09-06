@@ -124,62 +124,109 @@ export interface AvailableModelItem {
   series: string
   tag: string
   description: string
+  isAgy: boolean
   isLatest?: boolean
   isDefault?: boolean
 }
 
-// 统一大模型网关支持的真实可用模型列表 (直连内部标准 OpenAI 格式服务，支持全系 agt-* 模型矩阵)
+// 统一大模型网关支持的真实可用模型列表 (涵盖 AGY 宿主机预热待命池与标准/外部模型两大专区)
 export const AVAILABLE_MODELS: AvailableModelItem[] = [
+  // ==========================================
+  // 1. AGY 宿主机预热池模型 (带 AGY / AGT)
+  // ==========================================
   {
     id: 'agt-gemini-3.8-flash',
-    name: 'Gemini 3.8 Flash (High)',
+    name: 'Gemini 3.8 Flash (AGY)',
     series: 'Gemini',
-    tag: '推荐默认',
-    description: 'Google 2026 前沿推理旗舰，毫秒级极速响应与全市场深度感知 (内置 AI 网关直连，推荐默认)',
+    tag: 'AGY·推荐默认',
+    description: 'Google 2026 前沿推理旗舰，毫秒级极速响应与全市场深度感知 (AGY 独占预热池直通)',
+    isAgy: true,
     isDefault: true,
     isLatest: true,
   },
   {
     id: 'agt-claude-sonnet-4.6',
-    name: 'Claude 3.7 Sonnet (Thinking)',
+    name: 'Claude 3.7 Sonnet (AGY)',
     series: 'Claude',
-    tag: '深度推理',
-    description: 'Anthropic 前沿推理旗舰，具备深度思维链与高难度量化代码编写能力 (内置 AI 网关直连)',
+    tag: 'AGY·深度推理',
+    description: 'Anthropic 前沿推理旗舰，具备深度思维链与高难度量化代码编写能力 (AGY 独占预热池直通)',
+    isAgy: true,
   },
   {
     id: 'agt-gemini-3.7-flash',
-    name: 'Gemini 3.7 Flash',
+    name: 'Gemini 3.7 Flash (AGY)',
     series: 'Gemini',
-    tag: '均衡推演',
-    description: 'Google 经典平衡旗舰，兼顾高推理质量与吞吐量 (内置 AI 网关直连)',
-  },
-  {
-    id: 'agt-gemini-3.6-flash',
-    name: 'Gemini 3.6 Flash',
-    series: 'Gemini',
-    tag: '快速轻量',
-    description: '稳定经典多模态基座，超低延迟快速响应 (内置 AI 网关直连)',
+    tag: 'AGY·均衡推演',
+    description: 'Google 经典平衡旗舰，兼顾高推理质量与吞吐量 (AGY 独占预热池直通)',
+    isAgy: true,
   },
   {
     id: 'agt-claude-opus-4.6',
-    name: 'Claude 3.7 Opus',
+    name: 'Claude 3.7 Opus (AGY)',
     series: 'Claude',
-    tag: '全能架构',
-    description: '超强全能综合架构模型，复杂量化系统设计与回测分析 (内置 AI 网关直连)',
+    tag: 'AGY·全能架构',
+    description: '超强全能综合架构模型，复杂量化系统设计与回测分析 (AGY 独占预热池直通)',
+    isAgy: true,
+  },
+  {
+    id: 'agt-gemini-3.6-flash',
+    name: 'Gemini 3.6 Flash (AGY)',
+    series: 'Gemini',
+    tag: 'AGY·快速轻量',
+    description: '稳定经典多模态基座，超低延迟快速响应 (AGY 独占预热池直通)',
+    isAgy: true,
   },
   {
     id: 'agt-gemini-3.1-pro',
-    name: 'Gemini 3.1 Pro',
+    name: 'Gemini 3.1 Pro (AGY)',
     series: 'Gemini',
-    tag: '专业长文',
-    description: '专业级长上下文多模态推理模型 (内置 AI 网关直连)',
+    tag: 'AGY·专业长文',
+    description: '专业级长上下文多模态推理模型 (AGY 独占预热池直通)',
+    isAgy: true,
   },
   {
     id: 'agt-gpt-oss-120b',
-    name: 'GPT-OSS 120B',
+    name: 'GPT-OSS 120B (AGY)',
     series: 'OpenSource',
-    tag: '开源旗舰',
-    description: '开源大模型旗舰基座，极客量化微调与无约束推理 (内置 AI 网关直连)',
+    tag: 'AGY·开源旗舰',
+    description: '开源大模型旗舰基座，极客量化微调与无约束推理 (AGY 独占预热池直通)',
+    isAgy: true,
+  },
+  {
+    id: 'agy',
+    name: 'Antigravity CLI (AGY)',
+    series: 'AGY',
+    tag: 'AGY·原生直通',
+    description: '宿主机原生 Antigravity 默认路由模型 (AGY 独占预热池直通)',
+    isAgy: true,
+  },
+
+  // ==========================================
+  // 2. 标准直连 / 外部网关模型 (不带 AGY)
+  // ==========================================
+  {
+    id: 'gemini-flash-lite-latest',
+    name: 'Gemini Flash Lite (标准)',
+    series: 'Gemini',
+    tag: '标准·极速低延',
+    description: '轻量极速模型，毫秒级响应与超低延迟 (标准 API 路由网关)',
+    isAgy: false,
+  },
+  {
+    id: 'minimax/minimax-m3:free',
+    name: 'MiniMax M3 Free (标准)',
+    series: 'MiniMax',
+    tag: '标准·高智推理',
+    description: 'MiniMax 官方高推理模型，代码编写与工具推演能力极强 (标准 API 路由网关)',
+    isAgy: false,
+  },
+  {
+    id: 'claude-3-7-sonnet',
+    name: 'Claude 3.7 Sonnet (标准)',
+    series: 'Claude',
+    tag: '标准·直连对齐',
+    description: 'Anthropic 标准原生格式，自动映射至强力模型 (标准 API 路由网关)',
+    isAgy: false,
   },
 ]
 

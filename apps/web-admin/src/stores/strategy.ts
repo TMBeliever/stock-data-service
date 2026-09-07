@@ -765,9 +765,20 @@ export const useStrategyStore = defineStore('strategy', () => {
     localStorage.setItem(STORAGE_CODE_KEY, newCode)
   }
 
+  // 清洗 AI 策略代码（自动剔除末尾多余的 if __name__ == '__main__': 本地运行测试脚本，保障策略纯净）
+  function cleanStrategyCode(rawCode: string): string {
+    let clean = (rawCode || '').trim()
+    const mainIdx = clean.search(/if\s+__name__\s*==\s*['"]__main__['"]\s*:/)
+    if (mainIdx !== -1) {
+      clean = clean.slice(0, mainIdx).trimEnd()
+    }
+    return clean
+  }
+
   // 将 AI 生成的代码直接覆盖至代码编辑器
   function applyCodeToEditor(targetCode: string) {
-    updateCode(targetCode)
+    const cleaned = cleanStrategyCode(targetCode)
+    updateCode(cleaned)
   }
 
   // 创建空白新策略
@@ -1486,8 +1497,9 @@ class MyStrategy(BaseStrategy):
 
 代码生成要求：
 1. 策略代码必须完整规范，包含类定义与 BaseStrategy 继承，可直接在沙箱执行。
-2. 避免未来函数，必须做数据预热检查 (如 if len(self.bars) < 25: return 或 if bar.sma(20) == 0: return)。
-3. 如果生成代码，必须使用 \`\`\`python ... \`\`\` 代码块包裹，以便用户一键载入编辑器。`
+2. 避免未来函数，必须做数据预热检查 (如 if bar.sma(self.slow) == 0: return)。
+3. 🚨 每次生成必须且只能输出一个完整的 \`\`\`python ... \`\`\` 代码块，严禁输出两段代码或示例碎片。
+4. 🚨 严禁在代码末尾附加 if __name__ == '__main__': 本地运行脚本。`
 
       const resp = await fetch('/api/v1/ai/stream', {
         method: 'POST',

@@ -2178,40 +2178,42 @@ onUnmounted(() => {
                   v-html="renderMarkdown(msg.content)"
                 ></div>
 
-                <!-- 4. 独立纯文本/代码卡片 (Card Container，带语法高亮与操作栏) -->
-                <div
-                  v-for="(card, cIdx) in msg.cards"
-                  :key="cIdx"
-                  class="rounded-xl border border-white/[0.1] bg-[#1a1b22] overflow-hidden shadow-sm"
-                >
-                  <div class="px-3 py-1.5 bg-white/[0.03] border-b border-white/[0.06] flex items-center justify-between text-[11px]">
-                    <div class="flex items-center space-x-1.5 text-zinc-300 font-mono">
-                      <span class="text-purple-400">&lt;/&gt;</span>
-                      <span class="font-medium">{{ card.title || '纯文本' }}</span>
-                    </div>
-                    <!-- 一键插入工作台与复制代码 -->
-                    <div class="flex items-center space-x-2.5 text-zinc-400">
-                      <button
-                        @click="applyCodeToEditor(card.content)"
-                        class="hover:text-amber-400 transition-colors cursor-pointer flex items-center space-x-1 text-[10px]"
-                        title="一键插入到策略代码工作台"
-                      >
-                        <span>⚡ 载入工作台</span>
-                      </button>
-                      <button
-                        @click="copyText(card.content)"
-                        class="hover:text-white transition-colors cursor-pointer flex items-center space-x-1 text-[10px]"
-                        title="复制代码"
-                      >
-                        <span>📋 复制</span>
-                      </button>
-                    </div>
-                  </div>
+                <!-- 4. 独立纯文本/代码卡片 (仅当正文未包含代码块时作为兜底展示，防止正文与卡片重复渲染两段一模一样的代码) -->
+                <template v-if="!msg.content || !msg.content.includes('```')">
                   <div
-                    class="p-3 text-[11px] font-mono text-zinc-200 overflow-x-auto whitespace-pre leading-relaxed bg-[#0d0e14]"
-                    v-html="highlightCodeSnippet(card.content, card.language)"
-                  ></div>
-                </div>
+                    v-for="(card, cIdx) in msg.cards"
+                    :key="cIdx"
+                    class="rounded-xl border border-white/[0.1] bg-[#1a1b22] overflow-hidden shadow-sm"
+                  >
+                    <div class="px-3 py-1.5 bg-white/[0.03] border-b border-white/[0.06] flex items-center justify-between text-[11px]">
+                      <div class="flex items-center space-x-1.5 text-zinc-300 font-mono">
+                        <span class="text-purple-400">&lt;/&gt;</span>
+                        <span class="font-medium">{{ card.title || '纯文本' }}</span>
+                      </div>
+                      <!-- 一键插入工作台与复制代码 -->
+                      <div class="flex items-center space-x-2.5 text-zinc-400">
+                        <button
+                          @click="applyCodeToEditor(card.content)"
+                          class="hover:text-amber-400 transition-colors cursor-pointer flex items-center space-x-1 text-[10px]"
+                          title="一键插入到策略代码工作台"
+                        >
+                          <span>⚡ 载入工作台</span>
+                        </button>
+                        <button
+                          @click="copyText(card.content)"
+                          class="hover:text-white transition-colors cursor-pointer flex items-center space-x-1 text-[10px]"
+                          title="复制代码"
+                        >
+                          <span>📋 复制</span>
+                        </button>
+                      </div>
+                    </div>
+                    <div
+                      class="p-3 text-[11px] font-mono text-zinc-200 overflow-x-auto whitespace-pre leading-relaxed bg-[#0d0e14]"
+                      v-html="highlightCodeSnippet(card.content, card.language)"
+                    ></div>
+                  </div>
+                </template>
 
                 <!-- 消息操作条 (Codex 风格：紧凑贴合，鼠标悬停在消息块时展示时间与复制) -->
                 <div class="h-4 mt-1 flex items-center space-x-2 text-[10px] text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity duration-150 select-none">

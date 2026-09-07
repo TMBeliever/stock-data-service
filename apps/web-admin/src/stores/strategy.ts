@@ -348,13 +348,21 @@ class ExtremeDipHeavyStrategy(BaseStrategy):
     """
     极端急跌重仓抄底策略 (QuantCore 2.0 极简范式)：
     - 监控 120 日内最高价的高位回撤幅度；
-    - 当自高点回撤超过 15% 且当前无持仓时，果断调仓至 90% 仓位重仓抄底；
-    - 当价格重回 60 日均线之上时，分批结利降低风险暴露。
+    - 当自高点回撤超过指定阈值且无持仓时，果断重仓抄底；
+    - 当价格重回短期均线之上时，平稳减仓锁定反弹利润。
     """
-    def __init__(self, dip_threshold: float = 0.15, ma_period: int = 60):
+    def __init__(
+        self,
+        dip_threshold: float = 0.15,      # @param label="极端急跌抄底阈值" min=0.05 max=0.35 step=0.01 unit="%" group="buy"
+        ma_period: int = 60,              # @param label="均线止盈回归周期" min=10 max=120 step=5 unit="天" group="sell"
+        target_percent: float = 0.90,     # @param label="急跌抄底目标仓位" min=0.30 max=1.00 step=0.05 unit="%" group="capital"
+        profit_take_percent: float = 0.20 # @param label="均线反弹留存仓位" min=0.00 max=0.50 step=0.05 unit="%" group="sell"
+    ):
         super().__init__(name="ExtremeDip", params={"dip": dip_threshold, "ma": ma_period})
         self.dip_threshold = dip_threshold
         self.ma_period = ma_period
+        self.target_percent = target_percent
+        self.profit_take_percent = profit_take_percent
 
     def on_bar(self, bar: Bar):
         peak_high = bar.highest(120)
@@ -363,13 +371,13 @@ class ExtremeDipHeavyStrategy(BaseStrategy):
 
         drawdown_from_peak = (peak_high - bar.close) / peak_high
 
-        # 1. 触发极端超跌：一次性 90% 仓位重仓建仓
+        # 1. 触发极端超跌：一次性重仓建仓
         if drawdown_from_peak >= self.dip_threshold and not self.position:
-            self.order_target_percent(0.90, reason=f"暴跌{drawdown_from_peak:.1%}极端抄底")
+            self.order_target_percent(self.target_percent, reason=f"暴跌{drawdown_from_peak:.1%}极端抄底")
 
-        # 2. 价格回归均线之上：减仓至 20% 止盈
+        # 2. 价格回归均线之上：减仓止盈
         elif bar.close > bar.sma(self.ma_period) and self.position:
-            self.order_target_percent(0.20, reason="价格回归均线减仓止盈")
+            self.order_target_percent(self.profit_take_percent, reason="价格回归均线减仓止盈")
 `
   },
   {
@@ -394,14 +402,14 @@ class AllWeatherStrategy(BaseStrategy):
     """
     def __init__(
         self,
-        stock_weight: float = 0.30,
-        long_bond_weight: float = 0.40,
-        inter_bond_weight: float = 0.15,
-        gold_weight: float = 0.075,
-        commodity_weight: float = 0.075,
-        rebalance_band: float = 0.03,
-        rebalance_interval: int = 20,
-        single_symbol_target: float = 0.40
+        stock_weight: float = 0.30,         # @param label="股票权益配置权重" min=0.05 max=0.80 step=0.05 unit="%" group="capital"
+        long_bond_weight: float = 0.40,     # @param label="长期国债配置权重" min=0.05 max=0.80 step=0.05 unit="%" group="capital"
+        inter_bond_weight: float = 0.15,    # @param label="中期国债配置权重" min=0.05 max=0.80 step=0.05 unit="%" group="capital"
+        gold_weight: float = 0.075,         # @param label="黄金商品配置权重" min=0.01 max=0.30 step=0.01 unit="%" group="capital"
+        commodity_weight: float = 0.075,    # @param label="大宗商品配置权重" min=0.01 max=0.30 step=0.01 unit="%" group="capital"
+        rebalance_band: float = 0.03,       # @param label="再平衡偏离容忍度" min=0.01 max=0.10 step=0.005 unit="%" group="general"
+        rebalance_interval: int = 20,       # @param label="定期再平衡天数" min=5 max=60 step=5 unit="天" group="general"
+        single_symbol_target: float = 0.40, # @param label="单标的持仓上限" min=0.10 max=0.80 step=0.05 unit="%" group="capital"
     ):
         params = {
             "stock_weight": stock_weight,

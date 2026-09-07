@@ -88,15 +88,19 @@ class PerformanceAnalytics:
         else:
             sharpe = 0.0
 
-        # 下行波动率 (Downside deviation)
-        downside = daily_returns[daily_returns < rf_daily]
-        if len(downside) > 0 and np.std(downside) > 1e-8:
-            sortino = float(np.mean(excess_returns) / np.std(downside) * math.sqrt(250.0))
+        # 下行波动率与索提诺比率 (Sortino Ratio: 基于标准下行半方差 Downside Semi-Deviation)
+        downside_diff = np.minimum(daily_returns - rf_daily, 0.0)
+        downside_std = float(np.sqrt(np.mean(downside_diff ** 2)))
+        if downside_std > 1e-8:
+            sortino = float(np.mean(excess_returns) / downside_std * math.sqrt(250.0))
         else:
-            sortino = 0.0
+            sortino = 99.0 if np.mean(excess_returns) > 0 else 0.0
 
-        # 卡玛比率
-        calmar = cagr / max_drawdown if max_drawdown > 1e-6 else 0.0
+        # 卡玛比率 (Calmar Ratio: CAGR / Max Drawdown)
+        if max_drawdown > 1e-6:
+            calmar = float(cagr / max_drawdown)
+        else:
+            calmar = 99.0 if cagr > 0 else 0.0
 
         # 基于成交流水 FIFO 配对计算胜率与盈亏比
         win_rate = 0.0

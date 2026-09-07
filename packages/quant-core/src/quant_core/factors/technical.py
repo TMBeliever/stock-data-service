@@ -18,17 +18,21 @@ def ema(prices: Sequence[float], period: int) -> float:
     return float(res)
 
 def rsi(prices: Sequence[float], period: int = 14) -> float:
-    """相对强弱指标 (Relative Strength Index, 0~100)"""
-    if len(prices) <= period:
+    """
+    相对强弱指标 (Relative Strength Index, 0~100):
+    采用经典 Welles Wilder 标准：以固定回溯窗口期作为均值分母
+    """
+    if len(prices) <= period or period <= 0:
         return 50.0
     diffs = np.diff(prices[-period-1:])
     gains = diffs[diffs > 0]
     losses = -diffs[diffs < 0]
     
-    avg_gain = float(np.mean(gains)) if len(gains) > 0 else 0.0
-    avg_loss = float(np.mean(losses)) if len(losses) > 0 else 0.0
+    # 按照标准金融定义，分母为总窗口期 period
+    avg_gain = float(np.sum(gains) / period) if len(gains) > 0 else 0.0
+    avg_loss = float(np.sum(losses) / period) if len(losses) > 0 else 0.0
     
-    if avg_loss == 0.0:
+    if avg_loss <= 1e-12:
         return 100.0 if avg_gain > 0 else 50.0
     rs = avg_gain / avg_loss
     return float(100.0 - (100.0 / (1.0 + rs)))
@@ -43,7 +47,7 @@ def macd(
     if len(prices) < slow_period + signal_period:
         return 0.0, 0.0, 0.0
     
-    # 计算序列 EMA
+    # 计算全序列 EMA，避免截断产生的初值偏差
     def calc_ema_series(data: Sequence[float], n: int) -> list[float]:
         alpha = 2.0 / (n + 1.0)
         res = [data[0]]
@@ -55,7 +59,7 @@ def macd(
     slow_ema = calc_ema_series(prices, slow_period)
     dif_series = [f - s for f, s in zip(fast_ema, slow_ema)]
     
-    dea_series = calc_ema_series(dif_series[-signal_period*2:], signal_period)
+    dea_series = calc_ema_series(dif_series, signal_period)
     dif = dif_series[-1]
     dea = dea_series[-1]
     hist = (dif - dea) * 2.0

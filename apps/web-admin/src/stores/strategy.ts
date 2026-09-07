@@ -687,7 +687,7 @@ export const useStrategyStore = defineStore('strategy', () => {
     }
   }
 
-  function setQuickDateRange(rangeType: 'half_year' | '1y' | '2y' | '3y' | '2023' | 'all') {
+  function setQuickDateRange(rangeType: 'half_year' | '1y' | '2y' | '3y' | '5y' | '10y' | '20y' | '2023' | 'all') {
     const now = new Date()
     const todayStr = now.toISOString().split('T')[0]
     endDate.value = todayStr
@@ -1095,10 +1095,25 @@ class MyCustomStrategy(BaseStrategy):
     max_combinations?: number
     customCode?: string
     customSymbol?: string
+    customStart?: string
+    customEnd?: string
+    customInitialCash?: number
   }): Promise<{ success: boolean; data?: GridOptimizationResult; error?: string }> {
     const targetCode = (payload.customCode || code.value).trim()
     const targetSymbol = (payload.customSymbol || symbol.value || '510300.SH.ETF').trim()
-    const targetSymbols = symbols.value && symbols.value.length > 0 ? symbols.value : [targetSymbol]
+    const targetStart = (payload.customStart || startDate.value || '').trim() || '2021-01-01'
+    const targetEnd = (payload.customEnd || endDate.value || '').trim() || null
+    const targetCash = payload.customInitialCash !== undefined && Number(payload.customInitialCash) > 0
+      ? Number(payload.customInitialCash)
+      : (initialCash.value || 100000)
+    const targetSymbols = [targetSymbol]
+
+    // 同步到工作台主状态，保持联动
+    symbol.value = targetSymbol
+    symbols.value = [targetSymbol]
+    initialCash.value = targetCash
+    if (payload.customStart) startDate.value = payload.customStart
+    if (payload.customEnd) endDate.value = payload.customEnd
 
     if (!targetCode) {
       return { success: false, error: '策略代码不能为空' }
@@ -1118,9 +1133,9 @@ class MyCustomStrategy(BaseStrategy):
           symbol: targetSymbols[0],
           symbols: targetSymbols,
           code: targetCode,
-          start: startDate.value,
-          end: endDate.value || null,
-          initial_cash: initialCash.value,
+          start: targetStart,
+          end: targetEnd,
+          initial_cash: targetCash,
           param_grid: payload.param_grid,
           metric: payload.metric || 'sharpe_ratio',
           max_combinations: payload.max_combinations || 64,

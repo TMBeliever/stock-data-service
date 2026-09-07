@@ -189,6 +189,23 @@ class DataClient:
                 period=period
             )
             bars.append(b)
+
+        # 二次安全防御过滤：确保返回的行情时间范围 100% 严格落在 [start, end] 区间内
+        if start:
+            try:
+                s_dt = datetime.datetime.strptime(start[:10], "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc)
+                s_ts = int(s_dt.timestamp() * 1000)
+                bars = [b for b in bars if b.timestamp >= s_ts]
+            except Exception:
+                pass
+        if end:
+            try:
+                e_dt = datetime.datetime.strptime(end[:10], "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc)
+                e_ts = int(e_dt.timestamp() * 1000) + 86400000
+                bars = [b for b in bars if b.timestamp <= e_ts]
+            except Exception:
+                pass
+
         return bars
 
     def _save_to_local_cache(self, symbol: str, df: pl.DataFrame):

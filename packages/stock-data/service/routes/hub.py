@@ -213,3 +213,69 @@ def invoke_api(provider: str, api_name: str, req: InvokeRequest):
         "data": records,
         "elapsed_ms": elapsed_ms,
     }
+
+
+# ---------------------------------------------------------------------------
+# 自动将所有三方接口逐一注册为独立端点，全量展示在 Swagger UI 交互界面中
+# ---------------------------------------------------------------------------
+from pydantic import create_model
+
+def _register_discrete_routes():
+    _ensure_catalog()
+    category_tags = {
+        "valuation": "Hub: 估值与基本面指标",
+        "kline": "Hub: 行情与K线日线",
+        "financial": "Hub: 财务报表与核心数据",
+        "macro": "Hub: 宏观经济与利率通胀",
+        "index": "Hub: 指数与成分股权重",
+        "fund": "Hub: 基金与ETF数据",
+    }
+
+    for key, info in _CATALOG_CACHE.items():
+        prov = info["provider"]
+        aname = info["api_name"]
+        summary = info["summary"]
+        category = info["category"]
+        params = info["parameters"]
+        tag = category_tags.get(category, "Hub: 其他数据资产")
+
+        fields: Dict[str, Any] = {}
+        for p in params:
+            d_val = None if p["required"] else p["default"]
+            fields[p["name"]] = (Optional[str], Field(default=d_val, description=f"参数: {p['name']}"))
+        fields["bypass_cache"] = (bool, Field(default=False, description="是否纯实时穿透不落盘"))
+        fields["force_refresh"] = (bool, Field(default=False, description="是否强制穿透重刷缓存"))
+        fields["limit"] = (int, Field(default=2000, description="最大返回记录数"))
+
+        try:
+            ReqModel = create_model(f"Req_{prov}_{aname}", **fields)
+
+            def make_handler(p_name, a_name, M):
+                async def discrete_handler(body: M):
+                    body_dict = body.model_dump()
+                    bypass = body_dict.pop("bypass_cache", False)
+                    refresh = body_dict.pop("force_refresh", False)
+                    lim = body_dict.pop("limit", 2000)
+                    clean_params = {k: v for k, v in body_dict.items() if v is not None}
+                    inv_req = InvokeRequest(
+                        params=clean_params,
+                        bypass_cache=bypass,
+                        force_refresh=refresh,
+                        limit=lim
+                    )
+                    return invoke_api(p_name, a_name, inv_req)
+                return discrete_handler
+
+            router.add_api_route(
+                path=f"/{prov}/{aname}",
+                endpoint=make_handler(prov, aname, ReqModel),
+                methods=["POST"],
+                summary=summary,
+                description=info.get("docstring") or summary,
+                tags=[tag],
+            )
+        except Exception:
+            continue
+
+_register_discrete_routes()
+

@@ -64,6 +64,22 @@ class DataHubClient:
         resp.raise_for_status()
         return resp.json()
 
+    def print_catalog(
+        self,
+        q: Optional[str] = None,
+        category: Optional[str] = None,
+        limit: int = 20,
+    ) -> None:
+        """在终端快速格式化打印已接入的三方金融接口清单"""
+        items = self.search_apis(q=q, category=category, limit=limit)
+        print(f"\n{'='*80}")
+        print(f"{'接口名 (API Name)':<36} | {'分类':<10} | {'说明 (Summary)'}")
+        print(f"{'-'*80}")
+        for it in items:
+            print(f"{it['api_name']:<36} | {it.get('category', ''):<10} | {it.get('summary', '')}")
+        print(f"{'='*80}\n共展示 {len(items)} 个接口。如需查看参数请调用 data_hub.get_api_doc('akshare', '<api_name>')\n")
+
+
     def invoke(
         self,
         provider: str,

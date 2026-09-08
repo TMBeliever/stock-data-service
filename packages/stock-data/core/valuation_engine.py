@@ -168,6 +168,30 @@ class ValuationEngine:
             return cls._compute_a_share_valuation(ticker, clean_symbol, window)
 
     @classmethod
+    def _filter_by_window(cls, df: pl.DataFrame, window: str) -> pl.DataFrame:
+        """根据真实日历时间切片回溯窗口 (1y, 3y, 5y, 10y, all)，精准计算各周期分位数"""
+        if window == "all" or df.is_empty() or "date" not in df.columns:
+            return df
+
+        years_map = {
+            "1y": 1,
+            "3y": 3,
+            "5y": 5,
+            "10y": 10,
+        }
+        years = years_map.get(window, 3)
+
+        last_date_val = df["date"][-1]
+        try:
+            last_d = datetime.date.fromisoformat(str(last_date_val)[:10])
+        except Exception:
+            last_d = datetime.date.today()
+
+        cutoff_date = (last_d - datetime.timedelta(days=int(years * 365.25))).strftime("%Y-%m-%d")
+        filtered = df.with_columns(pl.col("date").cast(pl.Utf8)).filter(pl.col("date") >= cutoff_date)
+        return filtered if len(filtered) >= 5 else df
+
+    @classmethod
     def _compute_nasdaq_valuation(cls, symbol: str, ticker: str, window: str) -> Dict[str, Any]:
         """纳斯达克 100 ETF (513100 / QQQ / NDX) 估值与通道计算"""
         # 1. 抓取 QQQ 官方实时切片与长周期日线
@@ -195,9 +219,8 @@ class ValuationEngine:
         hist_df["pb"] = pb_latest  # 指数 PB 相对平缓
         hist_df["close"] = hist_df["Close"]
 
-        p_df = pl.from_pandas(hist_df[["date", "close", "pe_ttm", "pb"]]).sort("date")
-        max_rows = WINDOW_DAYS.get(window, 750)
-        df_window = p_df.tail(max_rows) if len(p_df) > max_rows else p_df
+        p_df = pl.from_pandas(hist_df[["date", "close", "pe_ttm", "pb"]]).with_columns(pl.col("date").cast(pl.Utf8)).sort("date")
+        df_window = cls._filter_by_window(p_df, window)
 
         return cls._build_multi_metric_response(
             symbol=symbol,
@@ -230,9 +253,8 @@ class ValuationEngine:
         hist_df["pb"] = pb_latest
         hist_df["close"] = hist_df["Close"]
 
-        p_df = pl.from_pandas(hist_df[["date", "close", "pe_ttm", "pb"]]).sort("date")
-        max_rows = WINDOW_DAYS.get(window, 750)
-        df_window = p_df.tail(max_rows) if len(p_df) > max_rows else p_df
+        p_df = pl.from_pandas(hist_df[["date", "close", "pe_ttm", "pb"]]).with_columns(pl.col("date").cast(pl.Utf8)).sort("date")
+        df_window = cls._filter_by_window(p_df, window)
 
         return cls._build_multi_metric_response(
             symbol=symbol,
@@ -252,19 +274,33 @@ class ValuationEngine:
         df_pb = ak.stock_zh_valuation_baidu(symbol=ticker, indicator="市净率", period="全部")
         df_mv = ak.stock_zh_valuation_baidu(symbol=ticker, indicator="总市值", period="全部")
 
-        p_pe = pl.from_pandas(df_pe).rename({"value": "pe_ttm"}) if not df_pe.empty else pl.DataFrame()
-        p_pb = pl.from_pandas(df_pb).rename({"value": "pb"}) if not df_pb.empty else pl.DataFrame()
-        p_mv = pl.from_pandas(df_mv).rename({"value": "market_cap"}) if not df_mv.empty else pl.DataFrame()
+        p_pe = pl.from_pandas(df_pe).rename({"value": "pe_ttm"}).with_columns(pl.col("date").cast(pl.Utf8)) if not df_pe.empty else pl.DataFrame()
+        p_pb = pl.from_pandas(df_pb).rename({"value": "pb"}).with_columns(pl.col("date").cast(pl.Utf8)) if not df_pb.empty else pl.DataFrame()
+        p_mv = pl.from_pandas(df_mv).rename({"value": "market_cap"}).with_columns(pl.col("date").cast(pl.Utf8)) if not df_mv.empty else pl.DataFrame()
 
         df_merged = p_pe
         if not p_pb.is_empty():
-            df_merged = df_merged.join(p_pb, on="date", how="outer_coalesce")
+            df_merged = df_merged.join(p_pb, on="date", how="full", coalesce=True)
         if not p_mv.is_empty():
-            df_merged = df_merged.join(p_mv, on="date", how="outer_coalesce")
+            df_merged = df_merged.join(p_mv, on="date", how="full", coalesce=True)
+
+        # 核心：补齐真实日线收盘价 (新浪源 stock_zh_a_daily，支持超长历史且不受内网代理阻断)
+        try:
+            full_code = f"sh{ticker}" if ticker.startswith("6") else f"sz{ticker}"
+            df_k = ak.stock_zh_a_daily(symbol=full_code)
+            if df_k is not None and not df_k.empty:
+                df_k["date"] = df_k["date"].astype(str).str[:10]
+                p_k = pl.from_pandas(df_k[["date", "close"]]).with_columns(pl.col("date").cast(pl.Utf8))
+                df_merged = df_merged.with_columns(pl.col("date").cast(pl.Utf8)).join(p_k, on="date", how="left")
+                # 针对非交易日或周末采样点，前后向填充收盘价
+                df_merged = df_merged.with_columns(
+                    pl.col("close").fill_null(strategy="backward").fill_null(strategy="forward")
+                )
+        except Exception as e:
+            logger.warning(f"Failed to join daily close price for {ticker}: {e}")
 
         df_merged = df_merged.sort("date")
-        max_rows = WINDOW_DAYS.get(window, 750)
-        df_window = df_merged.tail(max_rows) if len(df_merged) > max_rows else df_merged
+        df_window = cls._filter_by_window(df_merged, window)
 
         return cls._build_multi_metric_response(
             symbol=clean_symbol,
@@ -290,10 +326,9 @@ class ValuationEngine:
             "滚动市盈率": "pe_ttm",
             "静态市盈率": "pe_static",
             "指数": "close"
-        }).sort("date")
+        }).with_columns(pl.col("date").cast(pl.Utf8)).sort("date")
 
-        max_rows = WINDOW_DAYS.get(window, 750)
-        df_window = p_df.tail(max_rows) if len(p_df) > max_rows else p_df
+        df_window = cls._filter_by_window(p_df, window)
 
         return cls._build_multi_metric_response(
             symbol=symbol,
@@ -309,22 +344,36 @@ class ValuationEngine:
         """A 股普通 ETF 估值与通道联动"""
         p_k = pl.DataFrame()
         try:
-            df_k = ak.fund_etf_hist_em(symbol=ticker, period="daily", start_date="20150101", end_date="20300101")
-            if not df_k.empty:
-                p_k = pl.from_pandas(df_k).rename({"日期": "date", "收盘": "close"}).select(["date", "close"])
-        except Exception as e:
-            logger.warning(f"Could not fetch ETF kline for {ticker}: {e}")
+            full_code = f"sh{ticker}" if ticker.startswith("51") or ticker.startswith("58") else f"sz{ticker}"
+            df_k = ak.fund_etf_hist_sina(symbol=full_code)
+            if df_k is not None and not df_k.empty:
+                df_k["date"] = df_k["date"].astype(str).str[:10]
+                p_k = pl.from_pandas(df_k).rename({"close": "close"}).select(["date", "close"])
+        except Exception:
+            try:
+                df_k = ak.fund_etf_hist_em(symbol=ticker, period="daily", start_date="20150101", end_date="20300101")
+                if not df_k.empty:
+                    p_k = pl.from_pandas(df_k).rename({"日期": "date", "收盘": "close"}).select(["date", "close"])
+            except Exception as e:
+                logger.warning(f"Could not fetch ETF kline for {ticker}: {e}")
 
         idx_name = "上证红利" if ticker.startswith("51") else "深证红利"
+        if "300" in symbol or ticker == "510300": idx_name = "沪深300"
+        elif "500" in symbol or ticker == "510500": idx_name = "中证500"
+        elif "50" in symbol or ticker == "510050": idx_name = "上证50"
+
         df_lg = ak.stock_index_pe_lg(symbol=idx_name)
         p_val = pl.from_pandas(df_lg).rename({"日期": "date", "滚动市盈率": "pe_ttm"}).select(["date", "pe_ttm"])
 
-        df_merged = p_val
+        df_merged = p_val.with_columns(pl.col("date").cast(pl.Utf8))
         if not p_k.is_empty():
-            df_merged = p_val.join(p_k, on="date", how="left").sort("date")
+            p_k = p_k.with_columns(pl.col("date").cast(pl.Utf8))
+            df_merged = df_merged.join(p_k, on="date", how="left").with_columns(
+                pl.col("close").fill_null(strategy="backward").fill_null(strategy="forward")
+            )
 
-        max_rows = WINDOW_DAYS.get(window, 750)
-        df_window = df_merged.tail(max_rows) if len(df_merged) > max_rows else df_merged
+        df_merged = df_merged.sort("date")
+        df_window = cls._filter_by_window(df_merged, window)
 
         return cls._build_multi_metric_response(
             symbol=symbol,
@@ -340,23 +389,21 @@ class ValuationEngine:
         """港股全量估值分析"""
         df_pe = ak.stock_hk_valuation_baidu(symbol=ticker, indicator="市盈率(TTM)", period="全部")
         df_pb = ak.stock_hk_valuation_baidu(symbol=ticker, indicator="市净率", period="全部")
-        p_pe = pl.from_pandas(df_pe).rename({"value": "pe_ttm"}) if not df_pe.empty else pl.DataFrame()
-        p_pb = pl.from_pandas(df_pb).rename({"value": "pb"}) if not df_pb.empty else pl.DataFrame()
+        p_pe = pl.from_pandas(df_pe).rename({"value": "pe_ttm"}).with_columns(pl.col("date").cast(pl.Utf8)) if not df_pe.empty else pl.DataFrame()
+        p_pb = pl.from_pandas(df_pb).rename({"value": "pb"}).with_columns(pl.col("date").cast(pl.Utf8)) if not df_pb.empty else pl.DataFrame()
         df_merged = p_pe
         if not p_pb.is_empty():
-            df_merged = df_merged.join(p_pb, on="date", how="outer_coalesce").sort("date")
+            df_merged = df_merged.join(p_pb, on="date", how="full", coalesce=True).sort("date")
 
-        max_rows = WINDOW_DAYS.get(window, 750)
-        df_window = df_merged.tail(max_rows) if len(df_merged) > max_rows else df_merged
+        df_window = cls._filter_by_window(df_merged, window)
         return cls._build_multi_metric_response(symbol=clean_symbol, ticker=ticker, asset_type="STK", country="HK", window=window, df=df_window)
 
     @classmethod
     def _compute_us_valuation(cls, ticker: str, clean_symbol: str, window: str) -> Dict[str, Any]:
         """美股个股全量估值分析"""
         df_pe = ak.stock_us_valuation_baidu(symbol=ticker, indicator="市盈率(TTM)", period="全部")
-        p_pe = pl.from_pandas(df_pe).rename({"value": "pe_ttm"}) if not df_pe.empty else pl.DataFrame()
-        max_rows = WINDOW_DAYS.get(window, 750)
-        df_window = p_pe.tail(max_rows) if len(p_pe) > max_rows else p_pe
+        p_pe = pl.from_pandas(df_pe).rename({"value": "pe_ttm"}).with_columns(pl.col("date").cast(pl.Utf8)) if not df_pe.empty else pl.DataFrame()
+        df_window = cls._filter_by_window(p_pe, window)
         return cls._build_multi_metric_response(symbol=clean_symbol, ticker=ticker, asset_type="STK", country="US", window=window, df=df_window)
 
     @classmethod
@@ -462,6 +509,10 @@ class ValuationEngine:
                     item["pe_p20"] = pe_stats["p20"]
                     item["pe_p50"] = pe_stats["p50"]
                     item["pe_p80"] = pe_stats["p80"]
+                if val > 0:
+                    earning_yield = (1.0 / val) * 100.0
+                    item["erp"] = round(earning_yield - rf_rate, 2)
+                    item["earning_yield"] = round(earning_yield, 2)
 
             # PB 字段与当前滚动分位
             if "pb" in r and r["pb"] is not None and not np.isnan(r["pb"]):
@@ -473,6 +524,12 @@ class ValuationEngine:
                     item["pb_p20"] = pb_stats["p20"]
                     item["pb_p50"] = pb_stats["p50"]
                     item["pb_p80"] = pb_stats["p80"]
+
+            # 股息率字段
+            if "dividend_yield" in r and r["dividend_yield"] is not None and not np.isnan(r["dividend_yield"]):
+                item["dividend_yield"] = round(float(r["dividend_yield"]), 2)
+            elif dividend_yield is not None:
+                item["dividend_yield"] = round(float(dividend_yield), 2)
 
             history.append(item)
 

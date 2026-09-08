@@ -363,17 +363,20 @@ const valuationRiverOption = computed(() => {
     // Price_P20 = Close * (Metric_P20 / Metric)
     // Price_P50 = Close * (Metric_P50 / Metric)
     // Price_P80 = Close * (Metric_P80 / Metric)
-    const closeSeries: (number | null)[] = []
-    const p20Series: (number | null)[] = []
-    const p50Series: (number | null)[] = []
-    const p80Series: (number | null)[] = []
+    // 建立当前 K 线收盘价快速检索索引备用
+    const klineCloseMap = new Map<string, number>()
+    marketStore.currentKline?.forEach((k) => {
+      if (k.date && k.close > 0) {
+        klineCloseMap.set(k.date, k.close)
+      }
+    })
 
     history.forEach((h) => {
       const curMetric = isPE ? h.pe : h.pb
       const curP20 = isPE ? h.pe_p20 : h.pb_p20
       const curP50 = isPE ? h.pe_p50 : h.pb_p50
       const curP80 = isPE ? h.pe_p80 : h.pb_p80
-      const close = h.close || 0
+      const close = h.close || klineCloseMap.get(h.date) || 0
 
       closeSeries.push(close > 0 ? Number(close.toFixed(2)) : null)
 
@@ -388,11 +391,32 @@ const valuationRiverOption = computed(() => {
       }
     })
 
+    const hasPrice = closeSeries.some((c) => c !== null)
+    if (!hasPrice) {
+      // 兜底模式：若无价格序列，直接呈现纯估值倍数通道河流
+      closeSeries.length = 0
+      p20Series.length = 0
+      p50Series.length = 0
+      p80Series.length = 0
+      history.forEach((h) => {
+        const curMetric = isPE ? h.pe : h.pb
+        closeSeries.push(curMetric !== undefined && curMetric !== null ? Number(curMetric.toFixed(2)) : null)
+        p20Series.push(isPE && h.pe_p20 ? Number(h.pe_p20.toFixed(2)) : (!isPE && h.pb_p20 ? Number(h.pb_p20.toFixed(2)) : null))
+        p50Series.push(isPE && h.pe_p50 ? Number(h.pe_p50.toFixed(2)) : (!isPE && h.pb_p50 ? Number(h.pb_p50.toFixed(2)) : null))
+        p80Series.push(isPE && h.pe_p80 ? Number(h.pe_p80.toFixed(2)) : (!isPE && h.pb_p80 ? Number(h.pb_p80.toFixed(2)) : null))
+      })
+    }
+
     return {
       backgroundColor: 'transparent',
       animation: true,
       legend: {
-        data: ['真实收盘价', 'P80 压力线 (高估)', 'P50 中枢线 (合理)', 'P20 支撑线 (击球区)'],
+        data: [
+          hasPrice ? '真实收盘价' : `${metricName} 实际倍数`,
+          'P80 压力线 (高估)',
+          'P50 中枢线 (合理)',
+          'P20 支撑线 (击球区)',
+        ],
         textStyle: { color: 'rgba(255, 255, 255, 0.7)', fontSize: 11 },
         top: 4,
         right: 20,
@@ -800,7 +824,7 @@ const valuationRiverOption = computed(() => {
         <div class="flex items-center space-x-1">
           <span class="text-[11px] text-zinc-400 mr-1.5">分位窗口:</span>
           <button
-            v-for="w in (['1y', '3y', '5y', 'all'] as const)"
+            v-for="w in (['1y', '3y', '5y', '10y', 'all'] as const)"
             :key="w"
             @click="valuationWindow = w"
             :class="valuationWindow === w ? 'bg-blue-600 text-white font-bold' : 'bg-white/[0.05] text-zinc-400 hover:text-zinc-200'"

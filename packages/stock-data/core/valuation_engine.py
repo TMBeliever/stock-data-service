@@ -437,7 +437,7 @@ class ValuationEngine:
             df_merged = df_merged.join(p_mv, on="date", how="full", coalesce=True)
 
         full_code = f"sh{ticker}" if ticker.startswith("6") else f"sz{ticker}"
-        df_k = ak.stock_zh_a_daily(symbol=full_code)
+        df_k = ak.stock_zh_a_daily(symbol=full_code, adjust="qfq")
         if df_k is not None and not df_k.empty:
             df_k["date"] = df_k["date"].astype(str).str[:10]
             p_k = pl.from_pandas(df_k[["date", "close"]]).with_columns(pl.col("date").cast(pl.Utf8))
@@ -607,7 +607,7 @@ class ValuationEngine:
         if not p_pb.is_empty():
             df_merged = df_merged.join(p_pb, on="date", how="full", coalesce=True)
 
-        df_k = ak.stock_hk_daily(symbol=ticker)
+        df_k = ak.stock_hk_daily(symbol=ticker, adjust="qfq")
         if df_k is not None and not df_k.empty:
             df_k["date"] = df_k["date"].astype(str).str[:10]
             p_k = pl.from_pandas(df_k[["date", "close"]]).with_columns(pl.col("date").cast(pl.Utf8))

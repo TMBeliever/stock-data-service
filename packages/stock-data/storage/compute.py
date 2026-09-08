@@ -110,6 +110,11 @@ class ComputeEngine:
         bucket_ts = [self._compute_session_bucket(int(ts), mins) for ts in df["timestamp"]]
         df_bucketed = df.with_columns(pl.Series("bucket_ts", bucket_ts, dtype=pl.Int64))
 
+        # 动态组装可选字段聚合，避免标的缺少 factor / nav / amount 时引发 DuckDB Binder 报错
+        factor_expr = "LAST(factor ORDER BY timestamp ASC) FILTER (WHERE factor IS NOT NULL) AS factor" if "factor" in df.columns else "CAST(NULL AS DOUBLE) AS factor"
+        nav_expr = "LAST(nav ORDER BY timestamp ASC) FILTER (WHERE nav IS NOT NULL) AS nav" if "nav" in df.columns else "CAST(NULL AS DOUBLE) AS nav"
+        amount_expr = "SUM(amount) AS amount" if "amount" in df.columns else "CAST(NULL AS DOUBLE) AS amount"
+
         # DuckDB 内存聚合（每次创建独立连接，避免并发崩溃）
         arrow_table = df_bucketed.to_arrow()
         query = f"""
@@ -120,9 +125,9 @@ class ComputeEngine:
             MIN(low) AS low,
             LAST(close ORDER BY timestamp ASC) AS close,
             SUM(volume) AS volume,
-            SUM(amount) AS amount,
-            LAST(factor ORDER BY timestamp ASC) FILTER (WHERE factor IS NOT NULL) AS factor,
-            LAST(nav ORDER BY timestamp ASC) FILTER (WHERE nav IS NOT NULL) AS nav
+            {amount_expr},
+            {factor_expr},
+            {nav_expr}
         FROM arrow_table
         GROUP BY bucket_ts
         ORDER BY timestamp ASC;
@@ -157,6 +162,11 @@ class ComputeEngine:
         if not trunc_unit:
             return df
 
+        # 动态组装可选字段聚合，避免标的缺少 factor / nav / amount 时引发 DuckDB Binder 报错
+        factor_expr = "LAST(factor ORDER BY timestamp ASC) FILTER (WHERE factor IS NOT NULL) AS factor" if "factor" in df.columns else "CAST(NULL AS DOUBLE) AS factor"
+        nav_expr = "LAST(nav ORDER BY timestamp ASC) FILTER (WHERE nav IS NOT NULL) AS nav" if "nav" in df.columns else "CAST(NULL AS DOUBLE) AS nav"
+        amount_expr = "SUM(amount) AS amount" if "amount" in df.columns else "CAST(NULL AS DOUBLE) AS amount"
+
         arrow_table = df.to_arrow()
         query = f"""
         SELECT
@@ -166,9 +176,9 @@ class ComputeEngine:
             MIN(low) AS low,
             LAST(close ORDER BY timestamp ASC) AS close,
             SUM(volume) AS volume,
-            SUM(amount) AS amount,
-            LAST(factor ORDER BY timestamp ASC) FILTER (WHERE factor IS NOT NULL) AS factor,
-            LAST(nav ORDER BY timestamp ASC) FILTER (WHERE nav IS NOT NULL) AS nav
+            {amount_expr},
+            {factor_expr},
+            {nav_expr}
         FROM arrow_table
         GROUP BY date_trunc('{trunc_unit}', epoch_ms(timestamp))
         ORDER BY timestamp ASC;

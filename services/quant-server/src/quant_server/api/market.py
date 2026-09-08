@@ -341,7 +341,7 @@ def _fetch_live_snapshots(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             chunk = all_tickers[i:i + chunk_size]
             sym_str = ",".join(chunk)
             try:
-                with httpx.Client(timeout=6.0) as client:
+                with httpx.Client(timeout=30.0) as client:
                     resp = client.get(url, params={"symbols": sym_str})
                     if resp.status_code == 200:
                         items = resp.json().get("data", [])
@@ -352,10 +352,22 @@ def _fetch_live_snapshots(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                                 results[sym] = item
                             if ticker:
                                 results[ticker] = item
-            except Exception:
-                pass
-    except Exception:
-        pass
+                    elif resp.status_code == 404 and not base_url.endswith("/stock"):
+                        # 网关自适应重试：如果 base_url 没有 /stock 前缀返回 404，重试 /stock/api/v1/snapshot
+                        resp2 = client.get(f"{base_url}/stock/api/v1/snapshot", params={"symbols": sym_str})
+                        if resp2.status_code == 200:
+                            items = resp2.json().get("data", [])
+                            for item in items:
+                                sym = item.get("symbol")
+                                ticker = item.get("ticker")
+                                if sym:
+                                    results[sym] = item
+                                if ticker:
+                                    results[ticker] = item
+            except Exception as e:
+                print(f"[_fetch_live_snapshots] Warning: snapshot fetch error: {e}")
+    except Exception as e:
+        print(f"[_fetch_live_snapshots] Warning: snapshot batch error: {e}")
 
     # 2. 补齐别名映射 (根据 symbol 与 ticker 映射到 results)
     for orig_sym in symbols:
@@ -538,10 +550,16 @@ def get_symbol_detail(symbol: str):
     # 查找内置或构造
     meta = next((s for s in BUILTIN_SYMBOLS if s["symbol"] in (orig_sym, norm_sym) or s.get("ticker") in (orig_sym, norm_sym)), None)
     if not meta:
+        # 也查本地 SQLite meta.db 扩展标的库
+        for item in _load_meta_db_symbols():
+            if item["symbol"] in (orig_sym, norm_sym) or item.get("ticker") in (orig_sym, norm_sym):
+                meta = dict(item)
+                break
+    if not meta:
         # 尝试拆解
         parts = norm_sym.split(".")
         ticker = parts[0]
-        market = parts[1] if len(parts) > 1 else "SH"
+        market = parts[1] if len(parts) > 1 else ("SZ" if ticker.startswith(("00", "30", "15", "16")) else "SH")
         asset_type = parts[2] if len(parts) > 2 else ("ETF" if ticker.startswith(("51", "15")) else "STK")
         meta = {
             "symbol": norm_sym,
@@ -570,26 +588,33 @@ def get_symbol_detail(symbol: str):
 @router.get("/symbols/{symbol}/kline")
 def get_symbol_kline(
     symbol: str,
-    period: str = Query("1d", description="K线周期 (1d)"),
+    period: str = Query("1d", description="K线周期 (1d, 1w, 1M, 1Y)"),
     adjust: str = Query("qfq", description="复权类型 (qfq, raw, hfq)"),
-    limit: int = Query(180, ge=10, le=800, description="K线根数限制"),
+    limit: Optional[int] = Query(None, description="K线根数限制 (默认不限，返回上市以来的全量K线)"),
+    start: Optional[str] = Query(None, description="开始日期，如 1990-01-01"),
+    end: Optional[str] = Query(None, description="结束日期"),
 ):
     """
-    获取单个标的的日 K 线数据，自动计算 MA5, MA10, MA20 均线与成交量，
-    专供 ECharts Candlestick 烛台图渲染
+    获取单个标的的 K 线数据 (日K/周K/月K/年K)，从上市首日全量拉取，
+    自动计算 MA5, MA10, MA20, MA60 均线与成交量，
+    专供专业金融级 Candlestick 烛台图交互
     """
     orig_sym = symbol.strip().upper()
     norm_sym = normalize_symbol_key(orig_sym)
 
+    fetch_start = start
+    if not fetch_start and period in ["1d", "1w", "1M", "1Y"]:
+        fetch_start = "1990-01-01"
+
     # 优先使用归一化标准代码获取
-    bars = data_client.get_bars(norm_sym, period=period, adjust=adjust)
+    bars = data_client.get_bars(norm_sym, period=period, start=fetch_start, end=end, adjust=adjust)
     if not bars and norm_sym != orig_sym:
-        bars = data_client.get_bars(orig_sym, period=period, adjust=adjust)
-    if not bars:
+        bars = data_client.get_bars(orig_sym, period=period, start=fetch_start, end=end, adjust=adjust)
+    if not bars and adjust != "raw":
         # 降级尝试 raw
-        bars = data_client.get_bars(norm_sym, period=period, adjust="raw")
-    if not bars and norm_sym != orig_sym:
-        bars = data_client.get_bars(orig_sym, period=period, adjust="raw")
+        bars = data_client.get_bars(norm_sym, period=period, start=fetch_start, end=end, adjust="raw")
+    if not bars and adjust != "raw" and norm_sym != orig_sym:
+        bars = data_client.get_bars(orig_sym, period=period, start=fetch_start, end=end, adjust="raw")
 
     if not bars:
         return {
@@ -599,17 +624,21 @@ def get_symbol_kline(
             "data": []
         }
 
-    # 截取最近 limit 根
-    sliced_bars = bars[-limit:] if len(bars) > limit else bars
+    # 若指定 limit 则截取最近 limit 根，否则全量保留上市以来的所有柱子
+    sliced_bars = bars[-limit:] if (limit is not None and len(bars) > limit) else bars
 
-    closes = [b.close for b in sliced_bars]
+    # 基于全量 bars 统一计算移动平均线，防止切片导致前序均线数据缺失失真
+    closes = [b.close for b in bars]
     kline_list = []
+    offset = len(bars) - len(sliced_bars)
 
     for i, b in enumerate(sliced_bars):
-        # 均线计算
-        ma5 = sum(closes[max(0, i - 4):i + 1]) / len(closes[max(0, i - 4):i + 1]) if i >= 4 else None
-        ma10 = sum(closes[max(0, i - 9):i + 1]) / len(closes[max(0, i - 9):i + 1]) if i >= 9 else None
-        ma20 = sum(closes[max(0, i - 19):i + 1]) / len(closes[max(0, i - 19):i + 1]) if i >= 19 else None
+        orig_i = offset + i
+        # 均线计算 MA5, MA10, MA20, MA60
+        ma5 = sum(closes[max(0, orig_i - 4):orig_i + 1]) / len(closes[max(0, orig_i - 4):orig_i + 1]) if orig_i >= 4 else None
+        ma10 = sum(closes[max(0, orig_i - 9):orig_i + 1]) / len(closes[max(0, orig_i - 9):orig_i + 1]) if orig_i >= 9 else None
+        ma20 = sum(closes[max(0, orig_i - 19):orig_i + 1]) / len(closes[max(0, orig_i - 19):orig_i + 1]) if orig_i >= 19 else None
+        ma60 = sum(closes[max(0, orig_i - 59):orig_i + 1]) / len(closes[max(0, orig_i - 59):orig_i + 1]) if orig_i >= 59 else None
 
         dt_str = datetime.datetime.fromtimestamp(b.timestamp / 1000, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
 
@@ -625,6 +654,7 @@ def get_symbol_kline(
             "ma5": round(ma5, 3) if ma5 is not None else None,
             "ma10": round(ma10, 3) if ma10 is not None else None,
             "ma20": round(ma20, 3) if ma20 is not None else None,
+            "ma60": round(ma60, 3) if ma60 is not None else None,
         })
 
     return {

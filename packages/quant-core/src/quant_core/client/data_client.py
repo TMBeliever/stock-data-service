@@ -34,6 +34,10 @@ class DataClient:
         if not base_dir:
             return None
 
+        # 本地 Parquet 文件存储日频 (1d) 基底数据；周K/月K/年K/分钟K交由计算引擎动态合成
+        if period != "1d":
+            return None
+
         code = symbol.split(".")[0]
         matches = glob.glob(f"{base_dir}/**/{code}*.parquet", recursive=True)
         if not matches:
@@ -241,7 +245,7 @@ class DataClient:
 
         url = f"{self.base_url}/api/v1/snapshot/batch"
         try:
-            with httpx.Client(timeout=10.0) as client:
+            with httpx.Client(timeout=30.0) as client:
                 resp = client.post(url, json={"symbols": symbols})
                 if resp.status_code == 200:
                     items = resp.json().get("data", [])
@@ -273,7 +277,7 @@ class DataClient:
         if asset_type:
             params["type"] = asset_type
         try:
-            with httpx.Client(timeout=10.0) as client:
+            with httpx.Client(timeout=30.0) as client:
                 resp = client.get(url, params=params)
                 if resp.status_code == 200:
                     return resp.json().get("symbols", [])
@@ -285,7 +289,7 @@ class DataClient:
         """检查基础数据服务的健康状态与存储水位"""
         url = f"{self.base_url}/api/v1/system/storage"
         try:
-            with httpx.Client(timeout=5.0) as client:
+            with httpx.Client(timeout=30.0) as client:
                 resp = client.get(url)
                 return resp.status_code == 200 and resp.json().get("is_safe", False)
         except Exception:

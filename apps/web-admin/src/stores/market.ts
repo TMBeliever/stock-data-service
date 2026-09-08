@@ -38,19 +38,21 @@ export interface KlineItem {
   ma5?: number | null
   ma10?: number | null
   ma20?: number | null
+  ma60?: number | null
 }
 
 export interface MetricPercentileInfo {
   current: number
   percentile: number // 0.0 ~ 1.0
   min_max_ratio?: number
-  min?: number
-  max?: number
-  median?: number
-  p20?: number
-  p50?: number
-  p80?: number
+  min?: number | null
+  max?: number | null
+  median?: number | null
+  p20?: number | null
+  p50?: number | null
+  p80?: number | null
   status?: string // 'extremely_undervalued' | 'undervalued' | 'fair' | 'overvalued' | 'extreme_bubble'
+  is_loss?: boolean
 }
 
 export interface EquityRiskPremiumInfo {
@@ -71,6 +73,7 @@ export interface ValuationLatest {
   pe_ttm?: MetricPercentileInfo | null
   pb?: MetricPercentileInfo | null
   ps?: MetricPercentileInfo | null
+  price_channel?: MetricPercentileInfo | null
   dividend_yield_pct?: number | null
   equity_risk_premium?: EquityRiskPremiumInfo | null
   pb_roe_quality?: PbRoeQualityInfo | null
@@ -90,6 +93,9 @@ export interface ValuationHistoryItem {
   pb_p20?: number
   pb_p50?: number
   pb_p80?: number
+  price_p20?: number
+  price_p50?: number
+  price_p80?: number
   dividend_yield?: number
   erp?: number
 }
@@ -99,6 +105,7 @@ export interface ValuationAnalysisData {
   symbol: string
   ticker: string
   asset_type?: string
+  asset_subtype?: string
   country?: string
   window: string
   sample_count: number
@@ -337,16 +344,214 @@ export const useMarketStore = defineStore('market', () => {
     return null
   }
 
-  // 拉取标的 K 线数据
-  async function fetchSymbolKline(symbol: string, limit: number = 200, period: string = '1d', adjust: string = 'qfq'): Promise<KlineItem[]> {
+function computeMA(bars: KlineItem[]) {
+  const closes = bars.map((b) => b.close)
+  for (let i = 0; i < bars.length; i++) {
+    if (i >= 4) {
+      const s = closes.slice(i - 4, i + 1).reduce((acc, v) => acc + v, 0)
+      bars[i].ma5 = Number((s / 5).toFixed(3))
+    } else {
+      bars[i].ma5 = null
+    }
+    if (i >= 9) {
+      const s = closes.slice(i - 9, i + 1).reduce((acc, v) => acc + v, 0)
+      bars[i].ma10 = Number((s / 10).toFixed(3))
+    } else {
+      bars[i].ma10 = null
+    }
+    if (i >= 19) {
+      const s = closes.slice(i - 19, i + 1).reduce((acc, v) => acc + v, 0)
+      bars[i].ma20 = Number((s / 20).toFixed(3))
+    } else {
+      bars[i].ma20 = null
+    }
+    if (i >= 59) {
+      const s = closes.slice(i - 59, i + 1).reduce((acc, v) => acc + v, 0)
+      bars[i].ma60 = Number((s / 60).toFixed(3))
+    } else {
+      bars[i].ma60 = null
+    }
+  }
+}
+
+// 动态将全量日K线按指定更高周期 (周K 1w, 月K 1M, 年K 1Y) 极速聚合合成
+function aggregateBars(dailyBars: KlineItem[], period: string): KlineItem[] {
+  if (!dailyBars || dailyBars.length === 0 || period === '1d') {
+    return [...dailyBars]
+  }
+
+  const groups = new Map<string, KlineItem[]>()
+
+  for (const bar of dailyBars) {
+    let key = ''
+    if (period === '1w') {
+      const d = new Date(bar.date + 'T00:00:00Z')
+      const day = d.getUTCDay()
+      const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1)
+      const mon = new Date(d)
+      mon.setUTCDate(diff)
+      key = mon.toISOString().slice(0, 10)
+    } else if (period === '1M') {
+      key = bar.date.slice(0, 7)
+    } else if (period === '1Y') {
+      key = bar.date.slice(0, 4)
+    } else {
+      key = bar.date
+    }
+
+    let arr = groups.get(key)
+    if (!arr) {
+      arr = []
+      groups.set(key, arr)
+    }
+    arr.push(bar)
+  }
+
+  const result: KlineItem[] = []
+
+  for (const [, list] of groups) {
+    if (list.length === 0) continue
+    const first = list[0]
+    const last = list[list.length - 1]
+    const open = first.open
+    const close = last.close
+    let high = -Infinity
+    let low = Infinity
+    let volume = 0
+    let amount = 0
+
+    for (const b of list) {
+      if (b.high > high) high = b.high
+      if (b.low < low) low = b.low
+      volume += b.volume || 0
+      if (b.amount) amount += b.amount
+    }
+
+    result.push({
+      timestamp: last.timestamp,
+      date: last.date,
+      open,
+      high,
+      low,
+      close,
+      volume,
+      amount: amount > 0 ? amount : null,
+      ma5: null,
+      ma10: null,
+      ma20: null,
+      ma60: null,
+    })
+  }
+
+  result.sort((a, b) => a.timestamp - b.timestamp)
+  computeMA(result)
+  return result
+}
+
+// 原始全生命周期日 K 历史缓存池 (按 symbol + adjust 缓存，支持 0ms 无缝秒切周期)
+const dailyKlineCache = ref<Record<string, KlineItem[]>>({})
+const activePeriod = ref<'1d' | '1w' | '1M' | '1Y'>('1d')
+
+  // 毫秒级即时切换 K 线周期 (1d / 1w / 1M / 1Y)
+  function switchKlinePeriod(symbol: string, period: '1d' | '1w' | '1M' | '1Y', adjust: string = 'qfq'): KlineItem[] {
+    activePeriod.value = period
+    const cacheKey = `${symbol.trim().toUpperCase()}_${adjust}`
+    const cached = dailyKlineCache.value[cacheKey]
+    if (cached && cached.length > 0) {
+      currentKline.value = aggregateBars(cached, period)
+      return currentKline.value
+    }
+    return []
+  }
+
+  // 拉取标的全生命周期从上市到最新的全量 K 线柱子
+  async function fetchSymbolKline(
+    symbol: string,
+    period: '1d' | '1w' | '1M' | '1Y' = '1d',
+    adjust: string = 'qfq'
+  ): Promise<KlineItem[]> {
     isKlineLoading.value = true
+    activePeriod.value = period
+    const cleanSym = symbol.trim().toUpperCase()
+    const cacheKey = `${cleanSym}_${adjust}`
+
+    // 若本地已有当前复权类型的全生命周期日 K，直接秒切重采样
+    if (dailyKlineCache.value[cacheKey] && dailyKlineCache.value[cacheKey].length > 0) {
+      currentKline.value = aggregateBars(dailyKlineCache.value[cacheKey], period)
+      isKlineLoading.value = false
+      return currentKline.value
+    }
+
     try {
-      const resp = await fetch(`/api/v1/market/symbols/${encodeURIComponent(symbol)}/kline?limit=${limit}&period=${period}&adjust=${adjust}`)
-      if (resp.ok) {
-        const json = await resp.json()
-        currentKline.value = json.data || []
-        return currentKline.value
+      let rawData: any[] = []
+
+      // 1. 优先直连数据中台 (/stock/api/v1/kline) 拉取全生命周期
+      try {
+        let stockResp = await fetch(
+          `/stock/api/v1/kline?symbol=${encodeURIComponent(cleanSym)}&period=1d&adjust=${adjust}&start=1990-01-01`
+        )
+        if (!stockResp.ok && stockResp.status === 400) {
+          stockResp = await fetch(
+            `/stock/api/v1/kline?symbol=${encodeURIComponent(cleanSym)}&period=1d&adjust=${adjust}&start=1998-01-01`
+          )
+        }
+        if (stockResp.ok) {
+          const json = await stockResp.json()
+          if (json && Array.isArray(json.data) && json.data.length > 0) {
+            rawData = json.data
+          }
+        }
+      } catch (err) {
+        console.warn('[MarketStore] direct stock kline fetch failed:', err)
       }
+
+      // 2. 兜底尝试 quant-server 路由
+      if (rawData.length === 0) {
+        try {
+          const quantResp = await fetch(
+            `/api/v1/market/symbols/${encodeURIComponent(cleanSym)}/kline?period=1d&adjust=${adjust}&start=1998-01-01`
+          )
+          if (quantResp.ok) {
+            const json = await quantResp.json()
+            if (json && Array.isArray(json.data)) {
+              rawData = json.data
+            }
+          }
+        } catch (err) {
+          console.warn('[MarketStore] quant-server kline fetch failed:', err)
+        }
+      }
+
+      // 3. 归一化并计算均线
+      const normalized: KlineItem[] = rawData.map((item) => {
+        const ts = Number(item.timestamp)
+        const d = new Date(ts)
+        const dateStr = item.date || `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+        return {
+          timestamp: ts,
+          date: dateStr,
+          open: Number(item.open),
+          high: Number(item.high),
+          low: Number(item.low),
+          close: Number(item.close),
+          volume: Number(item.volume || 0),
+          amount: item.amount !== null && item.amount !== undefined ? Number(item.amount) : null,
+          ma5: null,
+          ma10: null,
+          ma20: null,
+          ma60: null,
+        }
+      })
+
+      normalized.sort((a, b) => a.timestamp - b.timestamp)
+      computeMA(normalized)
+
+      // 存入全生命周期缓存
+      dailyKlineCache.value[cacheKey] = normalized
+
+      // 按当前选择的周期聚合
+      currentKline.value = aggregateBars(normalized, period)
+      return currentKline.value
     } catch (err) {
       console.error('[MarketStore] fetchSymbolKline error:', err)
     } finally {
@@ -474,6 +679,8 @@ export const useMarketStore = defineStore('market', () => {
     isDetailLoading,
     currentKline,
     isKlineLoading,
+    activePeriod,
+    switchKlinePeriod,
     currentValuation,
     isValuationLoading,
     searchSymbols,

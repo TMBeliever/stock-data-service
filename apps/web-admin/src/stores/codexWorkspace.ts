@@ -826,11 +826,11 @@ export const useCodexWorkspaceStore = defineStore('codexWorkspace', () => {
       // 携带当前前端工作台的投研上下文（当前策略名、当前标的、自选组合概览）
       const stratStore = useStrategyStore()
       let pageCtx = ''
-      if (stratStore.name || stratStore.symbol || (stratStore.userWatchlists && stratStore.userWatchlists.length > 0)) {
+      if (stratStore.activeStrategyName || stratStore.symbol || (stratStore.userWatchlists && stratStore.userWatchlists.length > 0)) {
         const watchlistsDesc = (stratStore.userWatchlists || [])
           .map((w: any) => `${w.name}: [${(w.symbols || []).join(', ')}]`)
           .join('; ')
-        pageCtx = `【当前前端工作台上下文】激活策略: ${stratStore.name || '未命名'} | 当前选中标的: ${stratStore.symbol || '510300'} | 用户自选组合: ${watchlistsDesc || '无'}`
+        pageCtx = `【当前前端工作台上下文】激活策略: ${stratStore.activeStrategyName || '未命名'} | 当前选中标的: ${stratStore.symbol || '510300'} | 用户自选组合: ${watchlistsDesc || '无'}`
       }
 
       const isQuant = assistantMode.value === 'quant'

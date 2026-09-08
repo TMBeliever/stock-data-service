@@ -124,6 +124,12 @@ function runBacktestWith(item: SymbolItem, e: MouseEvent) {
   showToast(`⚡ 已唤起回测工作舱测试 ${item.name} (${item.symbol})`)
 }
 
+// 切换自选添加下拉框
+function toggleAddDropdown(symbol: string, e: MouseEvent) {
+  e.stopPropagation()
+  addingSymbol.value = addingSymbol.value === symbol ? null : symbol
+}
+
 // 快捷加入指定组合
 async function addWatchlist(item: SymbolItem, watchlistId: number, e: MouseEvent) {
   e.stopPropagation()

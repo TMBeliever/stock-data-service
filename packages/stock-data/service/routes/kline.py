@@ -59,10 +59,12 @@ async def get_kline(
     if not end:
         end = today_str
     if not start:
-        # 日K默认前1年，分钟K默认前5天
-        days = 365 if period == KlinePeriod.D1 else 5
-        start_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
-        start = start_dt.strftime("%Y-%m-%d")
+        # 日K/周K/月K/年K 默认从 1990-01-01 全生命周期拉取；分钟K默认前5天
+        if period in [KlinePeriod.D1, KlinePeriod.W1, KlinePeriod.MON1, KlinePeriod.Y1]:
+            start = "1990-01-01"
+        else:
+            start_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=5)
+            start = start_dt.strftime("%Y-%m-%d")
 
     # 边界防呆与资源保护校验
     if start > end:
@@ -81,10 +83,10 @@ async def get_kline(
                 status_code=400,
                 detail=f"Minute-level data request range ({span_days} days) exceeds maximum safe limit of 90 days. Please narrow the requested date range."
             )
-        if not is_minute and span_days > 365 * 30:
+        if not is_minute and span_days > 365 * 60:
             raise HTTPException(
                 status_code=400,
-                detail=f"Historical daily/weekly/monthly/yearly data request range ({span_days} days) exceeds maximum safe limit of 30 years."
+                detail=f"Historical daily/weekly/monthly/yearly data request range ({span_days} days) exceeds maximum safe limit of 60 years."
             )
     except ValueError as e:
         if "time data" in str(e):
@@ -108,27 +110,26 @@ async def get_kline(
     if df is None or df.is_empty():
         raise HTTPException(status_code=404, detail=f"No data found for {clean_symbol} in range [{start}, {end}]")
 
-    # 4. 若请求衍生周期动态聚合合成
-    if period in [KlinePeriod.M5, KlinePeriod.M15, KlinePeriod.M30, KlinePeriod.M60]:
-        df = compute_engine.resample_minutes(df, period)
-    elif period in [KlinePeriod.W1, KlinePeriod.MON1, KlinePeriod.Y1]:
-        df = compute_engine.resample_higher_period(df, period)
-
-    # 5. 动态复权处理
+    # 4. 动态复权处理 (先复权再进行周期重采样，确保跨除权日的高低价与开收盘严格准确)
     if adjust != AdjustType.RAW:
         try:
             df = compute_engine.apply_adjustment(df, adjust)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
+    # 5. 若请求衍生周期动态聚合合成
+    if period in [KlinePeriod.M5, KlinePeriod.M15, KlinePeriod.M30, KlinePeriod.M60]:
+        df = compute_engine.resample_minutes(df, period)
+    elif period in [KlinePeriod.W1, KlinePeriod.MON1, KlinePeriod.Y1]:
+        df = compute_engine.resample_higher_period(df, period)
+
     # 6. 若为 ETF 且有 NAV 数据，动态追加折溢价率；历史 K 线 adapter 目前不写入 NAV，跳过
     if t == AssetType.ETF and df is not None and "nav" in df.columns and df["nav"].drop_nulls().len() > 0:
         df = compute_engine.calculate_etf_premium(df)
 
-    # 7. 若请求常用量化技术指标，执行向量化计算追加
-    if indicators:
-        ind_list = [x.strip() for x in indicators.split(",") if x.strip()]
-        df = compute_engine.compute_indicators(df, ind_list)
+    # 7. 常用量化技术指标追加 (默认自动补全 MA5, MA10, MA20, MA60)
+    ind_list = [x.strip() for x in indicators.split(",") if x.strip()] if indicators else ["MA5", "MA10", "MA20", "MA60"]
+    df = compute_engine.compute_indicators(df, ind_list)
 
     # 8. 数量上限截断处理
     if limit is not None and len(df) > limit:

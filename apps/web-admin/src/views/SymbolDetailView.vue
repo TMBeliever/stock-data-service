@@ -14,12 +14,14 @@ const authStore = useAuthStore()
 
 const currentSymbol = computed(() => (route.params.symbol as string) || '600519.SH.STK')
 const adjustType = ref<'qfq' | 'raw'>('qfq')
-const klineLimit = ref<number>(250)
+const klinePeriod = ref<'1d' | '1w' | '1M' | '1Y'>('1d')
+const klineChartRef = ref<any>(null)
+const hoveredIndex = ref<number | null>(null)
 const toastMsg = ref('')
 
 // 估值分析窗口与河流图 Tab 控制
 const valuationWindow = ref<'1y' | '3y' | '5y' | '10y' | 'all'>('3y')
-const valuationChartTab = ref<'pe' | 'pb' | 'erp' | 'dividend'>('pe')
+const valuationChartTab = ref<'pe' | 'pb' | 'price' | 'erp' | 'dividend'>('pe')
 
 // 自选组合下拉浮层
 const showWatchlistPopover = ref(false)
@@ -38,13 +40,45 @@ async function loadData() {
   if (!sym) return
   await Promise.all([
     marketStore.fetchSymbolDetail(sym),
-    marketStore.fetchSymbolKline(sym, klineLimit.value, '1d', adjustType.value),
+    marketStore.fetchSymbolKline(sym, klinePeriod.value, adjustType.value),
     marketStore.fetchSymbolValuation(sym, valuationWindow.value),
   ])
 }
 
+// 切换 K 线周期 (日K/周K/月K/年K)，秒级动态重采样
+function handlePeriodChange(p: '1d' | '1w' | '1M' | '1Y') {
+  klinePeriod.value = p
+  const res = marketStore.switchKlinePeriod(currentSymbol.value, p, adjustType.value)
+  if (!res || res.length === 0) {
+    marketStore.fetchSymbolKline(currentSymbol.value, p, adjustType.value)
+  }
+}
+
+// 快捷时间窗口缩放
+function handleQuickZoom(range: 'all' | '5y' | '1y' | 'recent') {
+  const chart = klineChartRef.value?.getChart()
+  const list = marketStore.currentKline
+  if (!chart || !list || list.length === 0) return
+  let visibleCount = list.length
+  if (range === 'all') {
+    visibleCount = list.length
+  } else if (range === '5y') {
+    visibleCount = klinePeriod.value === '1d' ? 250 * 5 : (klinePeriod.value === '1w' ? 52 * 5 : 60)
+  } else if (range === '1y') {
+    visibleCount = klinePeriod.value === '1d' ? 250 : (klinePeriod.value === '1w' ? 52 : 12)
+  } else if (range === 'recent') {
+    visibleCount = klinePeriod.value === '1d' ? 90 : (klinePeriod.value === '1w' ? 26 : 6)
+  }
+  const startPct = Math.max(0, 100 - Math.round((Math.min(visibleCount, list.length) / list.length) * 100))
+  chart.dispatchAction({
+    type: 'dataZoom',
+    start: startPct,
+    end: 100,
+  })
+}
+
 watch(
-  [() => route.params.symbol, adjustType, klineLimit],
+  [() => route.params.symbol, adjustType],
   () => {
     loadData()
   },
@@ -137,7 +171,89 @@ function getValuationBadge(pct?: number, status?: string) {
   return { label: '估值合理', color: 'text-blue-300 bg-blue-500/15 border-blue-500/30' }
 }
 
-// 1. ECharts 专业 K 线图 (Candlestick + MA5/10/20 + 成交量 Volume + Tooltip 当期估值联动)
+const periodLabelMap: Record<string, string> = {
+  '1d': '日K',
+  '1w': '周K',
+  '1M': '月K',
+  '1Y': '年K',
+}
+
+// 头部实时 Crosshair HUD 统计数据联动 (同花顺/雪球标准)
+const currentDisplayBar = computed(() => {
+  const list = marketStore.currentKline
+  if (!list || list.length === 0) return null
+  if (hoveredIndex.value !== null && hoveredIndex.value >= 0 && hoveredIndex.value < list.length) {
+    return list[hoveredIndex.value]
+  }
+  return list[list.length - 1]
+})
+
+const prevDisplayBar = computed(() => {
+  const list = marketStore.currentKline
+  if (!list || list.length === 0) return null
+  const idx = hoveredIndex.value !== null ? hoveredIndex.value : list.length - 1
+  if (idx > 0 && idx < list.length) {
+    return list[idx - 1]
+  }
+  return null
+})
+
+const displayBarChange = computed(() => {
+  if (!currentDisplayBar.value) return 0
+  if (prevDisplayBar.value) {
+    return currentDisplayBar.value.close - prevDisplayBar.value.close
+  }
+  return currentDisplayBar.value.close - currentDisplayBar.value.open
+})
+
+const displayBarChangePct = computed(() => {
+  if (!currentDisplayBar.value) return 0
+  const base = prevDisplayBar.value ? prevDisplayBar.value.close : currentDisplayBar.value.open
+  if (!base || base === 0) return 0
+  return ((currentDisplayBar.value.close - base) / base) * 100
+})
+
+const displayBarAmplitude = computed(() => {
+  if (!currentDisplayBar.value) return 0
+  const base = prevDisplayBar.value ? prevDisplayBar.value.close : currentDisplayBar.value.open
+  if (!base || base === 0) return 0
+  return ((currentDisplayBar.value.high - currentDisplayBar.value.low) / base) * 100
+})
+
+function formatPrice(val?: number | null): string {
+  if (val === undefined || val === null || isNaN(val)) return '--'
+  return val.toFixed(2)
+}
+
+function formatVolume(vol?: number | null): string {
+  if (vol === undefined || vol === null || isNaN(vol)) return '--'
+  if (vol >= 100000000) return `${(vol / 100000000).toFixed(2)}亿`
+  if (vol >= 10000) return `${(vol / 10000).toFixed(2)}万`
+  return `${vol.toFixed(0)}`
+}
+
+function formatAmount(amt?: number | null): string {
+  if (amt === undefined || amt === null || isNaN(amt)) return '--'
+  if (amt >= 100000000) return `${(amt / 100000000).toFixed(2)}亿`
+  if (amt >= 10000) return `${(amt / 10000).toFixed(2)}万`
+  return `${amt.toFixed(2)}`
+}
+
+function getPriceColorClass(price?: number | null, base?: number | null): string {
+  if (price === undefined || price === null || base === undefined || base === null) return 'text-white'
+  if (price > base) return 'text-red-400'
+  if (price < base) return 'text-emerald-400'
+  return 'text-white'
+}
+
+function getChangeColorClass(val?: number | null): string {
+  if (val === undefined || val === null) return 'text-zinc-400'
+  if (val > 0) return 'text-red-400'
+  if (val < 0) return 'text-emerald-400'
+  return 'text-zinc-300'
+}
+
+// 1. ECharts 专业 K 线图 (Candlestick + MA5/10/20/60 + VOL5/10 + 全生命周期 DataZoom)
 const klineOption = computed(() => {
   const list = marketStore.currentKline
   if (!list || list.length === 0) {
@@ -150,12 +266,26 @@ const klineOption = computed(() => {
   const ma5 = list.map((item) => item.ma5)
   const ma10 = list.map((item) => item.ma10)
   const ma20 = list.map((item) => item.ma20)
+  const ma60 = list.map((item) => item.ma60)
+
+  // 成交量均线 (VOL5 / VOL10)
+  const volCloses = list.map((item) => item.volume || 0)
+  const volMa5 = volCloses.map((_, i) => (i >= 4 ? Number((volCloses.slice(i - 4, i + 1).reduce((a, b) => a + b, 0) / 5).toFixed(0)) : null))
+  const volMa10 = volCloses.map((_, i) => (i >= 9 ? Number((volCloses.slice(i - 9, i + 1).reduce((a, b) => a + b, 0) / 10).toFixed(0)) : null))
+
+  const periodName = periodLabelMap[klinePeriod.value] || '日K'
+  const klineSeriesName = `${periodName}线`
+
+  const total = list.length
+  // 默认初始视口平铺显示最近 ~90-100 根，保持烛台粗细极高可读性；用户可滚轮或拖拽 Slider 纵览上市首日全历史
+  const defaultVisibleBars = Math.min(90, total)
+  const startPct = total > 0 ? Math.max(0, 100 - Math.round((defaultVisibleBars / total) * 100)) : 0
 
   return {
     backgroundColor: 'transparent',
-    animation: true,
+    animation: false,
     legend: {
-      data: ['日K线', 'MA5', 'MA10', 'MA20'],
+      data: [klineSeriesName, 'MA5', 'MA10', 'MA20', 'MA60', 'VOL5', 'VOL10'],
       textStyle: { color: 'rgba(255, 255, 255, 0.65)', fontSize: 11 },
       top: 0,
       right: 20,
@@ -169,11 +299,15 @@ const klineOption = computed(() => {
       textStyle: { color: '#ffffff', fontSize: 12 },
       formatter: (params: any) => {
         if (!params || !params.length) return ''
+        const dataIdx = params[0].dataIndex
+        if (dataIdx !== undefined && dataIdx >= 0 && dataIdx < list.length) {
+          hoveredIndex.value = dataIdx
+        }
         const date = params[0].name
-        const kline = params.find((p: any) => p.seriesName === '日K线')
+        const kline = params.find((p: any) => p.seriesName === klineSeriesName)
         let tip = `<div class="font-bold text-zinc-300 font-mono mb-1.5 pb-1 border-b border-white/10 flex items-center justify-between">
           <span>${date}</span>
-          <span class="text-[10px] text-zinc-500 font-normal">日K线行情</span>
+          <span class="text-[10px] text-zinc-500 font-normal">${periodName}行情 (第 ${dataIdx + 1}/${total} 柱)</span>
         </div>`
 
         if (kline && kline.data) {
@@ -275,23 +409,25 @@ const klineOption = computed(() => {
       {
         type: 'inside',
         xAxisIndex: [0, 1],
-        start: Math.max(0, 100 - Math.round((90 / list.length) * 100)),
+        start: startPct,
         end: 100,
       },
       {
         show: true,
         xAxisIndex: [0, 1],
         type: 'slider',
-        bottom: 5,
-        height: 14,
+        bottom: 4,
+        height: 18,
+        start: startPct,
+        end: 100,
         borderColor: 'rgba(255,255,255,0.06)',
         fillerColor: 'rgba(239, 68, 68, 0.15)',
-        textStyle: { color: 'rgba(255,255,255,0.35)', fontSize: 9 },
+        textStyle: { color: 'rgba(255,255,255,0.4)', fontSize: 10, fontFamily: 'monospace' },
       },
     ],
     series: [
       {
-        name: '日K线',
+        name: klineSeriesName,
         type: 'candlestick',
         data: candlestickData,
         xAxisIndex: 0,
@@ -328,6 +464,14 @@ const klineOption = computed(() => {
         lineStyle: { width: 1.2, color: '#a855f7' },
       },
       {
+        name: 'MA60',
+        type: 'line',
+        data: ma60,
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { width: 1.2, color: '#06b6d4' },
+      },
+      {
         name: '成交量',
         type: 'bar',
         xAxisIndex: 1,
@@ -338,6 +482,26 @@ const klineOption = computed(() => {
             color: v[2] === 1 ? 'rgba(239, 68, 68, 0.6)' : 'rgba(16, 185, 129, 0.6)',
           },
         })),
+      },
+      {
+        name: 'VOL5',
+        type: 'line',
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        data: volMa5,
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { width: 1, color: '#f59e0b' },
+      },
+      {
+        name: 'VOL10',
+        type: 'line',
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        data: volMa10,
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { width: 1, color: '#3b82f6' },
       },
     ],
   }
@@ -359,6 +523,11 @@ const valuationRiverOption = computed(() => {
   if (tab === 'pe' || tab === 'pb' || tab === 'price' || hasPriceChannel) {
     const isPE = tab === 'pe' || tab === 'price' || hasPriceChannel
     const metricName = hasPriceChannel ? '价格通道' : (isPE ? 'PE(TTM)' : 'PB')
+
+    const closeSeries: (number | null)[] = []
+    const p20Series: (number | null)[] = []
+    const p50Series: (number | null)[] = []
+    const p80Series: (number | null)[] = []
 
     // 根据当期指标与收盘价推算理论价格通道：
     // 若为黄金/债券大宗资产 (hasPriceChannel)，直接采用绝对价格通道 P20/P50/P80
@@ -708,25 +877,25 @@ const valuationRiverOption = computed(() => {
         <!-- 标的名称、代码与市场标签 -->
         <div class="flex items-center space-x-3.5">
           <div class="w-12 h-12 rounded-2xl bg-black/50 border border-white/[0.1] flex items-center justify-center text-xl font-bold">
-            <span v-if="marketStore.currentDetail?.asset_type === 'ETF'" class="text-blue-400">基</span>
-            <span v-else-if="marketStore.currentDetail?.market === 'US'" class="text-amber-400">美</span>
-            <span v-else-if="marketStore.currentDetail?.market === 'HK'" class="text-purple-400">港</span>
+            <span v-if="(marketStore.currentDetail?.asset_type || (currentSymbol.includes('.ETF') ? 'ETF' : 'STK')) === 'ETF'" class="text-blue-400">基</span>
+            <span v-else-if="(marketStore.currentDetail?.market || (currentSymbol.includes('.US') ? 'US' : '')) === 'US'" class="text-amber-400">美</span>
+            <span v-else-if="(marketStore.currentDetail?.market || (currentSymbol.includes('.HK') ? 'HK' : '')) === 'HK'" class="text-purple-400">港</span>
             <span v-else class="text-red-400">A</span>
           </div>
 
           <div>
             <div class="flex items-center space-x-2">
               <h1 class="text-2xl font-bold text-white tracking-tight">
-                {{ marketStore.currentDetail?.name || currentSymbol }}
+                {{ marketStore.currentDetail?.name || marketStore.getSymbolName(currentSymbol) }}
               </h1>
               <span class="px-2 py-0.5 rounded-md text-xs font-mono font-bold bg-white/[0.06] text-zinc-300 border border-white/[0.08]">
                 {{ marketStore.currentDetail?.ticker || currentSymbol.split('.')[0] }}
               </span>
               <span class="px-2 py-0.5 rounded-md text-[11px] font-mono bg-red-500/15 text-red-300 border border-red-500/20 font-bold">
-                {{ marketStore.currentDetail?.market || 'SH' }}
+                {{ marketStore.currentDetail?.market || (currentSymbol.includes('.SZ') ? 'SZ' : currentSymbol.includes('.BJ') ? 'BJ' : currentSymbol.includes('.HK') ? 'HK' : currentSymbol.includes('.US') ? 'US' : 'SH') }}
               </span>
               <span class="px-2 py-0.5 rounded-md text-[11px] font-mono bg-blue-500/15 text-blue-300 border border-blue-500/20">
-                {{ marketStore.currentDetail?.asset_type || 'STK' }}
+                {{ marketStore.currentDetail?.asset_type || (currentSymbol.includes('.ETF') ? 'ETF' : 'STK') }}
               </span>
             </div>
             <div class="text-xs text-zinc-400 font-mono mt-1 flex items-center space-x-2">
@@ -921,7 +1090,7 @@ const valuationRiverOption = computed(() => {
           <div class="flex items-baseline space-x-2 font-mono">
             <template v-if="marketStore.currentValuation?.latest?.price_channel">
               <span class="text-2xl font-black text-blue-300">
-                {{ (marketStore.currentValuation.latest.price_channel.min_max_ratio * 100).toFixed(1) }}%
+                {{ (((marketStore.currentValuation.latest.price_channel.min_max_ratio ?? 0)) * 100).toFixed(1) }}%
               </span>
               <span class="text-xs text-zinc-400">
                 (极值位置)
@@ -1096,68 +1265,135 @@ const valuationRiverOption = computed(() => {
       </div>
     </div>
 
-    <!-- 3. K 线图控制工具条 -->
-    <div class="flex items-center justify-between px-2 pt-2">
-      <div class="flex items-center space-x-1.5">
-        <span class="text-xs font-bold text-white flex items-center space-x-1 mr-2">
-          <span>📈</span>
-          <span>历史日 K 走势 (Candlestick)</span>
-        </span>
+    <!-- 3. K 线图专业控制工具条 (同花顺 / 雪球标准) -->
+    <div class="flex flex-wrap items-center justify-between px-2 pt-2 gap-y-2">
+      <div class="flex items-center space-x-2.5">
+        <!-- 周期切换器：日K / 周K / 月K / 年K -->
+        <div class="flex items-center p-0.5 bg-white/[0.04] rounded-lg border border-white/[0.08]">
+          <button
+            v-for="period in (['1d', '1w', '1M', '1Y'] as const)"
+            :key="period"
+            @click="handlePeriodChange(period)"
+            :class="klinePeriod === period ? 'bg-red-500 text-white font-bold shadow-xs' : 'text-zinc-400 hover:text-zinc-200'"
+            class="px-3 py-1 rounded-md text-xs transition-all cursor-pointer"
+          >
+            {{ periodLabelMap[period] }}
+          </button>
+        </div>
 
-        <button
-          @click="adjustType = 'qfq'"
-          :class="adjustType === 'qfq' ? 'bg-red-500/20 text-red-400 border-red-500/30 font-bold' : 'text-zinc-400 hover:text-zinc-200 border-white/[0.06]'"
-          class="px-2.5 py-1 rounded-lg border text-[11px] transition-all cursor-pointer"
-        >
-          前复权 (QFQ)
-        </button>
+        <!-- 复权切换器：前复权 / 不复权 -->
+        <div class="flex items-center p-0.5 bg-white/[0.04] rounded-lg border border-white/[0.08]">
+          <button
+            @click="adjustType = 'qfq'"
+            :class="adjustType === 'qfq' ? 'bg-white/10 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'"
+            class="px-2.5 py-1 rounded-md text-xs transition-all cursor-pointer"
+          >
+            前复权
+          </button>
+          <button
+            @click="adjustType = 'raw'"
+            :class="adjustType === 'raw' ? 'bg-white/10 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'"
+            class="px-2.5 py-1 rounded-md text-xs transition-all cursor-pointer"
+          >
+            不复权
+          </button>
+        </div>
 
-        <button
-          @click="adjustType = 'raw'"
-          :class="adjustType === 'raw' ? 'bg-red-500/20 text-red-400 border-red-500/30 font-bold' : 'text-zinc-400 hover:text-zinc-200 border-white/[0.06]'"
-          class="px-2.5 py-1 rounded-lg border text-[11px] transition-all cursor-pointer"
-        >
-          不复权 (Raw)
-        </button>
+        <!-- 全历史加载柱数提示 -->
+        <div class="hidden sm:flex items-center space-x-1.5 text-[11px] font-mono text-zinc-400 bg-white/[0.02] px-2.5 py-1 rounded-lg border border-white/[0.05]">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+          <span>上市全生命周期呈现: <strong class="text-white">{{ marketStore.currentKline.length }}</strong> 根柱</span>
+        </div>
       </div>
 
-      <!-- K线长度切换 -->
+      <!-- 快捷视口缩放预设 (全历史 / 近5年 / 近1年 / 近3月) -->
       <div class="flex items-center space-x-1 text-[11px]">
+        <span class="text-zinc-500 text-[10px] mr-1">缩放:</span>
         <button
-          v-for="len in [120, 250, 500]"
-          :key="len"
-          @click="klineLimit = len"
-          :class="klineLimit === len ? 'bg-white/10 text-white font-bold' : 'text-zinc-500 hover:text-zinc-300'"
-          class="px-2 py-0.8 rounded-md transition-all cursor-pointer font-mono"
+          v-for="zoom in [
+            { label: '全历史', key: 'all' },
+            { label: '近5年', key: '5y' },
+            { label: '近1年', key: '1y' },
+            { label: '近3月', key: 'recent' },
+          ] as const"
+          :key="zoom.key"
+          @click="handleQuickZoom(zoom.key)"
+          class="px-2 py-0.8 rounded-md bg-white/[0.03] hover:bg-white/[0.08] text-zinc-400 hover:text-white border border-white/[0.05] transition-all cursor-pointer font-mono"
         >
-          {{ len }}天
+          {{ zoom.label }}
         </button>
       </div>
     </div>
 
-    <!-- 4. ECharts K 线图主视口 -->
-    <div class="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.08] relative min-h-[460px]">
-      <!-- 加载动画 -->
-      <div
-        v-if="marketStore.isKlineLoading"
-        class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xs space-y-2"
-      >
-        <div class="w-8 h-8 border-2 border-red-500/20 border-t-red-500 rounded-full animate-spin"></div>
-        <span class="text-xs text-zinc-400 font-mono">加载 K 线数据与指标推进中...</span>
+    <!-- 4. ECharts K 线图主视口 (带同花顺/雪球式实时 Crosshair HUD 条) -->
+    <div
+      class="rounded-2xl bg-white/[0.02] border border-white/[0.08] relative overflow-hidden"
+      @mouseleave="hoveredIndex = null"
+    >
+      <!-- ⭐ 同花顺/雪球实时十字光标信息 HUD 栏 -->
+      <div class="px-4 py-2 bg-white/[0.03] border-b border-white/[0.06] flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-mono">
+        <!-- 日期与周期 -->
+        <div class="flex items-center space-x-1.5 font-sans font-semibold text-white">
+          <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+          <span>{{ currentDisplayBar?.date || '--' }}</span>
+          <span class="text-[10px] text-zinc-400 font-normal px-1.5 py-0.2 rounded bg-white/5 border border-white/10">
+            {{ periodLabelMap[klinePeriod] }} ({{ adjustType === 'qfq' ? '前复权' : '不复权' }})
+          </span>
+        </div>
+
+        <!-- 价格指标 -->
+        <div class="flex items-center space-x-2.5">
+          <span class="text-zinc-400">开: <strong :class="getPriceColorClass(currentDisplayBar?.open, prevDisplayBar?.close)">{{ formatPrice(currentDisplayBar?.open) }}</strong></span>
+          <span class="text-zinc-400">高: <strong :class="getPriceColorClass(currentDisplayBar?.high, prevDisplayBar?.close)">{{ formatPrice(currentDisplayBar?.high) }}</strong></span>
+          <span class="text-zinc-400">低: <strong :class="getPriceColorClass(currentDisplayBar?.low, prevDisplayBar?.close)">{{ formatPrice(currentDisplayBar?.low) }}</strong></span>
+          <span class="text-zinc-400">收: <strong :class="getPriceColorClass(currentDisplayBar?.close, prevDisplayBar?.close)">{{ formatPrice(currentDisplayBar?.close) }}</strong></span>
+        </div>
+
+        <!-- 涨跌幅与振幅 -->
+        <div class="flex items-center space-x-2.5">
+          <span class="text-zinc-400">涨跌: <strong :class="getChangeColorClass(displayBarChange)">{{ displayBarChange >= 0 ? '+' : '' }}{{ formatPrice(displayBarChange) }}</strong></span>
+          <span class="text-zinc-400">涨跌幅: <strong :class="getChangeColorClass(displayBarChangePct)">{{ displayBarChangePct >= 0 ? '+' : '' }}{{ displayBarChangePct.toFixed(2) }}%</strong></span>
+          <span class="text-zinc-400">振幅: <strong class="text-zinc-200">{{ displayBarAmplitude.toFixed(2) }}%</strong></span>
+        </div>
+
+        <!-- 成交量与成交额 -->
+        <div class="flex items-center space-x-2.5 text-zinc-400">
+          <span>量: <strong class="text-zinc-200">{{ formatVolume(currentDisplayBar?.volume) }}</strong></span>
+          <span v-if="currentDisplayBar?.amount">额: <strong class="text-zinc-200">{{ formatAmount(currentDisplayBar?.amount) }}</strong></span>
+        </div>
+
+        <!-- 均线指标彩色数值 -->
+        <div class="flex items-center space-x-2.5 ml-auto text-[11px]">
+          <span class="text-amber-400">MA5: {{ currentDisplayBar?.ma5 ?? '--' }}</span>
+          <span class="text-blue-400">MA10: {{ currentDisplayBar?.ma10 ?? '--' }}</span>
+          <span class="text-purple-400">MA20: {{ currentDisplayBar?.ma20 ?? '--' }}</span>
+          <span class="text-cyan-400">MA60: {{ currentDisplayBar?.ma60 ?? '--' }}</span>
+        </div>
       </div>
 
-      <!-- 空数据提示 -->
-      <div
-        v-else-if="marketStore.currentKline.length === 0"
-        class="h-96 flex flex-col items-center justify-center text-center space-y-2 text-zinc-500"
-      >
-        <span class="text-2xl">📊</span>
-        <span>暂无该标的的日 K 线行情数据</span>
-      </div>
+      <div class="p-4 relative min-h-[480px]">
+        <!-- 加载动画 -->
+        <div
+          v-if="marketStore.isKlineLoading"
+          class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xs space-y-2"
+        >
+          <div class="w-8 h-8 border-2 border-red-500/20 border-t-red-500 rounded-full animate-spin"></div>
+          <span class="text-xs text-zinc-400 font-mono">加载上市至今全生命周期 K 线中...</span>
+        </div>
 
-      <!-- 图表挂载 -->
-      <div v-else class="w-full">
-        <EChartWrapper :option="klineOption" height="460px" />
+        <!-- 空数据提示 -->
+        <div
+          v-else-if="marketStore.currentKline.length === 0"
+          class="h-96 flex flex-col items-center justify-center text-center space-y-2 text-zinc-500"
+        >
+          <span class="text-2xl">📊</span>
+          <span>暂无该标的的行情数据</span>
+        </div>
+
+        <!-- 图表挂载 -->
+        <div v-else class="w-full">
+          <EChartWrapper ref="klineChartRef" :option="klineOption" height="480px" />
+        </div>
       </div>
     </div>
 

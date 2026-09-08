@@ -15,7 +15,7 @@ class SnapshotAdapter:
     若外部实时源未开盘、停牌、代码不存在或网络超时，对应标的直接返回 None 并计入 missing 列表，
     绝对不使用历史过期的日K/分钟K假数据进行静默填补。
     """
-    def __init__(self, timeout: float = 5.0):
+    def __init__(self, timeout: float = 30.0):
         self.timeout = timeout
 
     def _symbol_to_provider_key(self, symbol: str) -> Tuple[Optional[str], Optional[str]]:

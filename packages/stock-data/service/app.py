@@ -31,8 +31,13 @@ app = FastAPI(
     version="1.0.0",
     docs_url=None,
     redoc_url=None,
+    servers=[
+        {"url": "/stock", "description": "生产反向代理 (/stock)"},
+        {"url": "/", "description": "本地/容器直连 (根路径)"},
+    ],
     lifespan=lifespan
 )
+
 
 @app.get("/docs", include_in_schema=False)
 async def custom_swagger_ui_html():

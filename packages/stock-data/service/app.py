@@ -23,12 +23,34 @@ async def lifespan(app: FastAPI):
     daemon_task.cancel()
     print(f"[{settings.APP_NAME}] Shutting down...")
 
+from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+
 app = FastAPI(
     title=settings.APP_NAME,
     description="面向股票分析、量化交易与策略回测的全球股票数据服务 (50GB空间极致优化架构)",
     version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
     lifespan=lifespan
 )
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    return get_swagger_ui_html(
+        openapi_url="openapi.json",
+        title=f"{settings.APP_NAME} - Swagger UI",
+        swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js",
+        swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css",
+    )
+
+@app.get("/redoc", include_in_schema=False)
+async def custom_redoc_html():
+    return get_redoc_html(
+        openapi_url="openapi.json",
+        title=f"{settings.APP_NAME} - ReDoc",
+        redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js",
+    )
+
 
 # 允许跨域 (通配符 origins 时严格按照规范设置 allow_credentials=False 杜绝浏览器安全警告)
 app.add_middleware(

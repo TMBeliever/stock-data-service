@@ -354,68 +354,50 @@ const valuationRiverOption = computed(() => {
   const history = valData.history
   const dates = history.map((h) => h.date)
   const tab = valuationChartTab.value
+  const hasPriceChannel = !!valData.latest?.price_channel
 
-  if (tab === 'pe' || tab === 'pb') {
-    const isPE = tab === 'pe'
-    const metricName = isPE ? 'PE(TTM)' : 'PB'
+  if (tab === 'pe' || tab === 'pb' || tab === 'price' || hasPriceChannel) {
+    const isPE = tab === 'pe' || tab === 'price' || hasPriceChannel
+    const metricName = hasPriceChannel ? '价格通道' : (isPE ? 'PE(TTM)' : 'PB')
 
     // 根据当期指标与收盘价推算理论价格通道：
-    // Price_P20 = Close * (Metric_P20 / Metric)
-    // Price_P50 = Close * (Metric_P50 / Metric)
-    // Price_P80 = Close * (Metric_P80 / Metric)
-    // 建立当前 K 线收盘价快速检索索引备用
-    const klineCloseMap = new Map<string, number>()
-    marketStore.currentKline?.forEach((k) => {
-      if (k.date && k.close > 0) {
-        klineCloseMap.set(k.date, k.close)
-      }
-    })
-
+    // 若为黄金/债券大宗资产 (hasPriceChannel)，直接采用绝对价格通道 P20/P50/P80
+    // 若为个股或权益 ETF，按当期 Metric 反推 Price_Px = Close * (Metric_Px / Metric)
     history.forEach((h) => {
-      const curMetric = isPE ? h.pe : h.pb
-      const curP20 = isPE ? h.pe_p20 : h.pb_p20
-      const curP50 = isPE ? h.pe_p50 : h.pb_p50
-      const curP80 = isPE ? h.pe_p80 : h.pb_p80
-      const close = h.close || klineCloseMap.get(h.date) || 0
+      const close = h.close !== undefined && h.close !== null ? Number(h.close) : null
+      closeSeries.push(close && close > 0 ? Number(close.toFixed(2)) : null)
 
-      closeSeries.push(close > 0 ? Number(close.toFixed(2)) : null)
-
-      if (close > 0 && curMetric && curMetric > 0) {
-        p20Series.push(curP20 ? Number(((close * curP20) / curMetric).toFixed(2)) : null)
-        p50Series.push(curP50 ? Number(((close * curP50) / curMetric).toFixed(2)) : null)
-        p80Series.push(curP80 ? Number(((close * curP80) / curMetric).toFixed(2)) : null)
+      if (hasPriceChannel) {
+        p20Series.push(h.price_p20 ? Number(h.price_p20.toFixed(2)) : (valData.latest?.price_channel?.p20 || null))
+        p50Series.push(h.price_p50 ? Number(h.price_p50.toFixed(2)) : (valData.latest?.price_channel?.p50 || null))
+        p80Series.push(h.price_p80 ? Number(h.price_p80.toFixed(2)) : (valData.latest?.price_channel?.p80 || null))
       } else {
-        p20Series.push(null)
-        p50Series.push(null)
-        p80Series.push(null)
+        const curMetric = isPE ? h.pe : h.pb
+        const curP20 = isPE ? h.pe_p20 : h.pb_p20
+        const curP50 = isPE ? h.pe_p50 : h.pb_p50
+        const curP80 = isPE ? h.pe_p80 : h.pb_p80
+
+        if (close && close > 0 && curMetric && curMetric > 0) {
+          p20Series.push(curP20 ? Number(((close * curP20) / curMetric).toFixed(2)) : null)
+          p50Series.push(curP50 ? Number(((close * curP50) / curMetric).toFixed(2)) : null)
+          p80Series.push(curP80 ? Number(((close * curP80) / curMetric).toFixed(2)) : null)
+        } else {
+          p20Series.push(null)
+          p50Series.push(null)
+          p80Series.push(null)
+        }
       }
     })
-
-    const hasPrice = closeSeries.some((c) => c !== null)
-    if (!hasPrice) {
-      // 兜底模式：若无价格序列，直接呈现纯估值倍数通道河流
-      closeSeries.length = 0
-      p20Series.length = 0
-      p50Series.length = 0
-      p80Series.length = 0
-      history.forEach((h) => {
-        const curMetric = isPE ? h.pe : h.pb
-        closeSeries.push(curMetric !== undefined && curMetric !== null ? Number(curMetric.toFixed(2)) : null)
-        p20Series.push(isPE && h.pe_p20 ? Number(h.pe_p20.toFixed(2)) : (!isPE && h.pb_p20 ? Number(h.pb_p20.toFixed(2)) : null))
-        p50Series.push(isPE && h.pe_p50 ? Number(h.pe_p50.toFixed(2)) : (!isPE && h.pb_p50 ? Number(h.pb_p50.toFixed(2)) : null))
-        p80Series.push(isPE && h.pe_p80 ? Number(h.pe_p80.toFixed(2)) : (!isPE && h.pb_p80 ? Number(h.pb_p80.toFixed(2)) : null))
-      })
-    }
 
     return {
       backgroundColor: 'transparent',
       animation: true,
       legend: {
         data: [
-          hasPrice ? '真实收盘价' : `${metricName} 实际倍数`,
-          'P80 压力线 (高估)',
-          'P50 中枢线 (合理)',
-          'P20 支撑线 (击球区)',
+          '真实收盘价',
+          hasPriceChannel ? 'P80 阻力线 (历史高位)' : 'P80 压力线 (高估)',
+          hasPriceChannel ? 'P50 中枢线 (合理中轴)' : 'P50 中枢线 (合理)',
+          hasPriceChannel ? 'P20 支撑线 (击球买点)' : 'P20 支撑线 (击球区)',
         ],
         textStyle: { color: 'rgba(255, 255, 255, 0.7)', fontSize: 11 },
         top: 4,
@@ -434,7 +416,7 @@ const valuationRiverOption = computed(() => {
           const h = valuationDateMap.value.get(date)
           let tip = `<div class="font-bold text-zinc-300 font-mono mb-1.5 pb-1 border-b border-white/10 flex items-center justify-between">
             <span>${date}</span>
-            <span class="text-zinc-400 font-normal text-[11px]">${metricName} 估值河流</span>
+            <span class="text-zinc-400 font-normal text-[11px]">${metricName} 河流图</span>
           </div>`
 
           params.forEach((p: any) => {
@@ -837,12 +819,27 @@ const valuationRiverOption = computed(() => {
 
       <!-- 四维核心估值卡片栅格 (PE / PB / ERP / PB-ROE) -->
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        <!-- 卡片 1: PE(TTM) 市盈率与历史分位数 -->
+        <!-- 卡片 1: PE(TTM) 市盈率 OR 价格通道分位 (黄金/大宗商品/债券) -->
         <div class="p-4 rounded-xl bg-black/40 border border-white/[0.06] space-y-2.5 relative overflow-hidden">
           <div class="flex items-center justify-between">
-            <span class="text-xs text-zinc-400 font-medium">PE(TTM) 估值分位</span>
+            <span class="text-xs text-zinc-400 font-medium">
+              {{ marketStore.currentValuation?.latest?.price_channel ? '价格通道分位' : 'PE(TTM) 估值分位' }}
+            </span>
             <span
-              v-if="marketStore.currentValuation?.latest?.pe_ttm"
+              v-if="marketStore.currentValuation?.latest?.price_channel"
+              :class="getValuationBadge(marketStore.currentValuation.latest.price_channel.percentile).color"
+              class="px-2 py-0.5 rounded-md text-[10px] font-bold border"
+            >
+              {{ getValuationBadge(marketStore.currentValuation.latest.price_channel.percentile).label }}
+            </span>
+            <span
+              v-else-if="marketStore.currentValuation?.latest?.pe_ttm?.is_loss"
+              class="px-2 py-0.5 rounded-md text-[10px] font-bold border text-rose-300 bg-rose-500/20 border-rose-500/30"
+            >
+              亏损 (负PE)
+            </span>
+            <span
+              v-else-if="marketStore.currentValuation?.latest?.pe_ttm"
               :class="getValuationBadge(marketStore.currentValuation.latest.pe_ttm.percentile).color"
               class="px-2 py-0.5 rounded-md text-[10px] font-bold border"
             >
@@ -851,12 +848,30 @@ const valuationRiverOption = computed(() => {
           </div>
 
           <div class="flex items-baseline space-x-2 font-mono">
-            <span class="text-2xl font-black text-amber-300">
-              {{ marketStore.currentValuation?.latest?.pe_ttm?.current !== undefined ? marketStore.currentValuation.latest.pe_ttm.current : '--' }}
-            </span>
-            <span class="text-xs text-zinc-400">
-              ({{ marketStore.currentValuation?.latest?.pe_ttm?.percentile !== undefined ? (marketStore.currentValuation.latest.pe_ttm.percentile * 100).toFixed(1) + '%' : '--' }}分位)
-            </span>
+            <template v-if="marketStore.currentValuation?.latest?.price_channel">
+              <span class="text-2xl font-black text-amber-300">
+                ¥{{ marketStore.currentValuation.latest.price_channel.current }}
+              </span>
+              <span class="text-xs text-zinc-400">
+                ({{ (marketStore.currentValuation.latest.price_channel.percentile * 100).toFixed(1) }}%分位)
+              </span>
+            </template>
+            <template v-else-if="marketStore.currentValuation?.latest?.pe_ttm?.is_loss">
+              <span class="text-2xl font-black text-rose-400">
+                亏损
+              </span>
+              <span class="text-xs text-zinc-400">
+                (参考 PB / PS)
+              </span>
+            </template>
+            <template v-else>
+              <span class="text-2xl font-black text-amber-300">
+                {{ marketStore.currentValuation?.latest?.pe_ttm?.current !== undefined ? marketStore.currentValuation.latest.pe_ttm.current : '--' }}
+              </span>
+              <span class="text-xs text-zinc-400">
+                ({{ marketStore.currentValuation?.latest?.pe_ttm?.percentile !== undefined ? (marketStore.currentValuation.latest.pe_ttm.percentile * 100).toFixed(1) + '%' : '--' }}分位)
+              </span>
+            </template>
           </div>
 
           <!-- 分位指示进度条 (0% 绿 -> 50% 蓝 -> 100% 红) -->
@@ -864,23 +879,38 @@ const valuationRiverOption = computed(() => {
             <div class="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden relative">
               <div
                 class="h-full bg-gradient-to-r from-emerald-400 via-blue-400 to-red-400 rounded-full transition-all duration-500"
-                :style="{ width: `${Math.min(100, Math.max(0, (marketStore.currentValuation?.latest?.pe_ttm?.percentile || 0.5) * 100))}%` }"
+                :style="{ width: `${Math.min(100, Math.max(0, (marketStore.currentValuation?.latest?.price_channel?.percentile || marketStore.currentValuation?.latest?.pe_ttm?.percentile || 0.5) * 100))}%` }"
               ></div>
             </div>
             <div class="flex justify-between text-[10px] font-mono text-zinc-400 pt-0.5">
-              <span>P20支撑: {{ marketStore.currentValuation?.latest?.pe_ttm?.p20 || '--' }}</span>
-              <span>P50中枢: {{ marketStore.currentValuation?.latest?.pe_ttm?.p50 || '--' }}</span>
-              <span>P80压力: {{ marketStore.currentValuation?.latest?.pe_ttm?.p80 || '--' }}</span>
+              <template v-if="marketStore.currentValuation?.latest?.price_channel">
+                <span>P20支撑: ¥{{ marketStore.currentValuation.latest.price_channel.p20 }}</span>
+                <span>P50中枢: ¥{{ marketStore.currentValuation.latest.price_channel.p50 }}</span>
+                <span>P80阻力: ¥{{ marketStore.currentValuation.latest.price_channel.p80 }}</span>
+              </template>
+              <template v-else>
+                <span>P20支撑: {{ marketStore.currentValuation?.latest?.pe_ttm?.p20 || '--' }}</span>
+                <span>P50中枢: {{ marketStore.currentValuation?.latest?.pe_ttm?.p50 || '--' }}</span>
+                <span>P80压力: {{ marketStore.currentValuation?.latest?.pe_ttm?.p80 || '--' }}</span>
+              </template>
             </div>
           </div>
         </div>
 
-        <!-- 卡片 2: PB 市净率与资产通道 -->
+        <!-- 卡片 2: PB 市净率 OR 振幅极值通道 -->
         <div class="p-4 rounded-xl bg-black/40 border border-white/[0.06] space-y-2.5 relative overflow-hidden">
           <div class="flex items-center justify-between">
-            <span class="text-xs text-zinc-400 font-medium">PB 市净率分位</span>
+            <span class="text-xs text-zinc-400 font-medium">
+              {{ marketStore.currentValuation?.latest?.price_channel ? '长周期振幅位置' : 'PB 市净率分位' }}
+            </span>
             <span
-              v-if="marketStore.currentValuation?.latest?.pb"
+              v-if="marketStore.currentValuation?.latest?.price_channel"
+              class="px-2 py-0.5 rounded-md text-[10px] font-bold border text-blue-300 bg-blue-500/10 border-blue-500/20"
+            >
+              区间波幅
+            </span>
+            <span
+              v-else-if="marketStore.currentValuation?.latest?.pb"
               :class="getValuationBadge(marketStore.currentValuation.latest.pb.percentile).color"
               class="px-2 py-0.5 rounded-md text-[10px] font-bold border"
             >
@@ -889,37 +919,60 @@ const valuationRiverOption = computed(() => {
           </div>
 
           <div class="flex items-baseline space-x-2 font-mono">
-            <span class="text-2xl font-black text-blue-300">
-              {{ marketStore.currentValuation?.latest?.pb?.current !== undefined ? marketStore.currentValuation.latest.pb.current : '--' }}
-            </span>
-            <span class="text-xs text-zinc-400">
-              ({{ marketStore.currentValuation?.latest?.pb?.percentile !== undefined ? (marketStore.currentValuation.latest.pb.percentile * 100).toFixed(1) + '%' : '--' }}分位)
-            </span>
+            <template v-if="marketStore.currentValuation?.latest?.price_channel">
+              <span class="text-2xl font-black text-blue-300">
+                {{ (marketStore.currentValuation.latest.price_channel.min_max_ratio * 100).toFixed(1) }}%
+              </span>
+              <span class="text-xs text-zinc-400">
+                (极值位置)
+              </span>
+            </template>
+            <template v-else>
+              <span class="text-2xl font-black text-blue-300">
+                {{ marketStore.currentValuation?.latest?.pb?.current !== undefined ? marketStore.currentValuation.latest.pb.current : '--' }}
+              </span>
+              <span class="text-xs text-zinc-400">
+                ({{ marketStore.currentValuation?.latest?.pb?.percentile !== undefined ? (marketStore.currentValuation.latest.pb.percentile * 100).toFixed(1) + '%' : '--' }}分位)
+              </span>
+            </template>
           </div>
 
           <div class="space-y-1">
             <div class="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden relative">
               <div
                 class="h-full bg-gradient-to-r from-emerald-400 via-blue-400 to-red-400 rounded-full transition-all duration-500"
-                :style="{ width: `${Math.min(100, Math.max(0, (marketStore.currentValuation?.latest?.pb?.percentile || 0.5) * 100))}%` }"
+                :style="{ width: `${Math.min(100, Math.max(0, (marketStore.currentValuation?.latest?.price_channel?.min_max_ratio || marketStore.currentValuation?.latest?.pb?.percentile || 0.5) * 100))}%` }"
               ></div>
             </div>
             <div class="flex justify-between text-[10px] font-mono text-zinc-400 pt-0.5">
-              <span>P20: {{ marketStore.currentValuation?.latest?.pb?.p20 || '--' }}</span>
-              <span>P50: {{ marketStore.currentValuation?.latest?.pb?.p50 || '--' }}</span>
-              <span>P80: {{ marketStore.currentValuation?.latest?.pb?.p80 || '--' }}</span>
+              <template v-if="marketStore.currentValuation?.latest?.price_channel">
+                <span>最低: ¥{{ marketStore.currentValuation.latest.price_channel.min }}</span>
+                <span>中位数: ¥{{ marketStore.currentValuation.latest.price_channel.median }}</span>
+                <span>最高: ¥{{ marketStore.currentValuation.latest.price_channel.max }}</span>
+              </template>
+              <template v-else>
+                <span>P20: {{ marketStore.currentValuation?.latest?.pb?.p20 || '--' }}</span>
+                <span>P50: {{ marketStore.currentValuation?.latest?.pb?.p50 || '--' }}</span>
+                <span>P80: {{ marketStore.currentValuation?.latest?.pb?.p80 || '--' }}</span>
+              </template>
             </div>
           </div>
         </div>
 
-        <!-- 卡片 3: ERP 股债利差 (股权风险溢价) -->
+        <!-- 卡片 3: ERP 股债利差 (股权风险溢价) OR 资产分类 -->
         <div class="p-4 rounded-xl bg-black/40 border border-white/[0.06] space-y-2 relative overflow-hidden">
           <div class="flex items-center justify-between">
             <span class="text-xs text-zinc-400 font-medium flex items-center space-x-1">
-              <span>股债利差 (ERP)</span>
+              <span>{{ marketStore.currentValuation?.latest?.price_channel ? '资产分类诊断' : '股债利差 (ERP)' }}</span>
             </span>
             <span
-              v-if="marketStore.currentValuation?.latest?.equity_risk_premium"
+              v-if="marketStore.currentValuation?.latest?.price_channel"
+              class="px-2 py-0.5 rounded-md text-[10px] font-bold border text-amber-300 bg-amber-500/20 border-amber-500/40"
+            >
+              {{ marketStore.currentValuation.asset_subtype === 'BOND' ? '固收资产' : '黄金/大宗商品' }}
+            </span>
+            <span
+              v-else-if="marketStore.currentValuation?.latest?.equity_risk_premium"
               :class="marketStore.currentValuation.latest.equity_risk_premium.equity_risk_premium_pct >= 2.0 ? 'text-emerald-300 bg-emerald-500/20 border-emerald-500/40' : 'text-blue-300 bg-blue-500/20 border-blue-500/40'"
               class="px-2 py-0.5 rounded-md text-[10px] font-bold border"
             >
@@ -928,35 +981,66 @@ const valuationRiverOption = computed(() => {
           </div>
 
           <div class="flex items-baseline space-x-2 font-mono">
-            <span
-              :class="marketStore.currentValuation?.latest?.equity_risk_premium?.equity_risk_premium_pct && marketStore.currentValuation.latest.equity_risk_premium.equity_risk_premium_pct >= 0 ? 'text-purple-300' : 'text-zinc-300'"
-              class="text-2xl font-black"
-            >
-              {{ marketStore.currentValuation?.latest?.equity_risk_premium?.equity_risk_premium_pct !== undefined ? (marketStore.currentValuation.latest.equity_risk_premium.equity_risk_premium_pct > 0 ? '+' : '') + marketStore.currentValuation.latest.equity_risk_premium.equity_risk_premium_pct.toFixed(2) + '%' : '--' }}
-            </span>
-            <span class="text-xs text-zinc-400">
-              (利差水平)
-            </span>
+            <template v-if="marketStore.currentValuation?.latest?.price_channel">
+              <span class="text-2xl font-black text-amber-300">
+                价格通道
+              </span>
+              <span class="text-xs text-zinc-400">
+                (无盈利失真)
+              </span>
+            </template>
+            <template v-else>
+              <span
+                :class="marketStore.currentValuation?.latest?.equity_risk_premium?.equity_risk_premium_pct && marketStore.currentValuation.latest.equity_risk_premium.equity_risk_premium_pct >= 0 ? 'text-purple-300' : 'text-zinc-300'"
+                class="text-2xl font-black"
+              >
+                {{ marketStore.currentValuation?.latest?.equity_risk_premium?.equity_risk_premium_pct !== undefined ? (marketStore.currentValuation.latest.equity_risk_premium.equity_risk_premium_pct > 0 ? '+' : '') + marketStore.currentValuation.latest.equity_risk_premium.equity_risk_premium_pct.toFixed(2) + '%' : '--' }}
+              </span>
+              <span class="text-xs text-zinc-400">
+                (利差水平)
+              </span>
+            </template>
           </div>
 
           <div class="text-[10px] text-zinc-400 font-mono space-y-0.5 pt-1 border-t border-white/[0.04]">
-            <div class="flex justify-between">
-              <span>盈利收益率 (1/PE):</span>
-              <span class="text-white">{{ marketStore.currentValuation?.latest?.equity_risk_premium?.earning_yield_pct || '--' }}%</span>
-            </div>
-            <div class="flex justify-between">
-              <span>10Y国债基准:</span>
-              <span class="text-zinc-400">{{ marketStore.currentValuation?.latest?.equity_risk_premium?.benchmark_10y_bond_pct || '--' }}%</span>
-            </div>
+            <template v-if="marketStore.currentValuation?.latest?.price_channel">
+              <div class="flex justify-between">
+                <span>模型特征:</span>
+                <span class="text-white">经验分布累计分位</span>
+              </div>
+              <div class="flex justify-between">
+                <span>安全边际:</span>
+                <span class="text-zinc-400">支撑位/阻力位动态布林</span>
+              </div>
+            </template>
+            <template v-else>
+              <div class="flex justify-between">
+                <span>盈利收益率 (1/PE):</span>
+                <span class="text-white">{{ marketStore.currentValuation?.latest?.equity_risk_premium?.earning_yield_pct || '--' }}%</span>
+              </div>
+              <div class="flex justify-between">
+                <span>10Y国债基准:</span>
+                <span class="text-zinc-400">{{ marketStore.currentValuation?.latest?.equity_risk_premium?.benchmark_10y_bond_pct || '--' }}%</span>
+              </div>
+            </template>
           </div>
         </div>
 
-        <!-- 卡片 4: PB-ROE 质量安全与周期防御 -->
+        <!-- 卡片 4: PB-ROE 质量安全与周期防御 OR 通道周期评级 -->
         <div class="p-4 rounded-xl bg-black/40 border border-white/[0.06] space-y-2 relative overflow-hidden">
           <div class="flex items-center justify-between">
-            <span class="text-xs text-zinc-400 font-medium">PB-ROE 质量防御</span>
+            <span class="text-xs text-zinc-400 font-medium">
+              {{ marketStore.currentValuation?.latest?.price_channel ? '周期击球评级' : 'PB-ROE 质量防御' }}
+            </span>
             <span
-              v-if="marketStore.currentValuation?.latest?.pb_roe_quality"
+              v-if="marketStore.currentValuation?.latest?.price_channel"
+              :class="marketStore.currentValuation.latest.price_channel.percentile <= 0.20 ? 'text-emerald-300 bg-emerald-500/20 border-emerald-500/40' : (marketStore.currentValuation.latest.price_channel.percentile >= 0.80 ? 'text-rose-300 bg-rose-500/20 border-rose-500/40' : 'text-blue-300 bg-blue-500/20 border-blue-500/40')"
+              class="px-2 py-0.5 rounded-md text-[10px] font-bold border"
+            >
+              {{ marketStore.currentValuation.latest.price_channel.percentile <= 0.20 ? '超跌击球区' : (marketStore.currentValuation.latest.price_channel.percentile >= 0.80 ? '高位警惕区' : '常态合理区') }}
+            </span>
+            <span
+              v-else-if="marketStore.currentValuation?.latest?.pb_roe_quality"
               :class="marketStore.currentValuation.latest.pb_roe_quality.is_asset_quality_safe ? 'text-emerald-300 bg-emerald-500/20 border-emerald-500/40' : 'text-amber-300 bg-amber-500/20 border-amber-500/40'"
               class="px-2 py-0.5 rounded-md text-[10px] font-bold border"
             >
@@ -965,23 +1049,48 @@ const valuationRiverOption = computed(() => {
           </div>
 
           <div class="flex items-baseline space-x-2 font-mono">
-            <span class="text-2xl font-black text-emerald-400">
-              {{ marketStore.currentValuation?.latest?.pb_roe_quality?.implied_roe_pct !== undefined ? marketStore.currentValuation.latest.pb_roe_quality.implied_roe_pct.toFixed(2) + '%' : '--' }}
-            </span>
-            <span class="text-xs text-zinc-400">
-              (隐含 ROE)
-            </span>
+            <template v-if="marketStore.currentValuation?.latest?.price_channel">
+              <span
+                :class="marketStore.currentValuation.latest.price_channel.percentile <= 0.20 ? 'text-emerald-400' : (marketStore.currentValuation.latest.price_channel.percentile >= 0.80 ? 'text-rose-400' : 'text-blue-400')"
+                class="text-2xl font-black"
+              >
+                {{ marketStore.currentValuation.latest.price_channel.percentile <= 0.20 ? '逢低布局' : (marketStore.currentValuation.latest.price_channel.percentile >= 0.80 ? '防范回调' : '均衡持有') }}
+              </span>
+              <span class="text-xs text-zinc-400">
+                (通道信号)
+              </span>
+            </template>
+            <template v-else>
+              <span class="text-2xl font-black text-emerald-400">
+                {{ marketStore.currentValuation?.latest?.pb_roe_quality?.implied_roe_pct !== undefined ? marketStore.currentValuation.latest.pb_roe_quality.implied_roe_pct.toFixed(2) + '%' : '--' }}
+              </span>
+              <span class="text-xs text-zinc-400">
+                (隐含 ROE)
+              </span>
+            </template>
           </div>
 
           <div class="text-[10px] text-zinc-400 font-mono space-y-0.5 pt-1 border-t border-white/[0.04]">
-            <div class="flex justify-between">
-              <span>股息率(Yield):</span>
-              <span class="text-amber-300 font-bold">{{ marketStore.currentValuation?.latest?.dividend_yield_pct ? marketStore.currentValuation.latest.dividend_yield_pct + '%' : '暂无' }}</span>
-            </div>
-            <div class="flex justify-between">
-              <span>资产安全诊断:</span>
-              <span class="text-zinc-300">{{ marketStore.currentValuation?.latest?.pb_roe_quality?.is_asset_quality_safe ? '防价值陷阱OK' : '建议搭配现金流' }}</span>
-            </div>
+            <template v-if="marketStore.currentValuation?.latest?.price_channel">
+              <div class="flex justify-between">
+                <span>买点支撑:</span>
+                <span class="text-emerald-300">跌破 P20 黄金击球</span>
+              </div>
+              <div class="flex justify-between">
+                <span>卖点压力:</span>
+                <span class="text-rose-300">突破 P80 止盈减仓</span>
+              </div>
+            </template>
+            <template v-else>
+              <div class="flex justify-between">
+                <span>股息率(Yield):</span>
+                <span class="text-amber-300 font-bold">{{ marketStore.currentValuation?.latest?.dividend_yield_pct ? marketStore.currentValuation.latest.dividend_yield_pct + '%' : '暂无' }}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>资产安全诊断:</span>
+                <span class="text-zinc-300">{{ marketStore.currentValuation?.latest?.pb_roe_quality?.is_asset_quality_safe ? '防价值陷阱OK' : '建议搭配现金流' }}</span>
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -1072,34 +1181,45 @@ const valuationRiverOption = computed(() => {
 
         <!-- 估值维度切换 Tab -->
         <div class="flex items-center space-x-1 bg-black/40 p-1 rounded-xl border border-white/[0.06]">
-          <button
-            @click="valuationChartTab = 'pe'"
-            :class="valuationChartTab === 'pe' ? 'bg-blue-600 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'"
-            class="px-3 py-1 rounded-lg text-xs transition-all cursor-pointer"
-          >
-            PE 估值河流
-          </button>
-          <button
-            @click="valuationChartTab = 'pb'"
-            :class="valuationChartTab === 'pb' ? 'bg-blue-600 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'"
-            class="px-3 py-1 rounded-lg text-xs transition-all cursor-pointer"
-          >
-            PB 估值河流
-          </button>
-          <button
-            @click="valuationChartTab = 'erp'"
-            :class="valuationChartTab === 'erp' ? 'bg-blue-600 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'"
-            class="px-3 py-1 rounded-lg text-xs transition-all cursor-pointer"
-          >
-            股债利差 (ERP)
-          </button>
-          <button
-            @click="valuationChartTab = 'dividend'"
-            :class="valuationChartTab === 'dividend' ? 'bg-blue-600 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'"
-            class="px-3 py-1 rounded-lg text-xs transition-all cursor-pointer"
-          >
-            股息率走势
-          </button>
+          <template v-if="marketStore.currentValuation?.latest?.price_channel">
+            <button
+              @click="valuationChartTab = 'pe'"
+              :class="valuationChartTab === 'pe' || valuationChartTab === 'price' ? 'bg-amber-600 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'"
+              class="px-3 py-1 rounded-lg text-xs transition-all cursor-pointer"
+            >
+              价格通道河流 (Price Channel)
+            </button>
+          </template>
+          <template v-else>
+            <button
+              @click="valuationChartTab = 'pe'"
+              :class="valuationChartTab === 'pe' ? 'bg-blue-600 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'"
+              class="px-3 py-1 rounded-lg text-xs transition-all cursor-pointer"
+            >
+              PE 估值河流
+            </button>
+            <button
+              @click="valuationChartTab = 'pb'"
+              :class="valuationChartTab === 'pb' ? 'bg-blue-600 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'"
+              class="px-3 py-1 rounded-lg text-xs transition-all cursor-pointer"
+            >
+              PB 估值河流
+            </button>
+            <button
+              @click="valuationChartTab = 'erp'"
+              :class="valuationChartTab === 'erp' ? 'bg-blue-600 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'"
+              class="px-3 py-1 rounded-lg text-xs transition-all cursor-pointer"
+            >
+              股债利差 (ERP)
+            </button>
+            <button
+              @click="valuationChartTab = 'dividend'"
+              :class="valuationChartTab === 'dividend' ? 'bg-blue-600 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'"
+              class="px-3 py-1 rounded-lg text-xs transition-all cursor-pointer"
+            >
+              股息率走势
+            </button>
+          </template>
         </div>
       </div>
 

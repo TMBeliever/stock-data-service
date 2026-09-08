@@ -3,7 +3,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
-from service.routes import kline, meta, system, valuation, financials, market_data, advanced, ws, snapshot, dividends, margin, analyst
+from service.routes import (
+    kline, meta, system, valuation, financials, market_data, advanced,
+    ws, snapshot, dividends, margin, analyst, hub
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -48,6 +51,8 @@ app.include_router(dividends.router)
 app.include_router(margin.router)
 app.include_router(analyst.router)
 app.include_router(ws.router)
+app.include_router(hub.router)
+app.include_router(hub.router, prefix="/api")
 
 @app.get("/")
 def root():

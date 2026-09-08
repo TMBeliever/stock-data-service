@@ -13,6 +13,7 @@ from quant_core.factors.technical import (
     bollinger_bands as calc_bb,
     atr as calc_atr,
 )
+from quant_core.client.hub_client import data_hub, DataHubClient
 
 
 class BaseStrategy(ABC):
@@ -704,4 +705,27 @@ class BaseStrategy(ABC):
         if self.current_bar:
             return self.current_bar.timestamp
         return 0
+
+    @property
+    def data_hub(self) -> DataHubClient:
+        """全局统一金融数据中台 (直接调用 AkShare / BaoStock 等 1000+ API，自动湖仓落库与加速)"""
+        return data_hub
+
+    def get_hub_data(
+        self,
+        provider: str,
+        api_name: str,
+        bypass_cache: bool = False,
+        as_polars: bool = True,
+        **params
+    ):
+        """调用中台三方数据 (支持 bypass_cache=True 实时穿透免落库，或默认自动落库 Parquet 本地加速)"""
+        return self.data_hub.invoke(
+            provider=provider,
+            api_name=api_name,
+            bypass_cache=bypass_cache,
+            as_polars=as_polars,
+            **params
+        )
+
 

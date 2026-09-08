@@ -4,14 +4,26 @@ import polars as pl
 import pandas as pd
 
 def percentile_rank(val: float, history: Sequence[float]) -> float:
-    """计算某个数值在历史序列中的分位数 (0.0 ~ 1.0)"""
-    if not history:
+    """计算某个数值在历史序列中的标准分位数 (中点经验累积分布: 0.0 ~ 1.0)"""
+    vals = [v for v in history if v is not None and not np.isnan(v)]
+    if not vals:
         return 0.5
-    min_v = min(history)
-    max_v = max(history)
+    less_count = sum(1 for v in vals if v < val)
+    equal_count = sum(1 for v in vals if v == val)
+    return float((less_count + 0.5 * equal_count) / len(vals))
+
+
+def min_max_position(val: float, history: Sequence[float]) -> float:
+    """计算数值在历史极值波幅中的相对线性位置 (0.0 ~ 1.0)"""
+    vals = [v for v in history if v is not None and not np.isnan(v)]
+    if not vals:
+        return 0.5
+    min_v = min(vals)
+    max_v = max(vals)
     if max_v == min_v:
         return 0.5
     return float(np.clip((val - min_v) / (max_v - min_v), 0.0, 1.0))
+
 
 def zscore(val: float, history: Sequence[float]) -> float:
     """Z-Score 标准化得分"""
@@ -43,11 +55,13 @@ def calculate_valuation_metrics(
     
     cur = current_val if current_val is not None else vals[-1]
     p_rank = percentile_rank(cur, vals)
+    mm_pos = min_max_position(cur, vals)
     z = zscore(cur, vals)
     
     return {
         "current": round(float(cur), 4),
         "percentile": round(p_rank, 4),
+        "min_max_ratio": round(mm_pos, 4),
         "zscore": round(z, 3),
         "min": round(float(np.min(vals)), 4),
         "max": round(float(np.max(vals)), 4),
@@ -57,4 +71,5 @@ def calculate_valuation_metrics(
         "p50": round(float(np.percentile(vals, 50)), 4),
         "p80": round(float(np.percentile(vals, 80)), 4),
     }
+
 

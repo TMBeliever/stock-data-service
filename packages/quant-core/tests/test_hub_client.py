@@ -42,3 +42,22 @@ def test_hub_client_invoke_bypass_cache():
         assert "date" in df.columns
         assert df["value"][0] == 25.5
         mock_post.assert_called_once()
+
+
+def test_hub_client_get_valuation_analysis():
+    client = DataHubClient()
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "status": "success",
+        "symbol": "600519",
+        "latest": {"pe_ttm": {"current": 20.1, "percentile": 0.24}}
+    }
+    mock_resp.raise_for_status.return_value = None
+
+    with patch.object(client._http, "get", return_value=mock_resp) as mock_get:
+        res = client.get_valuation_analysis("600519", window="3y")
+        assert res["status"] == "success"
+        assert res["symbol"] == "600519"
+        assert res["latest"]["pe_ttm"]["current"] == 20.1
+        mock_get.assert_called_once()
+

@@ -79,6 +79,35 @@ class DataHubClient:
             print(f"{it['api_name']:<36} | {it.get('category', ''):<10} | {it.get('summary', '')}")
         print(f"{'='*80}\n共展示 {len(items)} 个接口。如需查看参数请调用 data_hub.get_api_doc('akshare', '<api_name>')\n")
 
+    def get_valuation_analysis(
+        self,
+        symbol: str,
+        window: str = "3y",
+        force_refresh: bool = False,
+    ) -> Dict[str, Any]:
+        """获取标的全量多维估值与通道分析数据 (PE/PB/分位数/安全边际通道全量出齐)"""
+        params = {"symbol": symbol, "window": window, "force_refresh": force_refresh}
+        endpoints = [
+            "/api/v1/stock/valuation/analysis",
+            "api/v1/stock/valuation/analysis",
+            "/v1/stock/valuation/analysis",
+        ]
+        last_err = None
+        for ep in endpoints:
+            try:
+                resp = self._http.get(ep, params=params)
+                if resp.status_code == 404 and ep != endpoints[-1]:
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                last_err = e
+                continue
+        if last_err:
+            raise last_err
+        return {}
+
+
 
     def invoke(
         self,

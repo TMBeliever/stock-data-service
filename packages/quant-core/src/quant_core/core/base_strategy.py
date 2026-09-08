@@ -728,4 +728,11 @@ class BaseStrategy(ABC):
             **params
         )
 
+    def get_valuation(self, symbol: Optional[str] = None, window: str = "3y") -> Dict[str, Any]:
+        """获取标的全量多维估值与通道画像 (包含 PE/PB/当前分位/通道线等)"""
+        sym = symbol or self.current_symbol
+        return self.data_hub.get_valuation_analysis(symbol=sym, window=window)
+
+
+
 

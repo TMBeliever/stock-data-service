@@ -633,3 +633,43 @@ def get_symbol_kline(
         "count": len(kline_list),
         "data": kline_list
     }
+
+
+@router.get("/symbols/{symbol}/valuation")
+def get_symbol_valuation(
+    symbol: str,
+    window: str = Query("3y", description="滚动分位数回溯窗口 (1y, 3y, 5y, 10y, all)"),
+    force_refresh: bool = Query(False, description="是否强制穿透重算"),
+):
+    """
+    获取单个标的的全量多维估值与通道分析 (PE/PB/分位数/ERP股债利差/PB-ROE安全评级)
+    """
+    orig_sym = symbol.strip().upper()
+    norm_sym = normalize_symbol_key(orig_sym)
+    ticker = norm_sym.split(".")[0]
+
+    # 1. 优先调用本地高性能 ValuationEngine 引擎 (带 Parquet/JSON 湖仓缓存)
+    try:
+        import sys
+        stock_data_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "../../../../../packages/stock-data")
+        )
+        if stock_data_path not in sys.path:
+            sys.path.insert(0, stock_data_path)
+        from core.valuation_engine import ValuationEngine
+        res = ValuationEngine.get_analysis(symbol=ticker, window=window, force_refresh=force_refresh)
+        if res and res.get("status") == "success":
+            return res
+    except Exception as e:
+        pass
+
+    # 2. 备选调用 quant_core.data_hub HTTP 中台
+    try:
+        from quant_core.data import data_hub
+        res = data_hub.get_valuation_analysis(symbol=ticker, window=window, force_refresh=force_refresh)
+        if res and res.get("status") == "success":
+            return res
+    except Exception as e:
+        pass
+
+    raise HTTPException(status_code=500, detail=f"无法获取标的 {symbol} 的多维估值分析数据")

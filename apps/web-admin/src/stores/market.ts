@@ -40,6 +40,74 @@ export interface KlineItem {
   ma20?: number | null
 }
 
+export interface MetricPercentileInfo {
+  current: number
+  percentile: number // 0.0 ~ 1.0
+  min_max_ratio?: number
+  min?: number
+  max?: number
+  median?: number
+  p20?: number
+  p50?: number
+  p80?: number
+  status?: string // 'extremely_undervalued' | 'undervalued' | 'fair' | 'overvalued' | 'extreme_bubble'
+}
+
+export interface EquityRiskPremiumInfo {
+  earning_yield_pct: number
+  benchmark_10y_bond_pct: number
+  equity_risk_premium_pct: number
+  status?: string
+}
+
+export interface PbRoeQualityInfo {
+  implied_roe_pct: number
+  pb_level: number
+  is_asset_quality_safe: boolean
+  status?: string
+}
+
+export interface ValuationLatest {
+  pe_ttm?: MetricPercentileInfo | null
+  pb?: MetricPercentileInfo | null
+  ps?: MetricPercentileInfo | null
+  dividend_yield_pct?: number | null
+  equity_risk_premium?: EquityRiskPremiumInfo | null
+  pb_roe_quality?: PbRoeQualityInfo | null
+  market_cap_billion?: number | null
+}
+
+export interface ValuationHistoryItem {
+  date: string
+  close?: number
+  pe?: number
+  pe_pct?: number
+  pe_p20?: number
+  pe_p50?: number
+  pe_p80?: number
+  pb?: number
+  pb_pct?: number
+  pb_p20?: number
+  pb_p50?: number
+  pb_p80?: number
+  dividend_yield?: number
+  erp?: number
+}
+
+export interface ValuationAnalysisData {
+  status: string
+  symbol: string
+  ticker: string
+  asset_type?: string
+  country?: string
+  window: string
+  sample_count: number
+  latest: ValuationLatest
+  history: ValuationHistoryItem[]
+  from_cache?: boolean
+  updated_at?: string
+}
+
 const RECENT_KEY = 'quantscope_recent_symbols'
 
 // 常用标的中文名称预设字典（支持大盘宽基、行业ETF、核心权重）
@@ -158,6 +226,10 @@ export const useMarketStore = defineStore('market', () => {
   // 当前标的 K 线
   const currentKline = ref<KlineItem[]>([])
   const isKlineLoading = ref(false)
+
+  // 当前标的多维估值分析与历史通道
+  const currentValuation = ref<ValuationAnalysisData | null>(null)
+  const isValuationLoading = ref(false)
 
   function loadRecentSearches(): SymbolItem[] {
     try {
@@ -366,6 +438,30 @@ export const useMarketStore = defineStore('market', () => {
     return true
   }
 
+  // 拉取标的多维全量估值分析 (PE/PB/分位数/ERP/PB-ROE)
+  async function fetchSymbolValuation(symbol: string, window: string = '3y', forceRefresh: boolean = false): Promise<ValuationAnalysisData | null> {
+    isValuationLoading.value = true
+    try {
+      const cleanSym = symbol.trim().toUpperCase()
+      // 1. 优先调用量化服务端点
+      let resp = await fetch(`/api/v1/market/symbols/${encodeURIComponent(cleanSym)}/valuation?window=${window}&force_refresh=${forceRefresh}`)
+      if (!resp.ok) {
+        // 2. 备选调用 stock-data 服务端点
+        resp = await fetch(`/stock/api/v1/stock/valuation/analysis?symbol=${encodeURIComponent(cleanSym)}&window=${window}&force_refresh=${forceRefresh}`)
+      }
+      if (resp.ok) {
+        const json = await resp.json()
+        currentValuation.value = json
+        return json
+      }
+    } catch (err) {
+      console.error('[MarketStore] fetchSymbolValuation error:', err)
+    } finally {
+      isValuationLoading.value = false
+    }
+    return null
+  }
+
   return {
     searchQuery,
     searchResults,
@@ -378,9 +474,12 @@ export const useMarketStore = defineStore('market', () => {
     isDetailLoading,
     currentKline,
     isKlineLoading,
+    currentValuation,
+    isValuationLoading,
     searchSymbols,
     fetchSymbolDetail,
     fetchSymbolKline,
+    fetchSymbolValuation,
     addRecentSearch,
     clearRecentSearches,
     addSymbolToWatchlist,

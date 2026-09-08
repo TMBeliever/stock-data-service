@@ -136,3 +136,26 @@ async def get_stock_valuation(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch valuation for {clean_symbol}: {str(e)}")
+
+
+@router.get("/valuation/analysis")
+async def get_valuation_analysis(
+    symbol: str = Query(..., description="标的代码或名称，如 600519 (茅台), 00700 (腾讯), 512890 (红利低波), 上证红利"),
+    window: str = Query("3y", description="回溯窗口，可选 1y, 3y, 5y, 10y, all"),
+    force_refresh: bool = Query(False, description="是否强制刷新穿透"),
+):
+    """
+    全量多维估值分析引擎 (All-in-One Multi-Factor Valuation Engine)
+    - 纯懒计算 (On-Demand) + 本地 Parquet 湖仓加速 (首访 ~300ms, 次访 0.5ms)
+    - 全量多维指标出齐：PE(TTM)、PB、股息率、市值、动态滚动分位数、P20/P50/P80 安全边际通道
+    - 统一赋能：
+      1. 主图 K 线 Tooltip：每根 Bar 悬浮呈现当时的估值与分位 (严格 Point-in-Time 无未来函数)
+      2. 独立估值图：ECharts 直接渲染四线通道带状河流图 (P20低估, P50中枢, P80高估)
+      3. 选股器与量化策略：结构化 latest 评级画像
+    """
+    from core.valuation_engine import ValuationEngine
+    try:
+        return ValuationEngine.get_analysis(symbol=symbol, window=window, force_refresh=force_refresh)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Valuation analysis failed for {symbol}: {str(e)}")
+

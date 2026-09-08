@@ -438,16 +438,16 @@ export const useMarketStore = defineStore('market', () => {
     return true
   }
 
-  // 拉取标的多维全量估值分析 (PE/PB/分位数/ERP/PB-ROE)
+  // 拉取标的多维全量估值分析 (PE/PB/分位数/ERP/PB-ROE) - 规范直连数据基础服务
   async function fetchSymbolValuation(symbol: string, window: string = '3y', forceRefresh: boolean = false): Promise<ValuationAnalysisData | null> {
     isValuationLoading.value = true
     try {
       const cleanSym = symbol.trim().toUpperCase()
-      // 1. 优先调用量化服务端点
-      let resp = await fetch(`/api/v1/market/symbols/${encodeURIComponent(cleanSym)}/valuation?window=${window}&force_refresh=${forceRefresh}`)
+      // 1. 直连数据基础服务中台 (底层高性能估值引擎，带湖仓缓存直出)
+      let resp = await fetch(`/stock/api/v1/stock/valuation/analysis?symbol=${encodeURIComponent(cleanSym)}&window=${window}&force_refresh=${forceRefresh}`)
       if (!resp.ok) {
-        // 2. 备选调用 stock-data 服务端点
-        resp = await fetch(`/stock/api/v1/stock/valuation/analysis?symbol=${encodeURIComponent(cleanSym)}&window=${window}&force_refresh=${forceRefresh}`)
+        // 2. 备选兼容量化业务服务端点
+        resp = await fetch(`/api/v1/market/symbols/${encodeURIComponent(cleanSym)}/valuation?window=${window}&force_refresh=${forceRefresh}`)
       }
       if (resp.ok) {
         const json = await resp.json()

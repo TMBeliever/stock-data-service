@@ -648,7 +648,7 @@ def get_symbol_valuation(
     norm_sym = normalize_symbol_key(orig_sym)
     ticker = norm_sym.split(".")[0]
 
-    # 1. 优先调用本地高性能 ValuationEngine 引擎 (带 Parquet/JSON 湖仓缓存)
+    # 1. 优先调用本地高性能 ValuationEngine 引擎 (当同进程或本地开发环境具备 stock-data 时)
     try:
         import sys
         stock_data_path = os.path.abspath(
@@ -663,13 +663,13 @@ def get_symbol_valuation(
     except Exception as e:
         pass
 
-    # 2. 备选调用 quant_core.data_hub HTTP 中台
+    # 2. 备选调用 quant_core.client.hub_client 数据中台 (Docker 生产隔离容器走此通道直连 stock-data:8000)
     try:
-        from quant_core.data import data_hub
+        from quant_core.client.hub_client import data_hub
         res = data_hub.get_valuation_analysis(symbol=ticker, window=window, force_refresh=force_refresh)
         if res and res.get("status") == "success":
             return res
     except Exception as e:
-        pass
+        print(f"[MarketAPI] Failed to fetch valuation via data_hub: {e}")
 
     raise HTTPException(status_code=500, detail=f"无法获取标的 {symbol} 的多维估值分析数据")

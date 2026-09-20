@@ -5,7 +5,7 @@ WORKDIR /app
 # 配置国内镜像源加速构建，避免网络超时
 RUN npm config set registry https://registry.npmmirror.com
 
-COPY package.json package-lock.json* tsconfig.json ./
+COPY package.json tsconfig.json ./
 RUN npm install
 
 COPY src/ ./src/
@@ -22,7 +22,7 @@ ENV STORAGE_DIR=/app/.data
 # 配置国内镜像源
 RUN npm config set registry https://registry.npmmirror.com
 
-COPY package.json package-lock.json* ./
+COPY package.json ./
 # 仅安装生产依赖 (qrcode, qrcode-terminal, zod)，为标准实体目录，杜绝软链接丢失异常
 RUN npm install --omit=dev
 

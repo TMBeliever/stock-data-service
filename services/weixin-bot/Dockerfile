@@ -2,13 +2,14 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# 配置国内镜像源加速构建，避免网络超时
+RUN npm config set registry https://registry.npmmirror.com
 
-COPY package.json tsconfig.json ./
-RUN pnpm install
+COPY package.json package-lock.json* tsconfig.json ./
+RUN npm install
 
 COPY src/ ./src/
-RUN pnpm build
+RUN npm run build
 
 # 生产运行阶段
 FROM node:22-alpine AS runner
@@ -18,8 +19,14 @@ ENV NODE_ENV=production
 ENV PORT=8095
 ENV STORAGE_DIR=/app/.data
 
-COPY package.json ./
-COPY --from=builder /app/node_modules ./node_modules
+# 配置国内镜像源
+RUN npm config set registry https://registry.npmmirror.com
+
+COPY package.json package-lock.json* ./
+# 仅安装生产依赖 (qrcode, qrcode-terminal, zod)，为标准实体目录，杜绝软链接丢失异常
+RUN npm install --omit=dev
+
+# 拷贝编译好的 JavaScript 产物
 COPY --from=builder /app/dist ./dist
 
 # 创建持久化数据目录

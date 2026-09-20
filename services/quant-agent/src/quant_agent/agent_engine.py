@@ -373,7 +373,9 @@ class QuantAgent(BaseAgent):
         approved_tool_calls: Optional[List[str]] = None,
         approved_tool_call: Optional[Dict[str, Any]] = None,
         thinking_level: str = "medium",
-        max_steps: Optional[int] = None
+        max_steps: Optional[int] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """流式调用封装：注入情境提示词并启动通用 ReAct 循环"""
         await self.initialize_tools()
@@ -416,9 +418,12 @@ class QuantAgent(BaseAgent):
             approved_tool_calls=approved_tool_calls,
             approved_tool_call=approved_tool_call,
             thinking_level=thinking_level,
-            max_steps_override=max_steps
+            max_steps_override=max_steps,
+            user_id=user_id,
+            session_id=session_id
         ):
             yield event
+
 
 quant_agent = QuantAgent()
 

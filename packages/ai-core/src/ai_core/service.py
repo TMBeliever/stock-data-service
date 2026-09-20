@@ -112,6 +112,12 @@ async def pool_status():
         "session_info": session_manager.get_status()
     }
 
+@app.delete("/v1/sessions/{session_id}", tags=["Session Management"])
+async def close_cli_session(session_id: str):
+    """显式注销并清理底层 CLI 粘性会话及绑定的 Worker 进程"""
+    await session_manager.close_session(session_id)
+    return {"status": "success", "message": f"Session '{session_id}' closed and worker released"}
+
 @app.post("/api/v1/ai/generate", response_model=AIResponse, tags=["AI Generation"])
 async def generate_completion(req: GenerateRequest):
     """单次生成：等待完整大模型输出并返回结构化响应"""

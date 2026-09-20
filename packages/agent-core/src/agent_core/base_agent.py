@@ -82,7 +82,9 @@ class BaseAgent:
         model: Optional[str] = None,
         provider: Optional[str] = None,
         temperature: Optional[float] = 0.2,
-        reasoning_effort: Optional[str] = "medium"
+        reasoning_effort: Optional[str] = "medium",
+        user: Optional[str] = None,
+        session_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """通过标准 OpenAI 协议 (/v1/chat/completions) 向底层统一 AI 网关发起生成请求"""
         url = f"{self.ai_core_url}/v1/chat/completions"
@@ -130,6 +132,10 @@ class BaseAgent:
             "reasoning_effort": effort_val,
             "stream": False
         }
+        if user:
+            payload["user"] = str(user)
+        if session_id:
+            payload["session_id"] = str(session_id)
         if tools:
             payload["tools"] = [t.to_openai_dict() for t in tools]
 
@@ -282,7 +288,9 @@ class BaseAgent:
         approved_tool_calls: Optional[List[str]] = None,
         approved_tool_call: Optional[Dict[str, Any]] = None,
         thinking_level: Optional[str] = "medium",
-        max_steps_override: Optional[int] = None
+        max_steps_override: Optional[int] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         ReAct 流式调度器 v2 (对标 DSH 架构):
@@ -364,9 +372,15 @@ class BaseAgent:
                     "provider": provider,
                     "temperature": temperature,
                 }
-                if "reasoning_effort" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                has_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                if "reasoning_effort" in sig.parameters or has_kwargs:
                     call_kwargs["reasoning_effort"] = thinking_level
+                if "user" in sig.parameters or has_kwargs:
+                    call_kwargs["user"] = user_id
+                if "session_id" in sig.parameters or has_kwargs:
+                    call_kwargs["session_id"] = session_id
                 ai_resp = await self._call_llm_generate(**call_kwargs)
+
             except Exception as e:
                 err_msg = f"智能体推理异常: {str(e)}"
                 logger.error(err_msg)

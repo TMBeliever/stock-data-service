@@ -65,6 +65,11 @@ export default defineConfig(({ mode }) => {
           target: agentTarget,
           changeOrigin: true,
         },
+        // 0.2 微信量化智能助理服务 (weixin-bot :8095)
+        '/api/v1/weixin': {
+          target: 'http://localhost:8095',
+          changeOrigin: true,
+        },
         // 1. 通用业务与用户鉴权服务 (common-server :8090)
         '/api/v1/auth': {
           target: authTarget,

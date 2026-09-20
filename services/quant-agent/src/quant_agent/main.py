@@ -76,6 +76,8 @@ class AgentChatRequest(BaseModel):
     approved_tool_call: Optional[Dict[str, Any]] = Field(None, description="用户已授权立即执行的工具调用对象 {'id': ..., 'name': ..., 'arguments': ...}")
     max_steps: Optional[int] = Field(None, description="单次最大步数 (None 或 0 为无限制，对标 DSH)")
     agent_mode: Optional[str] = Field("auto", description="场景运行模式 ('auto' | 'quant' | 'devops' | 'all')")
+    user_id: Optional[str] = Field(None, description="用户唯一标识 (如微信 wxid 或 Web 用户 ID)")
+    session_id: Optional[str] = Field(None, description="会话唯一标识 (用于多轮会话与 CLI 粘性绑定)")
 
 
 
@@ -532,6 +534,18 @@ async def save_session_message(project_id: str, session_id: str, req: SaveMessag
         raise HTTPException(status_code=404, detail="会话或项目不存在")
     return {"status": "success", "message": msg.model_dump()}
 
+
+@app.delete("/api/v1/agent/sessions/{session_id}", tags=["Agent Chat"])
+async def close_agent_session(session_id: str, auth: UserAuth = Depends(get_current_auth)):
+    """显式重置并销毁指定智能体会话在底层 ai-core 的 Worker 资源"""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.delete(f"{agent_config.AI_CORE_URL}/v1/sessions/{session_id}")
+    except Exception as e:
+        logger.debug("通知 ai-core 销毁会话异常 (非阻断): %s", e)
+    return {"status": "success", "message": f"会话 {session_id} 已成功注销与重置"}
+
 @app.post("/api/v1/agent/chat", tags=["Agent Chat"])
 
 async def chat_stream(req: AgentChatRequest, auth: UserAuth = Depends(get_current_auth)):
@@ -572,7 +586,9 @@ async def chat_stream(req: AgentChatRequest, auth: UserAuth = Depends(get_curren
         approved_tool_calls=req.approved_tool_calls or [],
         approved_tool_call=req.approved_tool_call,
         thinking_level=thinking_lvl,
-        max_steps=req.max_steps if req.max_steps is not None else cfg.max_steps
+        max_steps=req.max_steps if req.max_steps is not None else cfg.max_steps,
+        user_id=req.user_id or auth.user_id,
+        session_id=req.session_id
     )
 
     return EventSourceResponse(stream)

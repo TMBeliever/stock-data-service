@@ -17,6 +17,7 @@ services:
       - common-server
       - stock-data
       - mcp-gateway
+      - weixin-bot
     networks:
       - quant-net
 
@@ -175,6 +176,29 @@ services:
     networks:
       - quant-net
 
+  # =========================================================================
+  # 8. 微信量化智能助理服务 (iLink 直连与 Web 扫码管理)
+  # =========================================================================
+  weixin-bot:
+    build:
+      context: services/weixin-bot
+      dockerfile: Dockerfile
+    container_name: quant-weixin-bot
+    restart: unless-stopped
+    # 纯内部网络服务，不对外暴露公网端口，仅由 web-admin Nginx 统一反代
+    expose:
+      - "8095"
+    environment:
+      - PORT=8095
+      - QUANT_AGENT_URL=http://quant-agent:8060
+      - STORAGE_DIR=/app/.data
+    volumes:
+      - weixin_bot_storage:/app/.data
+    depends_on:
+      - quant-agent
+    networks:
+      - quant-net
+
 # =========================================================================
 # 存储卷定义 (生产数据持久化保障)
 # =========================================================================
@@ -186,6 +210,8 @@ volumes:
     name: quant_common_data_storage
   agent_workspace_storage:
     name: quant_agent_workspace_storage
+  weixin_bot_storage:
+    name: quant_weixin_bot_storage
 
 # =========================================================================
 # 独立内部隔离通信网络
@@ -194,3 +220,4 @@ networks:
   quant-net:
     name: quant_production_network
     driver: bridge
+

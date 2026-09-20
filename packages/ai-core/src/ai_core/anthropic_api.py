@@ -121,6 +121,7 @@ async def count_tokens(req: AnthropicMessagesRequest):
 
 @anthropic_router.post("/v1/messages")
 @anthropic_router.post("/messages")
+@anthropic_router.post("/v1/v1/messages")
 async def messages_completion(req: AnthropicMessagesRequest):
     """
     Anthropic 标准 POST /v1/messages 端点：

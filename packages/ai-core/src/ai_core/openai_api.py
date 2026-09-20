@@ -178,6 +178,7 @@ def _resolve_provider_and_kwargs(req: OpenAIChatCompletionRequest) -> tuple[str,
 
 @openai_router.get("/v1/models")
 @openai_router.get("/models")
+@openai_router.get("/v1/v1/models")
 async def list_models():
     """
     OpenAI 标准模型列表端点：
@@ -206,6 +207,7 @@ async def list_models():
 
 @openai_router.post("/v1/chat/completions")
 @openai_router.post("/chat/completions")
+@openai_router.post("/v1/v1/chat/completions")
 async def chat_completions(req: OpenAIChatCompletionRequest):
     """
     OpenAI 标准对话补全端点：

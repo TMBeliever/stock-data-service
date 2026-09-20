@@ -17,7 +17,6 @@ services:
       - common-server
       - stock-data
       - mcp-gateway
-      - weixin-bot
     networks:
       - quant-net
 

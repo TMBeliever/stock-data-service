@@ -157,6 +157,8 @@ def build_system_prompt(
             "必须在 `admin_execute_shell` 或 `run_command` 的 `cwd` 参数中传入上述工程的物理工作目录（或使用 cd 进入该目录）。\n"
             "• 若 Git 命令返回 `fatal: not a git repository`，说明该工程可能为直接导入的代码快照/压缩包，缺少 .git 版本库元数据，应明确向用户解释原因。"
         )
+    elif page_context and ("微信" in page_context or "移动" in page_context or "排版" in page_context or "客户端" in page_context):
+        base += f"\n\n【客户端终端环境与排版规范】:\n{page_context}"
 
     if not is_admin:
         base += (

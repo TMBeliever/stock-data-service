@@ -155,7 +155,14 @@ export class QuantAgentBridge {
       agent_mode: "quant",
       user_id: boundUserId,
       session_id: session.sessionId,
-      page_context: "【调用来源】移动微信客户端。排版请遵循结论先行、结构清晰原则，多用要点列表和短句，避免输出超宽长表格。",
+      page_context: [
+        "【终端环境】移动微信客户端（屏幕较窄，纯文本渲染）。",
+        "【排版规范】",
+        "1. 严禁输出任何 HTML 标签（如 <font>、<span>、<b> 等），微信客户端无法解析 HTML，会导致直接显示源码！",
+        "2. 中国A股市场颜色与符号规范：上涨/浮盈必须为红色 🔺 或 +，下跌/浮亏必须为绿色 🔻 或 -，严禁使用海外绿涨红跌！",
+        "3. 排版紧凑清晰：优先使用精炼要点，持仓数据请输出紧凑的结构化对比卡片，避免生成臃肿的多列超宽长表格。",
+        "4. 结论先行，分段落重点突出，让用户在手机上无需反复滑动即可一目了然。",
+      ].join("\n"),
       thinking_level: "medium",
     };
 
@@ -289,31 +296,116 @@ export class QuantAgentBridge {
   /**
    * 优化 1 & 优化 2: 将 Markdown 转化为移动微信端友好、高可读性的排版
    */
+  /**
+   * 优化 1 & 优化 2: 将 Markdown 转化为移动微信端专属的高质感金融排版
+   */
   public formatForWeixin(content: string): string {
-    // 1. 优化 1: 将 Markdown 表格自动转换为移动微信端易读的结构化键值卡片
-    let text = this.convertMarkdownTablesToCards(content);
+    // 1. 彻底清洗所有 HTML 标签 (解决微信不支持 <font color="..."> 且出现源码与红绿反转的痛点)
+    let text = content.replace(/<[^>]+>/g, "");
 
-    // 2. 优化 2: 金融视觉符号与排版规范增强
-    // 2.1 标题层级转化 (先长后短避免部分替换)
-    text = text.replace(/^####\s*(.+)$/gm, "🔸 【$1】");
+    // 2. 将 Markdown 表格自动转换为移动微信端易读的结构化键值与资产卡片
+    text = this.convertMarkdownTablesToCards(text);
+
+    // 3. 若存在旧版展开式 9 行持仓列表，智能压缩合并为精炼金融卡片 (必须在重命名标题前执行)
+    const cardBlockRegex = /🔹\s*【([^】]+)】\s*\n((?:\s*▫️\s*[^\n]+\n?)+)/g;
+    text = text.replace(cardBlockRegex, (match, headerCode, itemsText) => {
+      const lines = itemsText.trim().split("\n");
+      const dict: Record<string, string> = {};
+      for (const l of lines) {
+        const m = l.match(/▫️\s*([^:：]+)[:：]\s*(.+)/);
+        if (m) {
+          dict[m[1].trim()] = m[2].trim();
+        }
+      }
+
+      const name = dict["标的名称"] || dict["名称"] || "";
+      const code = headerCode.trim();
+      const title = name ? `🔹 【${name} (${code})】` : `🔹 【${code}】`;
+
+      const price = dict["最新价"] || dict["现价"] || "";
+      const change = dict["当日涨跌"] || dict["涨跌幅"] || "";
+      const cost = dict["成本价"] || dict["持仓成本"] || "";
+      const quantity = dict["持仓数量"] || dict["持仓"] || dict["数量"] || "";
+      const marketVal = dict["当前市值"] || dict["市值"] || "";
+      const pnl = dict["浮动盈亏"] || dict["盈亏"] || "";
+      const ret = dict["收益率"] || dict["盈亏率"] || "";
+
+      const out: string[] = [title];
+      if (price || cost) {
+        const pStr = price ? (change ? `现价: ${price} (${change})` : `现价: ${price}`) : "";
+        const cStr = cost ? `成本: ${cost}` : "";
+        out.push(`   • ${[pStr, cStr].filter(Boolean).join(" ｜ ")}`);
+      }
+      if (marketVal || quantity) {
+        const mStr = marketVal ? `市值: ${marketVal}` : "";
+        const qStr = quantity ? `持仓: ${quantity}` : "";
+        out.push(`   • ${[mStr, qStr].filter(Boolean).join(" ｜ ")}`);
+      }
+      if (pnl || ret) {
+        const pnlStr = pnl ? (ret ? `浮动盈亏: ${pnl} (${ret})` : `浮动盈亏: ${pnl}`) : (ret ? `收益率: ${ret}` : "");
+        out.push(`   • ${pnlStr}`);
+      }
+
+      const knownKeys = new Set([
+        "标的名称", "名称", "持仓数量", "持仓", "数量", "成本价", "持仓成本",
+        "最新价", "现价", "当日涨跌", "涨跌幅", "当前市值", "市值", "浮动盈亏", "盈亏", "收益率", "盈亏率"
+      ]);
+      for (const [k, v] of Object.entries(dict)) {
+        if (!knownKeys.has(k)) {
+          out.push(`   • ${k}: ${v}`);
+        }
+      }
+
+      return out.join("\n") + "\n";
+    });
+
+    // 4. 分割线美化：将 --- 或 *** 替换为优雅雅致的虚线
+    text = text.replace(/^\s*[-*_]{3,}\s*$/gm, "\n────────────────────────");
+
+    // 5. 章节大标题美化：严格限制数字长度 1-2 位或汉字 1-3 位，杜绝匹配股票代码
+    text = text.replace(/^[#\s]*[📌🔖🔸📈🔹💼📊💡⚠️🎯]*\s*【\s*([一二三四五六七八九十]{1,3}|\d{1,2})[、\.\s]*\s*([^】]+)】/gmu, (m, num, title) => {
+      const t = title.trim();
+      let icon = "📌";
+      // 优先级严格按具体特征判断，避免“资产分析”误判为“资产总览”
+      if (/分析|结构|诊断|归因|全景|画像/i.test(t)) icon = "📈";
+      else if (/明细|持仓|清单|列表|标的/i.test(t)) icon = "📊";
+      else if (/总览|概览|汇总|统计|账户/i.test(t)) icon = "💼";
+      else if (/建议|操作|策略|结论/i.test(t)) icon = "💡";
+      else if (/风险|提示|预警|注意/i.test(t)) icon = "⚠️";
+      else if (/回测|表现|收益|净值/i.test(t)) icon = "🎯";
+      return `${icon} 【${num}、${t}】`;
+    });
+
+    // 普通 Markdown 标题转化
+    text = text.replace(/^####\s*(.+)$/gm, "🔸 $1");
     text = text.replace(/^###\s*(.+)$/gm, "📌 【$1】");
     text = text.replace(/^##\s*(.+)$/gm, "🔖 【$1】");
     text = text.replace(/^#\s*(.+)$/gm, "📈 【$1】");
 
-    // 2.2 引用块转化
+    // 6. 引用块转化
     text = text.replace(/^>\s*(.+)$/gm, "💡 $1");
 
-    // 2.3 无序列表统一为易读实心圆点
-    text = text.replace(/^[\*\-]\s+/gm, "• ");
+    // 7. 层次符号优化
+    // 7.1 将一级数字编号标为高亮小标 (如 1. 配置均衡性 -> 🔸 1. 配置均衡性)
+    text = text.replace(/^(\d+)\.\s+/gm, "🔸 $1. ");
+    // 7.2 二级缩进列表美化 (保留层次缩进，移动端不散乱)
+    text = text.replace(/^(\s{2,})[-*]\s+/gm, "   ▫️ ");
+    // 7.3 一级无序列表统一
+    text = text.replace(/^[-*]\s+/gm, "• ");
 
-    // 2.4 金融涨跌红绿符号增强 (仅在未包含 emoji 时自动添加)
-    text = text.replace(/(?<![🔺🔴🟢🔻\d])\+(\d+(?:\.\d+)?%)/g, "🔺 +$1");
-    text = text.replace(/(?<![🔺🔴🟢🔻\d])\-(\d+(?:\.\d+)?%)/g, "🔻 -$1");
+    // 8. 金融涨跌红绿符号规范 (A股市场标准：上涨/浮盈为红色🔺+，下跌/浮亏为绿色🔻-)
+    // 8.1 预先剥离百分比前可能存在的冗余 emoji 避免重复嵌套
+    text = text.replace(/[🔺🔴🟢🔻]\s*([+\-]\d+(?:\.\d+)?%)/gu, "$1");
+    // 8.2 统一赋予标准红绿 emoji
+    text = text.replace(/(?<!\d)\+(\d+(?:\.\d+)?%)/g, "🔺 +$1");
+    text = text.replace(/(?<!\d)-(\d+(?:\.\d+)?%)/g, "🔻 -$1");
+    // 8.3 修复括号内紧挨着的异常空格如 ( 🔺 +1.10%) -> (🔺 +1.10%)
+    text = text.replace(/\(\s+([🔺🔻])/g, "($1");
 
-    // 2.5 移除冗余 ** 加粗符号，微信不支持加粗且影响观感
+    // 9. 移除 markdown 加粗 **
     text = text.replace(/\*\*([^*]+)\*\*/g, "$1");
 
-    // 2.6 压缩过多连续空行 (最多保留 1 个空行)
+    // 10. 压缩多余连续空行
     text = text.replace(/\n{3,}/g, "\n\n");
 
     return text.trim();
@@ -336,7 +428,7 @@ export class QuantAgentBridge {
           .replace(/^\|/, "")
           .replace(/\|$/, "")
           .split("|")
-          .map((c) => c.trim())
+          .map((c) => c.trim().replace(/<[^>]+>/g, ""))
       );
 
       // 过滤掉表格分割线如 |---|---|
@@ -357,18 +449,100 @@ export class QuantAgentBridge {
             }
           }
         } else {
-          // 多列矩阵表格 (如 股票 | 最新价 | 涨跌幅 | PE)
-          for (let i = 0; i < rowsBody.length; i++) {
-            const row = rowsBody[i];
-            const primaryName = row[0] || `项 ${i + 1}`;
-            result.push(`🔹 【${primaryName}】`);
-            for (let j = 1; j < headers.length; j++) {
-              const h = headers[j] || `指标${j}`;
-              const val = row[j] || "--";
-              result.push(`   ▫️ ${h}: ${val}`);
+          // 多列表格：检测是否为标的/持仓类表格
+          const colMap: Record<string, number> = {};
+          headers.forEach((h, idx) => {
+            colMap[h.trim()] = idx;
+          });
+
+          // 查找各字段对应的索引
+          const findIndex = (patterns: RegExp[]): number => {
+            for (const [colName, idx] of Object.entries(colMap)) {
+              if (patterns.some((p) => p.test(colName))) return idx;
             }
-            if (i < rowsBody.length - 1) {
-              result.push("");
+            return -1;
+          };
+
+          const idxCode = findIndex([/代码|symbol|code/i]);
+          const idxName = findIndex([/名称|标的|股票|name/i]);
+          const idxPrice = findIndex([/最新价|现价|收盘价|price/i]);
+          const idxChange = findIndex([/当日涨跌|涨跌幅|涨跌|change/i]);
+          const idxCost = findIndex([/成本价|持仓成本|成本|cost/i]);
+          const idxQty = findIndex([/持仓数量|持仓|数量|份额|shares|volume/i]);
+          const idxMarketVal = findIndex([/当前市值|市值|资产|market_value/i]);
+          const idxPnl = findIndex([/浮动盈亏|盈亏金额|累计盈亏|pnl|profit/i]);
+          const idxRet = findIndex([/收益率|盈亏比例|浮盈率|return/i]);
+
+          // 判断是否命中持仓/金融类资产表格
+          const isPositionTable = idxCode >= 0 || (idxName >= 0 && (idxPrice >= 0 || idxMarketVal >= 0));
+
+          if (isPositionTable) {
+            for (let i = 0; i < rowsBody.length; i++) {
+              const row = rowsBody[i];
+              const code = idxCode >= 0 ? row[idxCode] : "";
+              const name = idxName >= 0 ? row[idxName] : "";
+
+              let title = "";
+              if (name && code && name !== code) {
+                title = `🔹 【${name} (${code})】`;
+              } else {
+                title = `🔹 【${name || code || `标的 ${i + 1}`}】`;
+              }
+              result.push(title);
+
+              // 现价 & 涨跌 & 成本
+              const price = idxPrice >= 0 ? row[idxPrice] : "";
+              const change = idxChange >= 0 ? row[idxChange] : "";
+              const cost = idxCost >= 0 ? row[idxCost] : "";
+              if (price || cost) {
+                const pStr = price ? (change ? `现价: ${price} (${change})` : `现价: ${price}`) : "";
+                const cStr = cost ? `成本: ${cost}` : "";
+                result.push(`   • ${[pStr, cStr].filter(Boolean).join(" ｜ ")}`);
+              }
+
+              // 市值 & 持仓
+              const marketVal = idxMarketVal >= 0 ? row[idxMarketVal] : "";
+              const qty = idxQty >= 0 ? row[idxQty] : "";
+              if (marketVal || qty) {
+                const mStr = marketVal ? `市值: ${marketVal}` : "";
+                const qStr = qty ? `持仓: ${qty}` : "";
+                result.push(`   • ${[mStr, qStr].filter(Boolean).join(" ｜ ")}`);
+              }
+
+              // 浮动盈亏 & 收益率
+              const pnl = idxPnl >= 0 ? row[idxPnl] : "";
+              const ret = idxRet >= 0 ? row[idxRet] : "";
+              if (pnl || ret) {
+                const pnlStr = pnl ? (ret ? `浮动盈亏: ${pnl} (${ret})` : `浮动盈亏: ${pnl}`) : (ret ? `收益率: ${ret}` : "");
+                result.push(`   • ${pnlStr}`);
+              }
+
+              // 处理其他未映射的列
+              const mappedIndices = new Set([idxCode, idxName, idxPrice, idxChange, idxCost, idxQty, idxMarketVal, idxPnl, idxRet]);
+              for (let j = 0; j < headers.length; j++) {
+                if (!mappedIndices.has(j) && row[j]) {
+                  result.push(`   • ${headers[j]}: ${row[j]}`);
+                }
+              }
+
+              if (i < rowsBody.length - 1) {
+                result.push("");
+              }
+            }
+          } else {
+            // 普通非持仓多列表格
+            for (let i = 0; i < rowsBody.length; i++) {
+              const row = rowsBody[i];
+              const primaryName = row[0] || `项 ${i + 1}`;
+              result.push(`🔹 【${primaryName}】`);
+              for (let j = 1; j < headers.length; j++) {
+                const h = headers[j] || `指标${j}`;
+                const val = row[j] || "--";
+                result.push(`   • ${h}: ${val}`);
+              }
+              if (i < rowsBody.length - 1) {
+                result.push("");
+              }
             }
           }
         }

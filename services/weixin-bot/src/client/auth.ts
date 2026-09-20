@@ -35,18 +35,25 @@ export class WeixinAuth {
   /**
    * Check status of QR code once (with long-poll support).
    */
-  async checkQRCodeStatus(qrcode: string, verifyCode?: string, timeoutMs: number = 25_000): Promise<StatusResponse> {
+  async checkQRCodeStatus(qrcode: string, verifyCode?: string, timeoutMs: number = 20_000): Promise<StatusResponse> {
     let endpoint = `ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`;
     if (verifyCode) {
       endpoint += `&verify_code=${encodeURIComponent(verifyCode)}`;
     }
-    const rawText = await apiGetFetch({
-      baseUrl: this.baseUrl,
-      endpoint,
-      timeoutMs,
-      label: "checkQRCodeStatus",
-    });
-    return JSON.parse(rawText) as StatusResponse;
+    try {
+      const rawText = await apiGetFetch({
+        baseUrl: this.baseUrl,
+        endpoint,
+        timeoutMs,
+        label: "checkQRCodeStatus",
+      });
+      return JSON.parse(rawText) as StatusResponse;
+    } catch (err: any) {
+      if (err.name === "AbortError" || err.message?.includes("aborted")) {
+        return { status: "wait" };
+      }
+      throw err;
+    }
   }
 
   /**

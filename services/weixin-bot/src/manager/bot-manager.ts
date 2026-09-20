@@ -170,45 +170,52 @@ export class WeixinBotManager {
    * Web 端轮询扫码状态
    */
   public async checkStatus(qrcode: string) {
-    const pending = this.pendingQRCodes.get(qrcode);
-    const resp = await this.auth.checkQRCodeStatus(qrcode);
+    try {
+      const pending = this.pendingQRCodes.get(qrcode);
+      const resp = await this.auth.checkQRCodeStatus(qrcode);
 
-    if (resp.status === "confirmed") {
-      if (!resp.bot_token || !resp.ilink_bot_id) {
-        throw new Error("微信确认登录，但未返回凭据");
+      if (resp.status === "confirmed") {
+        if (!resp.bot_token || !resp.ilink_bot_id) {
+          throw new Error("微信确认登录，但未返回凭据");
+        }
+
+        const session: BotSession = {
+          token: resp.bot_token,
+          accountId: resp.ilink_bot_id,
+          baseUrl: resp.baseurl || "https://ilinkai.weixin.qq.com",
+          userId: resp.ilink_user_id,
+          savedAt: Date.now(),
+        };
+
+        // 绑定 Web 用户身份
+        if (pending) {
+          this.saveBinding({
+            userId: pending.user.userId,
+            username: pending.user.username,
+            token: pending.user.token,
+            boundAt: Date.now(),
+          });
+          this.pendingQRCodes.delete(qrcode);
+        }
+
+        // 启动 Bot 实例
+        await this.startBot(session);
+
+        return {
+          status: "confirmed",
+          botInfo: this.getBotInfo(),
+        };
       }
-
-      const session: BotSession = {
-        token: resp.bot_token,
-        accountId: resp.ilink_bot_id,
-        baseUrl: resp.baseurl || "https://ilinkai.weixin.qq.com",
-        userId: resp.ilink_user_id,
-        savedAt: Date.now(),
-      };
-
-      // 绑定 Web 用户身份
-      if (pending) {
-        this.saveBinding({
-          userId: pending.user.userId,
-          username: pending.user.username,
-          token: pending.user.token,
-          boundAt: Date.now(),
-        });
-        this.pendingQRCodes.delete(qrcode);
-      }
-
-      // 启动 Bot 实例
-      await this.startBot(session);
 
       return {
-        status: "confirmed",
-        botInfo: this.getBotInfo(),
+        status: resp.status || "wait",
+      };
+    } catch (e: any) {
+      logger.warn(`[checkStatus] 状态轮询异常 (qrcode=${qrcode}):`, e?.message || e);
+      return {
+        status: "wait",
       };
     }
-
-    return {
-      status: resp.status,
-    };
   }
 
   /**

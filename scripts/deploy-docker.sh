@@ -20,6 +20,7 @@ ALL_SERVICES=(
     "common-server"
     "quant-agent"
     "mcp-gateway"
+    "weixin-bot"
     "web-admin"
 )
 
@@ -70,6 +71,9 @@ get_service_watch_paths() {
         web-admin)
             echo "apps/web-admin"
             ;;
+        weixin-bot)
+            echo "services/weixin-bot"
+            ;;
         quant-agent)
             echo "services/quant-agent packages/agent-core packages/ai-core packages/quant-core packages/stock-data pyproject.toml"
             ;;
@@ -100,6 +104,9 @@ get_service_health_endpoint() {
     case "$svc" in
         web-admin)
             echo "http://127.0.0.1:${WEB_PORT:-80}/"
+            ;;
+        weixin-bot)
+            echo "http://127.0.0.1:8095/health"
             ;;
         quant-agent)
             echo "http://127.0.0.1:8060/health"
@@ -373,6 +380,7 @@ show_status() {
     echo -e "${GREEN}  - ⚡ 量化回测中枢:       http://<服务器IP>:8080/health      ${RESET}"
     echo -e "${GREEN}  - 👤 用户中心与策略库:   http://<服务器IP>:8090/health      ${RESET}"
     echo -e "${GREEN}  - 📈 行情数据中台:       http://<服务器IP>:8000/docs        ${RESET}"
+    echo -e "${GREEN}  - 💬 微信智能助理:       http://<服务器IP>:${WEB_PORT:-80}/agent-settings?tab=weixin ${RESET}"
     echo -e "${GREEN}==============================================================${RESET}"
 }
 

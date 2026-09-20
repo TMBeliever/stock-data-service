@@ -184,9 +184,9 @@ services:
       dockerfile: Dockerfile
     container_name: quant-weixin-bot
     restart: unless-stopped
-    # 纯内部网络服务，不对外暴露公网端口，仅由 web-admin Nginx 统一反代
-    expose:
-      - "8095"
+    # 仅绑定本地回环端口供宿主机探针监测，外网流量由 web-admin Nginx 统一反代
+    ports:
+      - "127.0.0.1:8095:8095"
     environment:
       - PORT=8095
       - QUANT_AGENT_URL=http://quant-agent:8060

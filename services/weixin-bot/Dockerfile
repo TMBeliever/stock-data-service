@@ -2,14 +2,11 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# 安装 pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# 复制依赖配置
-COPY package.json pnpm-lock.yaml* tsconfig.json ./
-RUN pnpm install --frozen-lockfile || pnpm install
+COPY package.json tsconfig.json ./
+RUN pnpm install
 
-# 复制源码并编译 TypeScript
 COPY src/ ./src/
 RUN pnpm build
 
@@ -21,11 +18,8 @@ ENV NODE_ENV=production
 ENV PORT=8095
 ENV STORAGE_DIR=/app/.data
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
-
-COPY package.json pnpm-lock.yaml* ./
-RUN pnpm install --prod --frozen-lockfile || pnpm install --prod
-
+COPY package.json ./
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
 # 创建持久化数据目录

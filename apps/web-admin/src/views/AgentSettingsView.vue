@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useAgentSettingsStore, type ExecutionMode, type McpServerItem } from '@/stores/agentSettings'
 import { useAuthStore } from '@/stores/auth'
-
 import { useModalLayer } from '@/stores/modalManager'
 
 const router = useRouter()
+const route = useRoute()
 const settingsStore = useAgentSettingsStore()
 const authStore = useAuthStore()
 
-const activeTab = ref<'permissions' | 'mcp' | 'runtime'>('permissions')
+const activeTab = ref<'permissions' | 'mcp' | 'runtime' | 'weixin'>('permissions')
 const showAddMcpModal = ref(false)
 const toastMsg = ref('')
 
@@ -167,8 +167,206 @@ async function handleCreateMcp() {
   }
 }
 
-onMounted(() => {
+// ── 微信量化助理管理逻辑 ──
+const weixinLoading = ref(false)
+const weixinBotInfo = ref<{
+  online: boolean
+  accountId?: string | null
+  userId?: string | null
+  nickname?: string | null
+  boundUser?: { userId: string; username: string; boundAt: number } | null
+} | null>(null)
+
+const weixinQrData = ref<{
+  qrcode: string
+  qrcodeImgContent?: string
+  qrDataUrl?: string
+  qrcodeUrl?: string
+} | null>(null)
+
+const weixinScanStatus = ref<'idle' | 'wait' | 'scaned' | 'confirmed' | 'expired'>('idle')
+const weixinStatusTip = ref('请使用手机微信扫描二维码')
+let weixinPollTimer: any = null
+
+async function fetchWeixinBotInfo() {
+  if (!authStore.isLoggedIn) return
+  try {
+    const headers: Record<string, string> = {}
+    if (authStore.token) {
+      headers['Authorization'] = `Bearer ${authStore.token}`
+    }
+    const res = await fetch('/api/v1/weixin/bot-info', { headers })
+    if (res.ok) {
+      const json = await res.json()
+      if (json.status === 'success') {
+        weixinBotInfo.value = json.data
+      }
+    }
+  } catch (e) {
+    // 忽略异常
+  }
+}
+
+async function loadWeixinQRCode() {
+  if (!authStore.isLoggedIn) return
+  weixinLoading.value = true
+  weixinQrData.value = null
+  weixinScanStatus.value = 'idle'
+  stopWeixinPolling()
+
+  try {
+    const headers: Record<string, string> = {}
+    if (authStore.token) {
+      headers['Authorization'] = `Bearer ${authStore.token}`
+    }
+
+    const res = await fetch('/api/v1/weixin/qrcode', { headers })
+    const json = await res.json().catch(() => null)
+    if (res.ok && json?.status === 'success' && json?.data) {
+      if (json.data.alreadyOnline) {
+        weixinBotInfo.value = json.data.botInfo
+      } else {
+        weixinQrData.value = json.data
+        startWeixinPolling(json.data.qrcode)
+      }
+    } else {
+      weixinStatusTip.value = json?.message || '微信服务未就绪，请检查 weixin-bot 容器是否启动'
+    }
+  } catch (e) {
+    weixinStatusTip.value = '连接微信服务超时，请检查 weixin-bot 容器状态'
+  } finally {
+    weixinLoading.value = false
+  }
+}
+
+function startWeixinPolling(qrcode: string) {
+  stopWeixinPolling()
+  weixinScanStatus.value = 'wait'
+  weixinStatusTip.value = '等待微信扫码授权...'
+
+  const poll = async () => {
+    if (activeTab.value !== 'weixin' || weixinScanStatus.value === 'confirmed') return
+
+    try {
+      const res = await fetch(`/api/v1/weixin/status?qrcode=${encodeURIComponent(qrcode)}`)
+      if (!res.ok) return
+      const json = await res.json()
+
+      if (json.status === 'success' && json.data) {
+        const s = json.data.status
+        if (s === 'scaned') {
+          weixinScanStatus.value = 'scaned'
+          weixinStatusTip.value = '📱 已扫描，请在手机微信上点击【确认登录】...'
+        } else if (s === 'confirmed') {
+          weixinScanStatus.value = 'confirmed'
+          weixinStatusTip.value = '🎉 授权成功！正在激活量化助理...'
+          stopWeixinPolling()
+          await fetchWeixinBotInfo()
+          showToast('✓ 微信量化助理已成功绑定上线')
+          return
+        } else if (s === 'expired') {
+          weixinScanStatus.value = 'expired'
+          weixinStatusTip.value = '⏳ 二维码已过期，请重新刷新'
+          stopWeixinPolling()
+          return
+        }
+      }
+    } catch (e) {
+      // 轮询异常忽略
+    }
+
+    if (activeTab.value === 'weixin' && weixinScanStatus.value !== 'confirmed' && weixinScanStatus.value !== 'expired') {
+      weixinPollTimer = setTimeout(poll, 2000)
+    }
+  }
+
+  poll()
+}
+
+function stopWeixinPolling() {
+  if (weixinPollTimer) {
+    clearTimeout(weixinPollTimer)
+    weixinPollTimer = null
+  }
+}
+
+const weixinResetting = ref(false)
+async function handleWeixinResetSession() {
+  weixinResetting.value = true
+  try {
+    const res = await fetch('/api/v1/weixin/reset-session', { method: 'POST' })
+    if (res.ok) {
+      showToast('✨ 微信会话上下文已全局彻底重置')
+    }
+  } catch (e) {
+    showToast('❌ 重置失败，请稍后重试')
+  } finally {
+    weixinResetting.value = false
+  }
+}
+
+const weixinLoggingOut = ref(false)
+async function handleWeixinLogout() {
+  weixinLoggingOut.value = true
+  try {
+    await fetch('/api/v1/weixin/logout', { method: 'POST' })
+    weixinBotInfo.value = null
+    showToast('✓ 微信登录已注销')
+    await loadWeixinQRCode()
+  } catch (e) {
+    // 忽略
+  } finally {
+    weixinLoggingOut.value = false
+  }
+}
+
+onMounted(async () => {
   settingsStore.fetchSettings()
+  if (route.query.tab === 'weixin') {
+    activeTab.value = 'weixin'
+  }
+  if (activeTab.value === 'weixin' && authStore.isLoggedIn) {
+    await fetchWeixinBotInfo()
+    if (!weixinBotInfo.value?.online) {
+      await loadWeixinQRCode()
+    }
+  }
+})
+
+watch(() => route.query.tab, (tab) => {
+  if (tab === 'weixin' || tab === 'permissions' || tab === 'mcp' || tab === 'runtime') {
+    activeTab.value = tab
+  }
+})
+
+watch(activeTab, async (tab) => {
+  if (tab === 'weixin') {
+    if (authStore.isLoggedIn) {
+      await fetchWeixinBotInfo()
+      if (!weixinBotInfo.value?.online) {
+        await loadWeixinQRCode()
+      }
+    }
+  } else {
+    stopWeixinPolling()
+  }
+})
+
+watch(() => authStore.isLoggedIn, async (loggedIn) => {
+  if (loggedIn && activeTab.value === 'weixin') {
+    await fetchWeixinBotInfo()
+    if (!weixinBotInfo.value?.online) {
+      await loadWeixinQRCode()
+    }
+  } else if (!loggedIn) {
+    stopWeixinPolling()
+    weixinBotInfo.value = null
+    weixinQrData.value = null
+  }
+})
+
+onUnmounted(() => {
+  stopWeixinPolling()
 })
 </script>
 
@@ -231,6 +429,15 @@ onMounted(() => {
         >
           <span>⚡</span>
           <span>模型与运行调优</span>
+        </button>
+        <button
+          @click="activeTab = 'weixin'"
+          :class="activeTab === 'weixin' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold shadow-sm' : 'text-zinc-400 hover:text-zinc-200'"
+          class="px-3 py-1.5 rounded-lg text-xs transition-all flex items-center space-x-1.5 cursor-pointer"
+        >
+          <span>💬</span>
+          <span>微信智能助理</span>
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
         </button>
       </div>
     </div>
@@ -1027,6 +1234,266 @@ onMounted(() => {
             <span>💾</span>
             <span>{{ settingsStore.saving ? '保存中...' : '保存模型与运行调优参数' }}</span>
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. 微信智能助理配置面板 (Tab: weixin) -->
+    <div v-show="activeTab === 'weixin'" class="space-y-6 animate-fade">
+      <!-- 4.1 未登录状态提示卡片 (未登录时强制引导登录，确保多租户数据隔离) -->
+      <div
+        v-if="!authStore.isLoggedIn"
+        class="rounded-2xl bg-[#141418] border border-white/[0.08] p-8 text-center space-y-5 shadow-2xl relative overflow-hidden"
+      >
+        <div class="absolute -right-16 -top-16 w-48 h-48 rounded-full bg-emerald-500/5 blur-3xl pointer-events-none"></div>
+        <div class="w-16 h-16 mx-auto rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-3xl shadow-inner">
+          💬
+        </div>
+        <div class="max-w-md mx-auto space-y-2">
+          <h2 class="text-base font-bold text-white tracking-tight">需登录量化交易账户以绑定微信智能助理</h2>
+          <p class="text-xs text-zinc-400 leading-relaxed">
+            微信智能助理挂接底层的量化多因子投研引擎与自选股盯盘链路。为保障个人自选监控池、实盘策略与多租户量化上下文安全隔离，绑定功能仅对登录用户开放。
+          </p>
+        </div>
+        <div>
+          <button
+            @click="authStore.openLogin()"
+            class="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-semibold text-xs shadow-lg shadow-emerald-500/20 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer inline-flex items-center space-x-2"
+          >
+            <span>🔑</span>
+            <span>立即登录 / 注册</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 4.2 已登录状态：完整微信机器人绑定与交互管理面板 -->
+      <div v-else class="space-y-6">
+        <!-- 概览与状态条 -->
+        <div class="rounded-2xl bg-[#141418] border border-white/[0.08] p-5 shadow-xl relative overflow-hidden">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div class="flex items-center space-x-3.5">
+              <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center text-xl shadow-inner">
+                💬
+              </div>
+              <div>
+                <div class="flex items-center space-x-2">
+                  <h2 class="text-sm font-bold text-white tracking-tight">个人微信智能投研助理</h2>
+                  <span
+                    v-if="weixinBotInfo?.online"
+                    class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center space-x-1"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>已在线运行</span>
+                  </span>
+                  <span
+                    v-else
+                    class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-zinc-500/15 border border-zinc-500/30 text-zinc-400 flex items-center space-x-1"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full bg-zinc-400"></span>
+                    <span>未绑定登录</span>
+                  </span>
+                </div>
+                <p class="text-xs text-zinc-400 mt-1">
+                  扫码登录个人微信后，助理即可在微信私聊中响应行情检索、因子量化分析与策略回测，全流程与当前账号隔离联动。
+                </p>
+              </div>
+            </div>
+
+            <!-- 当前绑定归属标签 -->
+            <div class="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/[0.06] text-xs text-zinc-300 shrink-0">
+              <span class="text-zinc-500">隔离空间:</span>
+              <span class="font-mono text-emerald-300 font-semibold">{{ authStore.username }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 主内容区：已连接 or 扫码登录 -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- 左侧 2 列：微信连接状态 / 扫码核心卡片 -->
+          <div class="lg:col-span-2 rounded-2xl bg-[#141418] border border-white/[0.08] p-6 shadow-xl flex flex-col justify-between">
+            <!-- 场景 A：已成功连接在线 -->
+            <div v-if="weixinBotInfo?.online" class="space-y-6">
+              <div class="flex items-start justify-between">
+                <div class="flex items-center space-x-3">
+                  <div class="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-2xl">
+                    🤖
+                  </div>
+                  <div>
+                    <div class="text-sm font-bold text-white flex items-center space-x-2">
+                      <span>{{ weixinBotInfo.nickname || '个人微信 Bot' }}</span>
+                      <span class="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                        {{ weixinBotInfo.accountId || '已就绪' }}
+                      </span>
+                    </div>
+                    <div class="text-xs text-zinc-400 mt-1">
+                      微信量化服务运行中 · 消息长轮询监听已就绪
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  @click="fetchWeixinBotInfo"
+                  class="px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-zinc-400 hover:text-white text-xs transition-colors cursor-pointer"
+                  title="刷新状态"
+                >
+                  🔄 刷新
+                </button>
+              </div>
+
+              <!-- 连接属性信息格 -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div class="p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] space-y-1">
+                  <div class="text-[10px] text-zinc-500">归属用户 (JWT)</div>
+                  <div class="font-mono text-zinc-200 truncate">{{ weixinBotInfo.boundUser?.username || authStore.username }} (UID: {{ weixinBotInfo.boundUser?.userId || authStore.user?.id || 'guest' }})</div>
+                </div>
+                <div class="p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] space-y-1">
+                  <div class="text-[10px] text-zinc-500">QuantAgent 网关链路</div>
+                  <div class="font-mono text-emerald-400 truncate">SSE 流式直连 (:8060)</div>
+                </div>
+              </div>
+
+              <!-- 会话管理操作条 -->
+              <div class="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/15 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="space-y-0.5">
+                  <div class="text-xs font-semibold text-emerald-300 flex items-center space-x-1.5">
+                    <span>✨</span>
+                    <span>会话状态与底层进程</span>
+                  </div>
+                  <div class="text-[11px] text-zinc-400">
+                    若对话上下文出现偏移或底层推理任务卡住，可随时一键全局重置。
+                  </div>
+                </div>
+
+                <div class="flex items-center space-x-2 shrink-0">
+                  <button
+                    @click="handleWeixinResetSession"
+                    :disabled="weixinResetting"
+                    class="px-3.5 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 hover:text-white font-medium text-xs transition-all cursor-pointer disabled:opacity-40 flex items-center space-x-1.5"
+                  >
+                    <span>🧹</span>
+                    <span>{{ weixinResetting ? '正在重置...' : '重置微信会话' }}</span>
+                  </button>
+                  <button
+                    @click="handleWeixinLogout"
+                    :disabled="weixinLoggingOut"
+                    class="px-3.5 py-2 rounded-xl bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-300 font-medium text-xs transition-all cursor-pointer disabled:opacity-40 flex items-center space-x-1.5"
+                  >
+                    <span>🔌</span>
+                    <span>{{ weixinLoggingOut ? '断开中...' : '退出登录' }}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 场景 B：未连接，展示扫码卡片 -->
+            <div v-else class="space-y-6 flex flex-col items-center justify-center py-4 text-center">
+              <div class="space-y-1">
+                <h3 class="text-sm font-bold text-white">微信扫码快捷授权</h3>
+                <p class="text-xs text-zinc-400">使用微信扫描下方二维码，授权并自动绑定当前登录账号</p>
+              </div>
+
+              <!-- 二维码显示区 -->
+              <div class="relative p-4 rounded-2xl bg-white shadow-2xl border border-zinc-200 inline-block min-w-[200px] min-h-[200px]">
+                <div v-if="weixinLoading" class="w-48 h-48 flex flex-col items-center justify-center space-y-2 text-zinc-600">
+                  <div class="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+                  <div class="text-xs font-medium">生成登录码中...</div>
+                </div>
+
+                <img
+                  v-else-if="weixinQrData?.qrDataUrl || weixinQrData?.qrcodeUrl"
+                  :src="weixinQrData.qrDataUrl || weixinQrData.qrcodeUrl"
+                  alt="微信登录二维码"
+                  class="w-48 h-48 object-contain rounded-lg"
+                />
+
+                <div v-else class="w-48 h-48 flex flex-col items-center justify-center space-y-2 text-zinc-600">
+                  <div class="text-2xl">⚠️</div>
+                  <div class="text-xs font-medium text-zinc-700 px-2 text-center">{{ weixinStatusTip }}</div>
+                  <button
+                    @click="loadWeixinQRCode"
+                    class="px-3 py-1 rounded-lg bg-emerald-500 text-white text-xs font-semibold hover:bg-emerald-600 transition-all cursor-pointer mt-1"
+                  >
+                    重试生成
+                  </button>
+                </div>
+
+                <!-- 扫码成功提示遮罩 -->
+                <div
+                  v-if="weixinScanStatus === 'scaned'"
+                  class="absolute inset-0 bg-emerald-900/80 backdrop-blur-xs rounded-2xl flex flex-col items-center justify-center text-white space-y-2 p-4 animate-fade"
+                >
+                  <div class="text-3xl animate-bounce">📱</div>
+                  <div class="text-xs font-bold text-center">已扫描！请在微信 App 上点击【确认登录】</div>
+                </div>
+              </div>
+
+              <!-- 状态与控制按键 -->
+              <div class="space-y-2 max-w-sm">
+                <div class="flex items-center justify-center space-x-2 text-xs">
+                  <span
+                    v-if="weixinScanStatus === 'wait'"
+                    class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"
+                  ></span>
+                  <span
+                    v-else-if="weixinScanStatus === 'scaned'"
+                    class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"
+                  ></span>
+                  <span class="text-zinc-300 font-medium">{{ weixinStatusTip }}</span>
+                </div>
+
+                <div class="flex items-center justify-center space-x-3 pt-1">
+                  <button
+                    @click="loadWeixinQRCode"
+                    :disabled="weixinLoading"
+                    class="px-3 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] text-zinc-300 hover:text-white text-xs transition-colors cursor-pointer flex items-center space-x-1"
+                  >
+                    <span>🔄</span>
+                    <span>刷新二维码</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右侧 1 列：功能指令与交互指引卡片 -->
+          <div class="rounded-2xl bg-[#141418] border border-white/[0.08] p-5 shadow-xl space-y-4">
+            <h3 class="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-2">
+              <span>💡</span>
+              <span>微信交互与指令说明</span>
+            </h3>
+
+            <div class="space-y-3 text-xs">
+              <div class="p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] space-y-1">
+                <div class="font-semibold text-emerald-300 flex items-center space-x-1">
+                  <span>🆕</span>
+                  <span>清空与重置新会话</span>
+                </div>
+                <p class="text-zinc-400 text-[11px] leading-relaxed">
+                  在微信中发送 <code class="px-1 py-0.5 rounded bg-black/40 text-amber-300 font-mono">/new</code>、<code class="px-1 py-0.5 rounded bg-black/40 text-amber-300 font-mono">/clear</code>、<code class="px-1 py-0.5 rounded bg-black/40 text-amber-300 font-mono">/reset</code> 或 <code class="px-1 py-0.5 rounded bg-black/40 text-amber-300 font-mono">新会话</code>，系统将立即清空微信会话滑动窗口，并销毁底层 AI 容器子进程。
+                </p>
+              </div>
+
+              <div class="p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] space-y-1">
+                <div class="font-semibold text-teal-300 flex items-center space-x-1">
+                  <span>📈</span>
+                  <span>自选股分析与行情预警</span>
+                </div>
+                <p class="text-zinc-400 text-[11px] leading-relaxed">
+                  直接发送股票代码（如 <code class="px-1 py-0.5 rounded bg-black/40 text-zinc-200 font-mono">600519</code>）或名称（如 <code class="px-1 py-0.5 rounded bg-black/40 text-zinc-200 font-mono">贵州茅台</code>），助理自动提取实时快照与多因子技术形态。
+                </p>
+              </div>
+
+              <div class="p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] space-y-1">
+                <div class="font-semibold text-purple-300 flex items-center space-x-1">
+                  <span>🛡️</span>
+                  <span>严格的多租户隔离保障</span>
+                </div>
+                <p class="text-zinc-400 text-[11px] leading-relaxed">
+                  机器人与您的量化交易账号深度绑定，调用的 MCP 工具仅能访问属于您的自选策略与交易上下文，绝不与其他用户产生数据交叉。
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

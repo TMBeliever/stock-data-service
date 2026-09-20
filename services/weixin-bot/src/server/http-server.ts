@@ -55,6 +55,13 @@ export function createHttpServer(manager: WeixinBotManager, port: number = 8095)
       // 1. 获取微信登录二维码: GET /api/v1/weixin/qrcode
       if (req.method === "GET" && pathname === "/api/v1/weixin/qrcode") {
         const authUser = extractUserFromAuthHeader(req.headers.authorization);
+        if (authUser.userId === "web_guest") {
+          return sendJson(401, {
+            status: "error",
+            code: "UNAUTHORIZED",
+            message: "需先在量化平台登录交易账户，再在设置页面绑定微信智能助理",
+          });
+        }
         const result = await manager.requestQRCode(authUser);
         return sendJson(200, {
           status: "success",

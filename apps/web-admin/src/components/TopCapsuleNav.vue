@@ -1,27 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import UserMenu from '@/components/UserMenu.vue'
 import GlobalSymbolSearchBar from '@/components/market/GlobalSymbolSearchBar.vue'
-import WeixinAgentModal from '@/components/WeixinAgentModal.vue'
 import { useStrategyStore } from '@/stores/strategy'
 
 const router = useRouter()
 const route = useRoute()
 const strategyStore = useStrategyStore()
-const showWeixinModal = ref(false)
-
-function handleOpenWeixinModal() {
-  showWeixinModal.value = true
-}
-
-onMounted(() => {
-  window.addEventListener('open-weixin-modal', handleOpenWeixinModal)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('open-weixin-modal', handleOpenWeixinModal)
-})
 </script>
 
 <template>
@@ -83,22 +68,10 @@ onUnmounted(() => {
         <GlobalSymbolSearchBar />
       </div>
 
-      <!-- 4. 右侧：微信助理入口与用户系统菜单 -->
-      <div class="flex items-center space-x-2.5 shrink-0">
-        <button
-          @click="showWeixinModal = true"
-          class="hidden sm:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 hover:border-emerald-500/40 text-emerald-400 hover:text-emerald-300 text-xs font-semibold transition-all cursor-pointer shadow-xs group"
-          title="微信量化智能助理 (手机微信扫码直连)"
-        >
-          <span class="text-sm group-hover:scale-110 transition-transform">💬</span>
-          <span>微信助理</span>
-        </button>
-
+      <!-- 4. 右侧：清爽用户系统菜单 -->
+      <div class="flex items-center shrink-0">
         <UserMenu />
       </div>
     </div>
-
-    <!-- 微信智能助理扫码与管理弹窗 -->
-    <WeixinAgentModal v-model="showWeixinModal" />
   </header>
 </template>

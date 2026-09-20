@@ -20,9 +20,9 @@ function openCodexAssistant() {
   aiStore.open()
 }
 
-function openWeixinModal() {
+function goToWeixinSettings() {
   showDropdown.value = false
-  window.dispatchEvent(new CustomEvent('open-weixin-modal'))
+  router.push('/agent-settings?tab=weixin')
 }
 
 function goToAgentSettings() {
@@ -121,17 +121,6 @@ onUnmounted(() => {
                 </div>
               </div>
               <span class="text-zinc-500 group-hover:text-purple-300 transition-colors text-xs font-mono">➔</span>
-            </button>
-
-            <button
-              @click="openWeixinModal"
-              class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs text-emerald-300 hover:text-white hover:bg-emerald-500/10 border border-emerald-500/20 hover:border-emerald-500/40 transition-all cursor-pointer group"
-            >
-              <div class="flex items-center space-x-2">
-                <span>💬</span>
-                <span class="font-medium">微信量化智能助理</span>
-              </div>
-              <span class="text-[10px] text-emerald-400 font-mono">扫码</span>
             </button>
 
             <button
@@ -262,14 +251,14 @@ onUnmounted(() => {
             </button>
 
             <button
-              @click="openWeixinModal"
+              @click="goToWeixinSettings"
               class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs text-emerald-300 hover:text-white hover:bg-emerald-500/10 border border-emerald-500/20 hover:border-emerald-500/40 transition-all cursor-pointer group"
             >
               <div class="flex items-center space-x-2">
                 <span>💬</span>
                 <span class="font-medium">微信量化智能助理</span>
               </div>
-              <span class="text-[10px] text-emerald-400 font-mono">状态/扫码</span>
+              <span class="text-[10px] text-emerald-400 font-mono">前往配置 ➔</span>
             </button>
 
             <button

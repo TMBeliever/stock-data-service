@@ -54,12 +54,12 @@ const strategyStore = useStrategyStore()
         </button>
 
         <button
-          @click="router.push('/portfolio')"
-          :class="route.path.startsWith('/portfolio') ? 'bg-gradient-to-r from-blue-500/20 to-emerald-500/20 text-white border border-blue-500/30 font-semibold shadow-sm' : 'text-zinc-400 hover:text-zinc-200'"
+          @click="router.push('/assets')"
+          :class="route.path.startsWith('/assets') ? 'bg-gradient-to-r from-blue-500/20 to-emerald-500/20 text-white border border-blue-500/30 font-semibold shadow-sm' : 'text-zinc-400 hover:text-zinc-200'"
           class="px-3 py-1 rounded-lg text-xs transition-all flex items-center space-x-1.5 cursor-pointer"
         >
           <span>💼</span>
-          <span>组合与持仓</span>
+          <span>全景资产</span>
         </button>
       </nav>
 

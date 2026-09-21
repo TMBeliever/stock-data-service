@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useStrategyStore } from './strategy'
+import { useAssetStore } from './asset'
 
 export interface User {
   id: number
@@ -20,15 +21,19 @@ export const useAuthStore = defineStore('auth', () => {
   const authModalVisible = ref<boolean>(false)
   const authModalMode = ref<'login' | 'register'>('login')
   const authError = ref<string | null>(null)
+  const redirectPath = ref<string | null>(null)
 
   const isLoggedIn = computed(() => !!token.value && !!user.value)
   const isVip = computed(() => !!user.value?.is_vip)
   const isAdmin = computed(() => user.value?.role === 'admin')
   const username = computed(() => user.value?.username || '未登录用户')
 
-  function openLogin() {
+  function openLogin(redirect?: string) {
     authModalMode.value = 'login'
     authError.value = null
+    if (redirect) {
+      redirectPath.value = redirect
+    }
     authModalVisible.value = true
   }
 
@@ -97,10 +102,18 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = data.user
       localStorage.setItem('access_token', data.access_token)
       closeAuthModal()
+      if (redirectPath.value) {
+        const target = redirectPath.value
+        redirectPath.value = null
+        import('@/router').then(({ router }) => {
+          router.push(target)
+        })
+      }
       try {
         const strategyStore = useStrategyStore()
+        const assetStore = useAssetStore()
         strategyStore.fetchUserWatchlists()
-        strategyStore.fetchUserHoldings()
+        assetStore.fetchOverview()
         strategyStore.fetchUserStrategies()
       } catch (e) {
         console.warn('[AuthStore] login sync failed', e)
@@ -158,6 +171,11 @@ export const useAuthStore = defineStore('auth', () => {
       const strategyStore = useStrategyStore()
       strategyStore.fetchUserWatchlists()
     } catch {}
+    import('@/router').then(({ router }) => {
+      if (router.currentRoute.value.path !== '/') {
+        router.push('/')
+      }
+    })
   }
 
   async function grantVip(days: number = 30): Promise<boolean> {
@@ -194,8 +212,9 @@ export const useAuthStore = defineStore('auth', () => {
       if (ok) {
         try {
           const strategyStore = useStrategyStore()
+          const assetStore = useAssetStore()
           strategyStore.fetchUserWatchlists()
-          strategyStore.fetchUserHoldings()
+          assetStore.fetchOverview()
           strategyStore.fetchUserStrategies()
         } catch (e) {
           console.warn('[AuthStore] initAuth sync failed', e)
@@ -211,6 +230,7 @@ export const useAuthStore = defineStore('auth', () => {
     authModalVisible,
     authModalMode,
     authError,
+    redirectPath,
     isLoggedIn,
     isVip,
     isAdmin,

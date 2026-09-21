@@ -45,9 +45,10 @@ def test_funnel_policy_matching():
     assert match_funnel_policy("/messages") == AuthPolicy.ANONYMOUS
     assert match_funnel_policy("/api/v1/ai/generate") == AuthPolicy.ANONYMOUS
 
-    # 用户资产与账务服务域为 USER_JWT (严格需要登录)
+    # 用户传统服务域为 USER_JWT (严格需要登录)
     assert match_funnel_policy("/api/v1/user/holdings") == AuthPolicy.USER_JWT
-    assert match_funnel_policy("/api/v1/asset/accounts") == AuthPolicy.USER_JWT
+    # 资产服务设为 OPTIONAL_JWT (支持免登录体验演示与登录云端同步)
+    assert match_funnel_policy("/api/v1/asset/accounts") == AuthPolicy.OPTIONAL_JWT
 
     # Agent 与 MCP 统一设为 OPTIONAL_JWT (免强制登录，带 Token 自动隔离)
     assert match_funnel_policy("/api/v1/agent/chat") == AuthPolicy.OPTIONAL_JWT

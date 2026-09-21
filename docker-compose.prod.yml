@@ -18,6 +18,7 @@ services:
       - GATEWAY_AI_CORE_URL=http://ai-core:8070
       - GATEWAY_STOCK_DATA_URL=http://stock-data:8000
       - GATEWAY_STOCK_DATA_WS_URL=ws://stock-data:8000
+      - GATEWAY_ASSET_SERVER_URL=http://asset-server:8040
       - GATEWAY_MCP_GATEWAY_URL=http://mcp-gateway:8050
       - GATEWAY_WEIXIN_BOT_URL=http://weixin-bot:8095
     depends_on:
@@ -221,6 +222,30 @@ services:
     networks:
       - quant-net
 
+  # =========================================================================
+  # 9. 全景基础资产服务 (统一资产登记、多源估值与净资产核算)
+  # =========================================================================
+  asset-server:
+    build:
+      context: services/asset-server
+      dockerfile: Dockerfile
+    container_name: quant-asset-server
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8040:8040"
+    environment:
+      - ASSET_PORT=8040
+      - ASSET_HOST=0.0.0.0
+      - ASSET_DATABASE_URL=sqlite+aiosqlite:///data/assets.db
+      - ASSET_MARKET_DATA_PROVIDER=internal
+      - ASSET_STOCK_DATA_URL=http://stock-data:8000
+    volumes:
+      - asset_data_storage:/app/data
+    depends_on:
+      - stock-data
+    networks:
+      - quant-net
+
 # =========================================================================
 # 存储卷定义 (生产数据持久化保障)
 # =========================================================================
@@ -234,6 +259,8 @@ volumes:
     name: quant_agent_workspace_storage
   weixin_bot_storage:
     name: quant_weixin_bot_storage
+  asset_data_storage:
+    name: quant_asset_data_storage
 
 # =========================================================================
 # 独立内部隔离通信网络

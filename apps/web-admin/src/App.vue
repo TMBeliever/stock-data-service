@@ -72,7 +72,7 @@ onUnmounted(() => {
     <!-- 3. 主工作区视口 (工作台与组合持仓自适应超宽屏与优雅容器) -->
     <router-view v-slot="{ Component, route }">
       <main
-        :class="route.path.startsWith('/strategy') || route.path.startsWith('/portfolio') ? 'max-w-[1780px] mx-auto px-4 pt-3 pb-6 relative z-10' : 'max-w-6xl mx-auto px-4 pt-4 pb-20 relative z-10'"
+        :class="route.path.startsWith('/strategy') || route.path.startsWith('/portfolio') || route.path.startsWith('/assets') ? 'max-w-[1780px] mx-auto px-4 pt-3 pb-6 relative z-10' : 'max-w-6xl mx-auto px-4 pt-4 pb-20 relative z-10'"
       >
         <transition name="fade" mode="out-in">
           <component :is="Component" :key="route.fullPath" />

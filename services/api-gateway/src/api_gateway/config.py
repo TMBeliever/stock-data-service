@@ -35,7 +35,7 @@ class GatewaySettings(BaseSettings):
     QUANT_AGENT_URL: str = "http://localhost:8060"
     AI_CORE_URL: str = "http://localhost:8070"
     STOCK_DATA_URL: str = "http://localhost:8000"
-    ASSET_SERVER_URL: str = "http://localhost:8050"
+    ASSET_SERVER_URL: str = "http://localhost:8040"
     MCP_GATEWAY_URL: str = "http://localhost:8050"
     WEIXIN_BOT_URL: str = "http://localhost:8095"
 
@@ -54,7 +54,7 @@ class GatewaySettings(BaseSettings):
     # 若未来对外收费或加白名单，可直接在环境变量指定 GATEWAY_SERVICE_AUTH_AI=SERVICE_KEY 或 USER_JWT
     SERVICE_AUTH_AI: AuthPolicy = AuthPolicy.ANONYMOUS
     SERVICE_AUTH_USER: AuthPolicy = AuthPolicy.USER_JWT
-    SERVICE_AUTH_ASSET: AuthPolicy = AuthPolicy.USER_JWT
+    SERVICE_AUTH_ASSET: AuthPolicy = AuthPolicy.OPTIONAL_JWT
     # Agent 智能体与 MCP 网关：设为免强制鉴权 (OPTIONAL_JWT)，游客可访问；带 Token 时自动验签注入 X-User-Id 保持原样数据隔离
     SERVICE_AUTH_AGENT: AuthPolicy = AuthPolicy.OPTIONAL_JWT
     SERVICE_AUTH_STOCK: AuthPolicy = AuthPolicy.ANONYMOUS

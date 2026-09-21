@@ -21,6 +21,7 @@ ALL_SERVICES=(
     "quant-agent"
     "mcp-gateway"
     "weixin-bot"
+    "asset-server"
     "api-gateway"
     "web-admin"
 )
@@ -69,6 +70,9 @@ check_prerequisites() {
 get_service_watch_paths() {
     local svc="$1"
     case "$svc" in
+        asset-server)
+            echo "services/asset-server pyproject.toml"
+            ;;
         api-gateway)
             echo "services/api-gateway pyproject.toml"
             ;;
@@ -106,6 +110,9 @@ get_service_watch_paths() {
 get_service_health_endpoint() {
     local svc="$1"
     case "$svc" in
+        asset-server)
+            echo "http://127.0.0.1:8040/health"
+            ;;
         api-gateway)
             echo "http://127.0.0.1:8001/health"
             ;;

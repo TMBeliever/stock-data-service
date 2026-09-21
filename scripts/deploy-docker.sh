@@ -21,6 +21,7 @@ ALL_SERVICES=(
     "quant-agent"
     "mcp-gateway"
     "weixin-bot"
+    "api-gateway"
     "web-admin"
 )
 
@@ -68,6 +69,9 @@ check_prerequisites() {
 get_service_watch_paths() {
     local svc="$1"
     case "$svc" in
+        api-gateway)
+            echo "services/api-gateway pyproject.toml"
+            ;;
         web-admin)
             echo "apps/web-admin"
             ;;
@@ -102,6 +106,9 @@ get_service_watch_paths() {
 get_service_health_endpoint() {
     local svc="$1"
     case "$svc" in
+        api-gateway)
+            echo "http://127.0.0.1:8001/health"
+            ;;
         web-admin)
             echo "http://127.0.0.1:${WEB_PORT:-80}/"
             ;;
@@ -374,6 +381,7 @@ show_status() {
     echo -e "\n${GREEN}==============================================================${RESET}"
     echo -e "${GREEN}  🎉 Quant System 生产环境各微服务访问入口：                   ${RESET}"
     echo -e "${GREEN}  - 🌐 前端 Web 控制台:    http://<服务器IP>:${WEB_PORT:-80}/         ${RESET}"
+    echo -e "${GREEN}  - 🛡️ API 统一业务网关:   http://<服务器IP>:8001/health      ${RESET}"
     echo -e "${GREEN}  - 🤖 Quant Agent 中枢:   http://<服务器IP>:8060/health      ${RESET}"
     echo -e "${GREEN}  - 🔌 MCP 数据网关:       http://<服务器IP>:${WEB_PORT:-80}/mcp        ${RESET}"
     echo -e "${GREEN}  - 🧠 AI 模型网关:        http://<服务器IP>:8070/health      ${RESET}"

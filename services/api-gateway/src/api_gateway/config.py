@@ -55,11 +55,12 @@ class GatewaySettings(BaseSettings):
     SERVICE_AUTH_AI: AuthPolicy = AuthPolicy.ANONYMOUS
     SERVICE_AUTH_USER: AuthPolicy = AuthPolicy.USER_JWT
     SERVICE_AUTH_ASSET: AuthPolicy = AuthPolicy.USER_JWT
-    SERVICE_AUTH_AGENT: AuthPolicy = AuthPolicy.USER_JWT
+    # Agent 智能体与 MCP 网关：设为免强制鉴权 (OPTIONAL_JWT)，游客可访问；带 Token 时自动验签注入 X-User-Id 保持原样数据隔离
+    SERVICE_AUTH_AGENT: AuthPolicy = AuthPolicy.OPTIONAL_JWT
     SERVICE_AUTH_STOCK: AuthPolicy = AuthPolicy.ANONYMOUS
     SERVICE_AUTH_QUANT: AuthPolicy = AuthPolicy.OPTIONAL_JWT
     SERVICE_AUTH_COMMON_AUTH: AuthPolicy = AuthPolicy.ANONYMOUS
-    SERVICE_AUTH_MCP: AuthPolicy = AuthPolicy.ANONYMOUS
+    SERVICE_AUTH_MCP: AuthPolicy = AuthPolicy.OPTIONAL_JWT
 
     model_config = SettingsConfigDict(env_prefix="GATEWAY_", case_sensitive=False)
 

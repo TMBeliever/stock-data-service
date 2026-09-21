@@ -45,13 +45,38 @@ def test_funnel_policy_matching():
     assert match_funnel_policy("/messages") == AuthPolicy.ANONYMOUS
     assert match_funnel_policy("/api/v1/ai/generate") == AuthPolicy.ANONYMOUS
 
-    # 用户资产与账务服务域为 USER_JWT
+    # 用户资产与账务服务域为 USER_JWT (严格需要登录)
     assert match_funnel_policy("/api/v1/user/holdings") == AuthPolicy.USER_JWT
     assert match_funnel_policy("/api/v1/asset/accounts") == AuthPolicy.USER_JWT
-    assert match_funnel_policy("/api/v1/agent/chat") == AuthPolicy.USER_JWT
+
+    # Agent 与 MCP 统一设为 OPTIONAL_JWT (免强制登录，带 Token 自动隔离)
+    assert match_funnel_policy("/api/v1/agent/chat") == AuthPolicy.OPTIONAL_JWT
+    assert match_funnel_policy("/mcp/messages") == AuthPolicy.OPTIONAL_JWT
 
     # 行情服务域为 ANONYMOUS
     assert match_funnel_policy("/stock/kline/510300") == AuthPolicy.ANONYMOUS
+
+
+@pytest.mark.asyncio
+async def test_agent_and_mcp_optional_auth():
+    """验证 Agent 与 MCP 的免强制鉴权：未登录允许游客访问，携带合法 Token 则精准注入 user_id 实现数据隔离"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # 1. 匿名游客请求 -> 网关放行，不拦截 401
+        resp_agent_guest = await client.post("/api/v1/agent/chat", json={"prompt": "hello"})
+        assert resp_agent_guest.status_code != 401
+
+        resp_mcp_guest = await client.get("/mcp")
+        assert resp_mcp_guest.status_code != 401
+
+        # 2. 携带合法用户 Token -> 网关完成验签并注入 X-User-Id 传递下游实现数据隔离
+        token = generate_test_jwt(user_id=8088, username="quant_bob")
+        resp_agent_user = await client.post(
+            "/api/v1/agent/chat",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"prompt": "帮我查看自选"}
+        )
+        assert resp_agent_user.status_code != 401
 
 
 @pytest.mark.asyncio

@@ -284,6 +284,7 @@ const klineOption = computed(() => {
   return {
     backgroundColor: 'transparent',
     animation: false,
+    color: ['#ef4444', '#f59e0b', '#3b82f6', '#a855f7', '#06b6d4', '#64748b', '#f59e0b', '#3b82f6'],
     legend: {
       data: [klineSeriesName, 'MA5', 'MA10', 'MA20', 'MA60', 'VOL5', 'VOL10'],
       textStyle: { color: 'rgba(255, 255, 255, 0.65)', fontSize: 11 },
@@ -432,6 +433,7 @@ const klineOption = computed(() => {
         data: candlestickData,
         xAxisIndex: 0,
         yAxisIndex: 0,
+        color: '#ef4444',
         itemStyle: {
           color: '#ef4444',
           color0: '#10b981',
@@ -445,6 +447,8 @@ const klineOption = computed(() => {
         data: ma5,
         smooth: true,
         showSymbol: false,
+        color: '#f59e0b',
+        itemStyle: { color: '#f59e0b' },
         lineStyle: { width: 1.2, color: '#f59e0b' },
       },
       {
@@ -453,6 +457,8 @@ const klineOption = computed(() => {
         data: ma10,
         smooth: true,
         showSymbol: false,
+        color: '#3b82f6',
+        itemStyle: { color: '#3b82f6' },
         lineStyle: { width: 1.2, color: '#3b82f6' },
       },
       {
@@ -461,6 +467,8 @@ const klineOption = computed(() => {
         data: ma20,
         smooth: true,
         showSymbol: false,
+        color: '#a855f7',
+        itemStyle: { color: '#a855f7' },
         lineStyle: { width: 1.2, color: '#a855f7' },
       },
       {
@@ -469,6 +477,8 @@ const klineOption = computed(() => {
         data: ma60,
         smooth: true,
         showSymbol: false,
+        color: '#06b6d4',
+        itemStyle: { color: '#06b6d4' },
         lineStyle: { width: 1.2, color: '#06b6d4' },
       },
       {
@@ -491,6 +501,8 @@ const klineOption = computed(() => {
         data: volMa5,
         smooth: true,
         showSymbol: false,
+        color: '#f59e0b',
+        itemStyle: { color: '#f59e0b' },
         lineStyle: { width: 1, color: '#f59e0b' },
       },
       {
@@ -501,6 +513,8 @@ const klineOption = computed(() => {
         data: volMa10,
         smooth: true,
         showSymbol: false,
+        color: '#3b82f6',
+        itemStyle: { color: '#3b82f6' },
         lineStyle: { width: 1, color: '#3b82f6' },
       },
     ],
@@ -558,16 +572,22 @@ const valuationRiverOption = computed(() => {
       }
     })
 
+    const nameClose = '真实收盘价'
+    const nameP80 = hasPriceChannel ? 'P80 阻力线 (历史高位)' : 'P80 压力线 (高估)'
+    const nameP50 = hasPriceChannel ? 'P50 中枢线 (合理中轴)' : 'P50 中枢线 (合理)'
+    const nameP20 = hasPriceChannel ? 'P20 支撑线 (击球买点)' : 'P20 支撑线 (击球区)'
+
+    const colorClose = '#ffffff'
+    const colorP80 = '#ef4444'
+    const colorP50 = '#3b82f6'
+    const colorP20 = '#10b981'
+
     return {
       backgroundColor: 'transparent',
       animation: true,
+      color: [colorClose, colorP80, colorP50, colorP20],
       legend: {
-        data: [
-          '真实收盘价',
-          hasPriceChannel ? 'P80 阻力线 (历史高位)' : 'P80 压力线 (高估)',
-          hasPriceChannel ? 'P50 中枢线 (合理中轴)' : 'P50 中枢线 (合理)',
-          hasPriceChannel ? 'P20 支撑线 (击球买点)' : 'P20 支撑线 (击球区)',
-        ],
+        data: [nameClose, nameP80, nameP50, nameP20],
         textStyle: { color: 'rgba(255, 255, 255, 0.7)', fontSize: 11 },
         top: 4,
         right: 20,
@@ -636,50 +656,64 @@ const valuationRiverOption = computed(() => {
       ],
       series: [
         {
-          name: 'P80 压力线 (高估)',
-          type: 'line',
-          data: p80Series,
-          smooth: true,
-          showSymbol: false,
-          lineStyle: { width: 1.2, color: 'rgba(239, 68, 68, 0.85)', type: 'dashed' },
-        },
-        {
-          name: 'P50 中枢线 (合理)',
-          type: 'line',
-          data: p50Series,
-          smooth: true,
-          showSymbol: false,
-          lineStyle: { width: 1.2, color: 'rgba(59, 130, 246, 0.85)', type: 'dotted' },
-        },
-        {
-          name: 'P20 支撑线 (击球区)',
-          type: 'line',
-          data: p20Series,
-          smooth: true,
-          showSymbol: false,
-          lineStyle: { width: 1.4, color: 'rgba(16, 185, 129, 0.95)', type: 'dashed' },
-          areaStyle: {
-            color: 'rgba(16, 185, 129, 0.06)',
-          },
-        },
-        {
-          name: '真实收盘价',
+          name: nameClose,
           type: 'line',
           data: closeSeries,
           smooth: true,
           showSymbol: false,
-          lineStyle: { width: 2.2, color: '#ffffff' },
+          color: colorClose,
+          itemStyle: { color: colorClose },
+          lineStyle: { width: 2.2, color: colorClose },
+          z: 10,
+        },
+        {
+          name: nameP80,
+          type: 'line',
+          data: p80Series,
+          smooth: true,
+          showSymbol: false,
+          color: colorP80,
+          itemStyle: { color: colorP80 },
+          lineStyle: { width: 1.2, color: colorP80, type: 'dashed' },
+          z: 2,
+        },
+        {
+          name: nameP50,
+          type: 'line',
+          data: p50Series,
+          smooth: true,
+          showSymbol: false,
+          color: colorP50,
+          itemStyle: { color: colorP50 },
+          lineStyle: { width: 1.2, color: colorP50, type: 'dotted' },
+          z: 2,
+        },
+        {
+          name: nameP20,
+          type: 'line',
+          data: p20Series,
+          smooth: true,
+          showSymbol: false,
+          color: colorP20,
+          itemStyle: { color: colorP20 },
+          lineStyle: { width: 1.4, color: colorP20, type: 'dashed' },
+          areaStyle: {
+            color: 'rgba(16, 185, 129, 0.06)',
+          },
+          z: 2,
         },
       ],
     }
   } else if (tab === 'erp') {
     // ERP 股债利差曲线
     const erpSeries = history.map((h) => (h.erp !== undefined && h.erp !== null ? h.erp : null))
+    const colorErp = '#c084fc'
     return {
       backgroundColor: 'transparent',
       animation: true,
+      color: [colorErp],
       legend: {
-        data: ['ERP 股债利差 (%)', '0% 平衡线'],
+        data: ['ERP 股债利差 (%)'],
         textStyle: { color: 'rgba(255, 255, 255, 0.7)', fontSize: 11 },
         top: 4,
         right: 20,
@@ -719,7 +753,9 @@ const valuationRiverOption = computed(() => {
           data: erpSeries,
           smooth: true,
           showSymbol: false,
-          lineStyle: { width: 2, color: '#c084fc' },
+          color: colorErp,
+          itemStyle: { color: colorErp },
+          lineStyle: { width: 2, color: colorErp },
           areaStyle: {
             color: 'rgba(192, 132, 252, 0.12)',
           },
@@ -732,9 +768,11 @@ const valuationRiverOption = computed(() => {
   } else {
     // 股息率曲线
     const divSeries = history.map((h) => (h.dividend_yield !== undefined && h.dividend_yield !== null ? h.dividend_yield : null))
+    const colorDividend = '#fbbf24'
     return {
       backgroundColor: 'transparent',
       animation: true,
+      color: [colorDividend],
       legend: {
         data: ['股息率 (%)'],
         textStyle: { color: 'rgba(255, 255, 255, 0.7)', fontSize: 11 },
@@ -772,7 +810,9 @@ const valuationRiverOption = computed(() => {
           data: divSeries,
           smooth: true,
           showSymbol: false,
-          lineStyle: { width: 2, color: '#fbbf24' },
+          color: colorDividend,
+          itemStyle: { color: colorDividend },
+          lineStyle: { width: 2, color: colorDividend },
           areaStyle: {
             color: 'rgba(251, 191, 36, 0.12)',
           },

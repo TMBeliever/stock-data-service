@@ -17,6 +17,7 @@ resolution-markers = [
 members = [
     "agent-core",
     "ai-core",
+    "api-gateway",
     "common-server",
     "quant-agent",
     "quant-core",
@@ -141,6 +142,31 @@ dependencies = [
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/ea/9a/c15a60547004a3f3cea20296c934f827ddd7bdba225a2e7e9fcb5ec48c80/anyio-4.15.0.tar.gz", hash = "sha256:b5c620ed540725e2579c31b17bb995b3bf02c9281c9cace04c7d186380bab85e" }
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/21/a6/2b21ce5ebe4d8938a247c9b0dbb7271566ae559b01795c83ea4bb2660ed7/anyio-4.15.0-py3-none-any.whl", hash = "sha256:7ecd9937369ffce8bba0b5ccb9b3a9507b101b0ed50256aecfbab27e6c2acb99" },
+]
+
+[[package]]
+name = "api-gateway"
+version = "0.1.0"
+source = { editable = "services/api-gateway" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pyjwt" },
+    { name = "uvicorn" },
+    { name = "websockets" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "pydantic", specifier = ">=2.9.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.0" },
+    { name = "pyjwt", specifier = ">=2.8.0" },
+    { name = "uvicorn", specifier = ">=0.32.0" },
+    { name = "websockets", specifier = ">=12.0" },
 ]
 
 [[package]]

@@ -20,6 +20,20 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+    # 1. 网关加速通道：若请求经过网关验签并注入了受信任的 X-User-Id，直接按 ID 查表，免去重复解码 JWT
+    x_user_id = request.headers.get("x-user-id")
+    if x_user_id:
+        try:
+            uid = int(x_user_id)
+            stmt = select(User).where(User.id == uid)
+            result = await db.execute(stmt)
+            user = result.scalar_one_or_none()
+            if user and user.is_active:
+                return user
+        except (ValueError, TypeError):
+            pass
+
+    # 2. 传统直连通道兜底：若未经过网关（如独立单元测试或直连调试），自解 Bearer Token
     if token:
         payload = decode_access_token(token)
         if payload:

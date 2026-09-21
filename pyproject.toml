@@ -7,6 +7,7 @@ members = [
     "services/quant-server",
     "services/common-server",
     "services/quant-agent",
+    "services/api-gateway",
 ]
 
 [project]

@@ -34,9 +34,25 @@ def decode_token(token: str) -> Optional[dict]:
 
 async def get_current_auth(request: Request) -> UserAuth:
     """
-    FastAPI 依赖注入：解析 Authorization 请求头中的 Bearer Token
-    若未提供或 Token 非法，严格降级为普通访客权限 (is_admin=False)
+    FastAPI 依赖注入：优先读取统一网关鉴权注入的安全身份头；
+    若未经过网关，回退自解 Authorization 请求头中的 Bearer Token。
     """
+    # 1. 优先读取统一网关透传的安全头 (免重复解码 JWT)
+    x_user_id = request.headers.get("x-user-id")
+    if x_user_id:
+        username = request.headers.get("x-user-name") or f"user_{x_user_id}"
+        role = request.headers.get("x-user-role") or "user"
+        auth_header = request.headers.get("Authorization")
+        if auth_header:
+            current_user_token.set(auth_header)
+        return UserAuth(
+            user_id=x_user_id,
+            username=username,
+            role=role,
+            is_admin=(role == "admin"),
+        )
+
+    # 2. 传统直连通道兜底：自解 Bearer Token
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         current_user_token.set(None)

@@ -6,6 +6,7 @@ class AssetType(str, Enum):
     STOCK = "STK"
     INDEX = "IDX"
     ETF = "ETF"
+    FUND = "FND"   # 场外开放式公募基金
     FX = "FX"
     CRYPTO = "CRYPTO"
 
@@ -15,6 +16,7 @@ class Market(str, Enum):
     BJ = "BJ"      # 北京证券交易所
     US = "US"      # 美国市场 (NYSE, NASDAQ, AMEX)
     HK = "HK"      # 香港交易所
+    OF = "OF"      # 场外开放式公募基金 (Open-end Fund)
     BINANCE = "BINANCE"
     FX = "FX"
 
@@ -139,6 +141,8 @@ def parse_symbol(symbol_str: str) -> tuple[str, str, str]:
         return parts[0], parts[1], parts[2]
     elif len(parts) == 2:
         ticker, market = parts[0], parts[1]
+        if market == Market.OF.value:
+            return ticker, Market.OF.value, AssetType.FUND.value
         # 常见指数
         if ticker in ["000300", "000905", "399001", "399006", "SPX", "NDX", "DJI", "HSI"]:
             return ticker, market, AssetType.INDEX.value
@@ -152,7 +156,7 @@ def parse_symbol(symbol_str: str) -> tuple[str, str, str]:
         
         # 1. 纯数字
         if code.isdigit():
-            # 6位数字 -> A股
+            # 6位数字 -> A股或场外基金
             if len(code) == 6:
                 if code in ["000300", "000905", "000001"] and code != "000001":
                     return code, Market.SH.value, AssetType.INDEX.value
@@ -164,13 +168,14 @@ def parse_symbol(symbol_str: str) -> tuple[str, str, str]:
                     return code, Market.SZ.value, AssetType.ETF.value
                 elif code.startswith("60") or code.startswith("68"):
                     return code, Market.SH.value, AssetType.STOCK.value
-                elif code.startswith("00") or code.startswith("30"):
-                    # 002594 比亚迪, 000001 平安银行, 300750 宁德时代
+                elif code.startswith(("000", "001", "002", "003", "300", "301")):
+                    # A股股票: 000xxx, 001xxx, 002xxx, 003xxx, 300xxx, 301xxx
                     return code, Market.SZ.value, AssetType.STOCK.value
-                elif code.startswith("8") or code.startswith("4") or code.startswith("9"):
+                elif code.startswith(("8", "4", "9")):
                     return code, Market.BJ.value, AssetType.STOCK.value
                 else:
-                    return code, Market.SH.value, AssetType.STOCK.value
+                    # 开放式公募基金号段 (如 006242, 005827, 012414, 110011)
+                    return code, Market.OF.value, AssetType.FUND.value
             # 5位数字 -> 港股 (如 00700 腾讯控股, 09988 阿里巴巴)
             elif len(code) == 5:
                 return code, Market.HK.value, AssetType.STOCK.value

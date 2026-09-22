@@ -151,6 +151,9 @@ function selectSuggestion(item: SymbolItem) {
   // 参考现价/净值
   if (item.latest_price !== null && item.latest_price !== undefined) {
     activeSuggestionPrice.value = item.latest_price
+    if (!formCostPrice.value || Number(formCostPrice.value) === 0) {
+      formCostPrice.value = item.latest_price
+    }
   } else {
     activeSuggestionPrice.value = null
   }
@@ -171,19 +174,67 @@ function applySuggestionPrice() {
   }
 }
 
-// 失去焦点时的代码标准化保底
-function handleSymbolInputBlur() {
+// 失去焦点时的代码标准化保底与自动回填
+async function handleSymbolInputBlur() {
   setTimeout(() => {
     showSuggestions.value = false
   }, 250)
 
-  const sym = formSymbol.value.trim().toUpperCase()
-  if (!sym) return
-  if (/^\d{6}$/.test(sym)) {
-    if (sym.startsWith('6') || sym.startsWith('5')) {
-      formSymbol.value = sym.startsWith('5') ? `${sym}.SH.ETF` : `${sym}.SH.STK`
-    } else if (sym.startsWith('0') || sym.startsWith('3') || sym.startsWith('1')) {
-      formSymbol.value = sym.startsWith('1') ? `${sym}.SZ.ETF` : `${sym}.SZ.STK`
+  const raw = formSymbol.value.trim().toUpperCase()
+  if (!raw) return
+
+  // 1. 如果已有下拉建议，优先精确匹配
+  const exactMatch = symbolSuggestions.value.find(
+    (s) => s.ticker === raw || s.symbol === raw || s.symbol.startsWith(raw + '.')
+  )
+  if (exactMatch) {
+    selectSuggestion(exactMatch)
+    return
+  }
+
+  // 2. 6 位纯数字代码规范化
+  if (/^\d{6}$/.test(raw)) {
+    if (raw.startsWith('51') || raw.startsWith('56') || raw.startsWith('58')) {
+      formSymbol.value = `${raw}.SH.ETF`
+    } else if (raw.startsWith('15') || raw.startsWith('16')) {
+      formSymbol.value = `${raw}.SZ.ETF`
+    } else if (raw.startsWith('60') || raw.startsWith('68')) {
+      formSymbol.value = `${raw}.SH.STK`
+    } else if (raw.startsWith('000') || raw.startsWith('001') || raw.startsWith('002') || raw.startsWith('003') || raw.startsWith('300') || raw.startsWith('301')) {
+      formSymbol.value = `${raw}.SZ.STK`
+    } else if (raw.startsWith('8') || raw.startsWith('4') || raw.startsWith('9')) {
+      formSymbol.value = `${raw}.BJ.STK`
+    } else {
+      // 开放式公募基金号段 (如 006242, 005827, 012414, 110011 等)
+      formSymbol.value = `${raw}.OF.FND`
+    }
+
+    // 若当前资产名称为空，发起一次反查并回填名称与最新价格/净值
+    if (!formName.value) {
+      try {
+        const results = await marketStore.searchSymbols(raw, 'all', 1)
+        if (results && results.length > 0) {
+          const match = results[0]
+          if (match.ticker === raw || match.symbol.startsWith(raw)) {
+            selectSuggestion(match)
+          }
+        }
+      } catch (err) {
+        // ignore
+      }
+    }
+  } else if (/^\d{4,5}$/.test(raw)) {
+    // 4~5位港股 (如 700 -> 00700.HK.STK)
+    formSymbol.value = `${raw.padStart(5, '0')}.HK.STK`
+    if (!formName.value) {
+      try {
+        const results = await marketStore.searchSymbols(formSymbol.value, 'all', 1)
+        if (results && results.length > 0) {
+          selectSuggestion(results[0])
+        }
+      } catch (err) {
+        // ignore
+      }
     }
   }
 }

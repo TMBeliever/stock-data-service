@@ -316,14 +316,16 @@ def normalize_symbol_key(sym: str) -> str:
         if len(s) == 6:
             if s.startswith(("60", "68")):
                 return f"{s}.SH.STK"
-            elif s.startswith(("00", "30")):
+            elif s.startswith(("000", "001", "002", "003", "300", "301")):
                 return f"{s}.SZ.STK"
             elif s.startswith(("51", "58")):
                 return f"{s}.SH.ETF"
             elif s.startswith(("15", "16")):
                 return f"{s}.SZ.ETF"
+            elif s.startswith(("8", "4", "9")):
+                return f"{s}.BJ.STK"
             else:
-                return f"{s}.SH.STK"
+                return f"{s}.OF.FND"
         elif len(s) == 5:
             return f"{s}.HK.STK"
         elif len(s) <= 4:
@@ -394,14 +396,16 @@ def _fetch_live_snapshots(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     except Exception as e:
         print(f"[_fetch_live_snapshots] Warning: snapshot batch error: {e}")
 
-    # 1.5 针对未被股票中台返回的标的 (如公募开放式基金 005827、110011 等)，尝试通过新浪基金净值源补全
+    # 1.5 针对未被股票中台返回的标的 (如公募开放式基金 006242、005827、110011 等)，通过新浪基金净值源补全
     missing_fund_tickers = [
         s.split(".")[0] for s in query_symbols
         if s.split(".")[0].isdigit() and len(s.split(".")[0]) == 6 and (s.split(".")[0] not in results and s not in results)
     ]
     if missing_fund_tickers:
         try:
-            fu_list = [f"fu_{t}" for t in missing_fund_tickers[:20]]
+            # 开放式基金主要挂在 f_{code} 下，部分 LOF/货币在 fu_{code} 下
+            query_codes = missing_fund_tickers[:20]
+            fu_list = [f"f_{t}" for t in query_codes] + [f"fu_{t}" for t in query_codes]
             with httpx.Client(timeout=3.0, trust_env=False) as client:
                 f_resp = client.get(
                     f"https://hq.sinajs.cn/list={','.join(fu_list)}",
@@ -412,7 +416,11 @@ def _fetch_live_snapshots(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                         if not line or "=" not in line or '"' not in line:
                             continue
                         var_name, val_part = line.split("=", 1)
-                        tk = var_name.replace("var hq_str_fu_", "").strip()
+                        is_f = "var hq_str_f_" in var_name
+                        is_fu = "var hq_str_fu_" in var_name
+                        if not (is_f or is_fu):
+                            continue
+                        tk = var_name.replace("var hq_str_f_", "").replace("var hq_str_fu_", "").strip()
                         raw_val = val_part.strip('"; \r\n')
                         if not raw_val:
                             continue
@@ -420,8 +428,17 @@ def _fetch_live_snapshots(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                         if len(f_parts) >= 4:
                             f_name = f_parts[0].strip()
                             try:
-                                nav = float(f_parts[2]) if f_parts[2] not in ("", "0", "None") else float(f_parts[3])
-                                prev_nav = float(f_parts[3]) if f_parts[3] not in ("", "0", "None") else nav
+                                if is_f:
+                                    # f_{code}: 名称, 单位净值, 累计净值, 前日单位净值, 净值日期, 日涨幅
+                                    nav = float(f_parts[1]) if f_parts[1] not in ("", "0", "None") else 0.0
+                                    prev_nav = float(f_parts[3]) if f_parts[3] not in ("", "0", "None") else nav
+                                else:
+                                    # fu_{code}: 名称, 净值日期, 单位净值, 累计净值
+                                    nav = float(f_parts[2]) if f_parts[2] not in ("", "0", "None") else float(f_parts[3])
+                                    prev_nav = float(f_parts[3]) if f_parts[3] not in ("", "0", "None") else nav
+
+                                if nav <= 0:
+                                    continue
                                 pct = round(((nav - prev_nav) / prev_nav) * 100, 2) if prev_nav > 0 else 0.0
                                 fund_item = {
                                     "symbol": f"{tk}.OF.FND",
@@ -549,36 +566,47 @@ def search_symbols(
                     auto_cat = "stk"
                     auto_mkt = "SH"
                     auto_type = "STK"
-                elif keyword.startswith(("00", "30")):
+                    auto_name = f"A股({keyword})"
+                elif keyword.startswith(("000", "001", "002", "003", "300", "301")):
                     auto_sym = f"{keyword}.SZ.STK"
                     auto_cat = "stk"
                     auto_mkt = "SZ"
                     auto_type = "STK"
+                    auto_name = f"A股({keyword})"
                 elif keyword.startswith("51") or keyword.startswith("58"):
                     auto_sym = f"{keyword}.SH.ETF"
                     auto_cat = "etf"
                     auto_mkt = "SH"
                     auto_type = "ETF"
+                    auto_name = f"场内ETF({keyword})"
                 elif keyword.startswith("15") or keyword.startswith("16"):
                     auto_sym = f"{keyword}.SZ.ETF"
                     auto_cat = "etf"
                     auto_mkt = "SZ"
                     auto_type = "ETF"
-                else:
-                    auto_sym = f"{keyword}.SH"
+                    auto_name = f"场内ETF({keyword})"
+                elif keyword.startswith(("8", "4", "9")):
+                    auto_sym = f"{keyword}.BJ.STK"
                     auto_cat = "stk"
-                    auto_mkt = "SH"
+                    auto_mkt = "BJ"
                     auto_type = "STK"
+                    auto_name = f"北交所({keyword})"
+                else:
+                    auto_sym = f"{keyword}.OF.FND"
+                    auto_cat = "fund"
+                    auto_mkt = "OF"
+                    auto_type = "FND"
+                    auto_name = f"公募基金({keyword})"
 
                 matched.append({
                     "symbol": auto_sym,
                     "ticker": keyword,
                     "market": auto_mkt,
                     "asset_type": auto_type,
-                    "name": f"A股({keyword})",
+                    "name": auto_name,
                     "pinyin": keyword,
                     "category": auto_cat,
-                    "tags": [auto_mkt, auto_type, "全市场直连"],
+                    "tags": ["公募基金", "场外开放式"] if auto_type == "FND" else [auto_mkt, auto_type, "全市场直连"],
                 })
 
 

@@ -3,7 +3,7 @@ import datetime
 import zoneinfo
 from typing import List, Tuple, Optional, Dict
 import httpx
-from core.models import parse_symbol, Market, SnapshotItem
+from core.models import parse_symbol, format_symbol, Market, AssetType, SnapshotItem
 
 # 港股流通股数缓存 (24小时 TTL)，用于实时计算换手率 volume/floatShares
 _HK_FLOAT_SHARES_CACHE: Dict[str, Tuple[float, Optional[float]]] = {}
@@ -25,19 +25,25 @@ class SnapshotAdapter:
         except Exception:
             return None, None
 
+        std_sym = format_symbol(ticker, market_str, type_str)
+
+        out_sym = symbol if "." in symbol else std_sym
+
         if market_str == Market.SH.value:
-            return f"sh{ticker}", symbol
+            return f"sh{ticker}", out_sym
         elif market_str == Market.SZ.value:
-            return f"sz{ticker}", symbol
+            return f"sz{ticker}", out_sym
         elif market_str == Market.BJ.value:
-            return f"bj{ticker}", symbol
+            return f"bj{ticker}", out_sym
         elif market_str == Market.US.value:
             # 美股行情源要求代码大写
-            return f"us{ticker.upper()}", symbol
+            return f"us{ticker.upper()}", out_sym
         elif market_str == Market.HK.value:
             # 港股代码补全为 5 位数字，如 0700 -> 00700, 9988 -> 09988
             hk_ticker = ticker.zfill(5) if ticker.isdigit() else ticker
-            return f"hk{hk_ticker}", symbol
+            return f"hk{hk_ticker}", out_sym
+        elif market_str == Market.OF.value or type_str == AssetType.FUND.value:
+            return f"f_{ticker}", out_sym
         return None, None
 
     def _parse_timestamp(self, time_str: str, market_prefix: str) -> Optional[int]:
@@ -109,6 +115,7 @@ class SnapshotAdapter:
             return [], []
 
         key_to_symbol: Dict[str, str] = {}
+        key_to_req_symbols: Dict[str, List[str]] = {}
         missing_symbols: List[str] = []
 
         for sym in symbols:
@@ -118,6 +125,7 @@ class SnapshotAdapter:
             key, std_sym = self._symbol_to_provider_key(clean_sym)
             if key and std_sym:
                 key_to_symbol[key] = std_sym
+                key_to_req_symbols.setdefault(key, []).append(clean_sym)
             else:
                 missing_symbols.append(clean_sym)
 
@@ -125,20 +133,90 @@ class SnapshotAdapter:
             return [], missing_symbols
 
         query_keys = list(key_to_symbol.keys())
-        url = f"https://qt.gtimg.cn/q={','.join(query_keys)}"
+        stock_keys = [k for k in query_keys if not k.startswith("f_")]
+        fund_keys = [k for k in query_keys if k.startswith("f_")]
 
         raw_text = ""
+        fund_raw_text = ""
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.get(url)
-                if resp.status_code == 200:
-                    raw_text = resp.text
+                if stock_keys:
+                    url = f"https://qt.gtimg.cn/q={','.join(stock_keys)}"
+                    try:
+                        resp = await client.get(url)
+                        if resp.status_code == 200:
+                            raw_text = resp.text
+                    except Exception as e:
+                        print(f"[SnapshotAdapter] Warning: stock snapshot fetch failed: {e}")
+
+                if fund_keys:
+                    fund_url = f"https://hq.sinajs.cn/list={','.join(fund_keys)}"
+                    try:
+                        f_resp = await client.get(
+                            fund_url,
+                            headers={"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
+                        )
+                        if f_resp.status_code == 200:
+                            fund_raw_text = f_resp.text
+                    except Exception as e:
+                        print(f"[SnapshotAdapter] Warning: fund snapshot fetch failed: {e}")
         except Exception as e:
             print(f"[SnapshotAdapter] Warning: snapshot fetch failed: {e}")
             return [], [s.strip() for s in symbols if s.strip()]
 
         snapshots: List[SnapshotItem] = []
         found_symbols = set()
+
+        def to_float(val_str: str) -> Optional[float]:
+            try:
+                if val_str and val_str not in ("None", "", "nan", "--"):
+                    return float(val_str)
+            except Exception:
+                pass
+            return None
+
+        # 1. 解析场外开放式基金行情 (Sina 基金源)
+        if fund_raw_text:
+            for line in fund_raw_text.splitlines():
+                line = line.strip()
+                if not line or "=" not in line or '"' not in line:
+                    continue
+                var_name, val_part = line.split("=", 1)
+                key = var_name.replace("var hq_str_", "").strip()
+                val_clean = val_part.split('"')[1].strip()
+                if not val_clean:
+                    continue
+                parts = val_clean.split(",")
+                if len(parts) >= 4:
+                    std_sym = key_to_symbol.get(key)
+                    if not std_sym:
+                        continue
+                    name = parts[0].strip()
+                    ticker = key.replace("f_", "").strip()
+                    latest_price = to_float(parts[1])
+                    pre_close = to_float(parts[3]) if len(parts) > 3 else latest_price
+                    change = round(latest_price - pre_close, 4) if (latest_price is not None and pre_close is not None) else None
+                    pct_change = round((change / pre_close) * 100, 4) if (change is not None and pre_close and pre_close > 0) else 0.0
+
+                    fund_item = SnapshotItem(
+                        symbol=std_sym,
+                        ticker=ticker,
+                        name=name,
+                        latest_price=latest_price,
+                        pre_close=pre_close,
+                        open=pre_close,
+                        high=latest_price,
+                        low=latest_price,
+                        change=change,
+                        pct_change=pct_change,
+                        nav=latest_price,
+                        timestamp=int(datetime.datetime.now().timestamp() * 1000)
+                    )
+                    snapshots.append(fund_item)
+                    found_symbols.add(std_sym)
+                    found_symbols.add(ticker)
+                    for req_sym in key_to_req_symbols.get(key, []):
+                        found_symbols.add(req_sym)
 
         for line in raw_text.split(";\n"):
             line = line.strip()
@@ -290,12 +368,17 @@ class SnapshotAdapter:
             )
             snapshots.append(item)
             found_symbols.add(std_sym)
+            found_symbols.add(ticker)
+            for req_sym in key_to_req_symbols.get(key, []):
+                found_symbols.add(req_sym)
 
         # 统计 missing
         for sym in symbols:
             clean_sym = sym.strip()
             if clean_sym and clean_sym not in found_symbols and clean_sym not in missing_symbols:
-                missing_symbols.append(clean_sym)
+                hit = any(s.symbol == clean_sym or s.ticker == clean_sym or s.symbol.startswith(f"{clean_sym}.") for s in snapshots)
+                if not hit:
+                    missing_symbols.append(clean_sym)
 
         # 港股换手率补全: volume / floatShares (异步并发，不阻断主流程)
         hk_items = [(i, s) for i, s in enumerate(snapshots)

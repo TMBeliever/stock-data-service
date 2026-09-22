@@ -190,3 +190,36 @@ def test_snapshot_sdk_methods(monkeypatch):
     sync_res = sdk.get_snapshots(["600519.SH.STK"])
     assert sync_res.count == 1
     assert sync_res.data[0].latest_price == 1300.0
+
+
+@pytest.mark.asyncio
+async def test_snapshot_open_end_fund(monkeypatch):
+    """验证 SnapshotAdapter 对场外开放式基金 (如 006242 宝盈盈润纯债) 的净值解析与标的规范化"""
+    adapter = SnapshotAdapter()
+
+    MOCK_SINA_FUND_RESPONSE = (
+        'var hq_str_f_006242="宝盈盈润纯债债券A,1.1286,1.3192,1.1279,2026-09-21,10.6695";\n'
+    )
+
+    class MockResponse:
+        status_code = 200
+        text = MOCK_SINA_FUND_RESPONSE
+
+    async def mock_get(self, url, *args, **kwargs):
+        return MockResponse()
+
+    import httpx
+    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+
+    snapshots, missing = await adapter.fetch_snapshots(["006242.OF.FND", "006242"])
+    assert len(snapshots) >= 1
+    assert missing == []
+
+    fund = snapshots[0]
+    assert fund.ticker == "006242"
+    assert fund.name == "宝盈盈润纯债债券A"
+    assert fund.latest_price == 1.1286
+    assert fund.pre_close == 1.1279
+    assert fund.change == 0.0007
+    assert fund.pct_change == 0.0621
+

@@ -67,12 +67,73 @@ async def calculate_assets_valuation(items: List[AssetItem]) -> Dict[str, Any]:
             current_price = float(item.manual_price)
         elif cost > 0:
             current_price = cost
+        elif cat in [AssetCategory.CASH.value, AssetCategory.FIXED_INCOME.value]:
+            # 银行存款/现金默认单价为 1.0 (按本金保本核算)
+            current_price = 1.0
+            if cost <= 0:
+                cost = 1.0
+
+        # === 存款与固收利息核算 (Accrued Interest Calculation) ===
+        deposit_type = getattr(item, "deposit_type", None) or "NONE"
+        interest_rate = float(getattr(item, "interest_rate", 0.0) or 0.0)
+        start_date_str = getattr(item, "start_date", None)
+        end_date_str = getattr(item, "end_date", None)
+        settlement_cycle = getattr(item, "settlement_cycle", None) or "MATURITY"
+        auto_rollover = bool(getattr(item, "auto_rollover", False))
+
+        accrued_interest_raw = 0.0
+        days_held = 0
+        days_remaining = None
+        is_matured = False
+        term_days = None
+
+        if deposit_type in ["DEMAND", "FIXED", "NOTICE", "LARGE_CD"] and interest_rate > 0:
+            import datetime
+            today = datetime.date.today()
+            s_date = None
+            e_date = None
+            if start_date_str:
+                try:
+                    s_date = datetime.date.fromisoformat(start_date_str.strip())
+                except Exception:
+                    pass
+            if end_date_str:
+                try:
+                    e_date = datetime.date.fromisoformat(end_date_str.strip())
+                except Exception:
+                    pass
+
+            # 确定计息天数
+            if s_date:
+                days_held = max(0, (today - s_date).days)
+                if e_date:
+                    term_days = max(0, (e_date - s_date).days)
+                    days_remaining = max(0, (e_date - today).days)
+                    if today >= e_date:
+                        is_matured = True
+                        effective_days = term_days
+                    else:
+                        effective_days = days_held
+                else:
+                    effective_days = days_held
+
+                # 银行标准采用实际天数法：本金 * (年利率 / 100) * (天数 / 365)
+                # amt 为存款本金 (成本值)
+                accrued_interest_raw = round(amt * (interest_rate / 100.0) * (effective_days / 365.0), 2)
 
         # 原始币种估值
-        market_val_raw = round(amt * current_price, 2)
-        cost_val_raw = round(amt * cost, 2)
-        pnl_raw = round(market_val_raw - cost_val_raw, 2)
-        pnl_pct = round((pnl_raw / cost_val_raw) * 100, 2) if cost_val_raw > 0 else 0.0
+        if deposit_type in ["DEMAND", "FIXED", "NOTICE", "LARGE_CD"] and interest_rate > 0:
+            # 存款类资产：成本即为本金，最新市值 = 本金 + 累计产生的利息
+            cost_val_raw = round(amt, 2)
+            market_val_raw = round(cost_val_raw + accrued_interest_raw, 2)
+            pnl_raw = accrued_interest_raw
+            pnl_pct = round((pnl_raw / cost_val_raw) * 100, 2) if cost_val_raw > 0 else 0.0
+            current_price = round(market_val_raw / amt, 4) if amt > 0 else 1.0
+        else:
+            market_val_raw = round(amt * current_price, 2)
+            cost_val_raw = round(amt * cost, 2)
+            pnl_raw = round(market_val_raw - cost_val_raw, 2)
+            pnl_pct = round((pnl_raw / cost_val_raw) * 100, 2) if cost_val_raw > 0 else 0.0
 
         # 基准本位币 (CNY) 汇率折算值
         market_val_cny = round(market_val_raw * fx_rate, 2)
@@ -102,6 +163,19 @@ async def calculate_assets_valuation(items: List[AssetItem]) -> Dict[str, Any]:
             "market_val_raw": market_val_raw,
             "cost_val_raw": cost_val_raw,
             "pnl_raw": pnl_raw,
+            # 存款与计息专属字段
+            "deposit_type": deposit_type,
+            "interest_rate": interest_rate,
+            "start_date": start_date_str,
+            "end_date": end_date_str,
+            "settlement_cycle": settlement_cycle,
+            "auto_rollover": auto_rollover,
+            "accrued_interest": accrued_interest_raw,
+            "accrued_interest_cny": round(accrued_interest_raw * fx_rate, 2),
+            "days_held": days_held,
+            "days_remaining": days_remaining,
+            "term_days": term_days,
+            "is_matured": is_matured,
             "note": item.note,
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,

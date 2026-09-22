@@ -7,6 +7,7 @@ from sqlalchemy import (
     Float,
     Text,
     DateTime,
+    Boolean,
 )
 from asset_server.database import Base
 
@@ -21,6 +22,24 @@ class AssetCategory(str, Enum):
     REAL_ESTATE = "REAL_ESTATE"    # 房产物业、车位等不动产
     LIABILITY = "LIABILITY"        # 负债项 (房贷余额、车贷、消费信贷等，负向资产)
     OTHER = "OTHER"                # 其他另类资产
+
+
+class DepositType(str, Enum):
+    """存款类型"""
+    NONE = "NONE"                  # 非存款计息类资产
+    DEMAND = "DEMAND"              # 活期存款 / 灵活理财 / 余额宝 (随存随取)
+    FIXED = "FIXED"                # 定期存款 / 封闭期理财 / 结构性存款
+    NOTICE = "NOTICE"              # 通知存款 (如7天通知存款)
+    LARGE_CD = "LARGE_CD"          # 大额存单
+
+
+class SettlementCycle(str, Enum):
+    """结息 / 付息周期"""
+    DAILY = "DAILY"                # 按日计息结息 (如货币基金、日日宝)
+    MONTHLY = "MONTHLY"            # 按月结息 / 月付利息
+    QUARTERLY = "QUARTERLY"        # 按季结息 (银行标准活期通常季末20日结息)
+    ANNUAL = "ANNUAL"              # 按年付息 (如多年期大额存单每年付息)
+    MATURITY = "MATURITY"          # 到期一次还本付息 (最常见定期存款模式)
 
 
 def get_utc_now():
@@ -41,6 +60,14 @@ class AssetItem(Base):
     manual_price = Column(Float, nullable=True, doc="手动估值单价 (无行情代码资产使用)")
     currency = Column(String(8), nullable=False, default="CNY", doc="计价币种")
     note = Column(Text, nullable=True, doc="备注信息")
+
+    # === 存款与利息周期核算扩展字段 ===
+    deposit_type = Column(String(16), nullable=False, default=DepositType.NONE.value, doc="存款类型 (NONE, DEMAND, FIXED, NOTICE, LARGE_CD)")
+    interest_rate = Column(Float, nullable=False, default=0.0, doc="约定年化利率 (%)，如 2.15 表示 2.15%")
+    start_date = Column(String(32), nullable=True, doc="存入日 / 起息日 (YYYY-MM-DD)")
+    end_date = Column(String(32), nullable=True, doc="到期日 (YYYY-MM-DD，活期可为空)")
+    settlement_cycle = Column(String(32), nullable=False, default=SettlementCycle.MATURITY.value, doc="结息周期")
+    auto_rollover = Column(Boolean, nullable=False, default=False, doc="到期是否自动转存")
 
     created_at = Column(DateTime, default=get_utc_now)
     updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)

@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAuthStore } from './auth'
-import { fetchBatchQuotes } from '@/services/liveQuote'
 
 export type AssetCategory =
   | 'CASH'
@@ -82,6 +81,26 @@ export const ASSET_CATEGORIES: Record<AssetCategory, CategoryMeta> = {
   },
 }
 
+export type DepositType = 'NONE' | 'DEMAND' | 'FIXED' | 'NOTICE' | 'LARGE_CD'
+
+export type SettlementCycle = 'DAILY' | 'MONTHLY' | 'QUARTERLY' | 'ANNUAL' | 'MATURITY'
+
+export const DEPOSIT_TYPES: Record<DepositType, { label: string; desc: string }> = {
+  NONE: { label: '常规非存款', desc: '股票、房产、借贷等普通资产' },
+  DEMAND: { label: '活期存款 / 零钱', desc: '活期储蓄、余额宝、现金管理随存随取' },
+  FIXED: { label: '定期存款 / 封闭理财', desc: '整存整取定期、封闭期理财' },
+  NOTICE: { label: '通知存款', desc: '一天/七天通知存款，支取需提前通知' },
+  LARGE_CD: { label: '大额存单', desc: '银行专属大额存单，支持转让或定期付息' },
+}
+
+export const SETTLEMENT_CYCLES: Record<SettlementCycle, { label: string; desc: string }> = {
+  MATURITY: { label: '到期一次还本付息', desc: '定期存款最常见模式，到期日统一结算本息' },
+  DAILY: { label: '按日计息并结息', desc: '如余额宝、货币基金、日日宝每天结算' },
+  MONTHLY: { label: '按月结息 / 月度返利', desc: '每月特定日期支付利息' },
+  QUARTERLY: { label: '按季结息', desc: '银行标准活期通常每季度末20日结息' },
+  ANNUAL: { label: '按年付息', desc: '多年期大额存单或国债每年付息一次' },
+}
+
 export interface AssetItem {
   id: number | string
   user_id: number
@@ -101,6 +120,18 @@ export interface AssetItem {
   market_val_raw?: number
   cost_val_raw?: number
   pnl_raw?: number
+  deposit_type?: DepositType
+  interest_rate?: number
+  start_date?: string | null
+  end_date?: string | null
+  settlement_cycle?: SettlementCycle
+  auto_rollover?: boolean
+  accrued_interest?: number
+  accrued_interest_cny?: number
+  days_held?: number
+  days_remaining?: number | null
+  term_days?: number | null
+  is_matured?: boolean
   note: string | null
   created_at: string
   updated_at: string
@@ -138,6 +169,12 @@ export interface CreateAssetPayload {
   manual_price?: number | null
   currency?: string
   note?: string | null
+  deposit_type?: DepositType
+  interest_rate?: number
+  start_date?: string | null
+  end_date?: string | null
+  settlement_cycle?: SettlementCycle
+  auto_rollover?: boolean
 }
 
 export interface UpdateAssetPayload {
@@ -149,6 +186,12 @@ export interface UpdateAssetPayload {
   manual_price?: number | null
   currency?: string
   note?: string | null
+  deposit_type?: DepositType
+  interest_rate?: number
+  start_date?: string | null
+  end_date?: string | null
+  settlement_cycle?: SettlementCycle
+  auto_rollover?: boolean
 }
 
 export const useAssetStore = defineStore('asset', () => {
@@ -229,11 +272,6 @@ export const useAssetStore = defineStore('asset', () => {
 
 
       overview.value = normalized
-
-      // 经由数据中台实时行情快照进行净值与估值补全
-      await enrichAssetOverviewWithLiveQuotes(normalized)
-      overview.value = { ...normalized, items: [...normalized.items] }
-
       return overview.value
     } catch (err: any) {
       console.error('[AssetStore] fetchOverview failed:', err)
@@ -242,107 +280,6 @@ export const useAssetStore = defineStore('asset', () => {
     } finally {
       loading.value = false
       refreshing.value = false
-    }
-  }
-
-  /**
-   * 经由数据中台批量快照接口 (/stock/api/v1/snapshot/batch) 实时补全最新净值与行情
-   */
-  async function enrichAssetOverviewWithLiveQuotes(ov: AssetOverview) {
-    if (!ov.items || ov.items.length === 0) return
-
-    const symbols = ov.items
-      .map((it) => it.symbol)
-      .filter((s): s is string => Boolean(s && s.trim()))
-
-    if (symbols.length === 0) return
-
-    try {
-      const quotesMap = await fetchBatchQuotes(symbols)
-      let totalAssets = 0
-      let totalCost = 0
-      let totalLiabilities = 0
-
-      // 重置大类汇总
-      const catKeys = Object.keys(ov.category_breakdown) as AssetCategory[]
-      for (const catKey of catKeys) {
-        ov.category_breakdown[catKey].market_value = 0
-        ov.category_breakdown[catKey].cost = 0
-        ov.category_breakdown[catKey].pnl = 0
-        ov.category_breakdown[catKey].item_count = 0
-      }
-
-      for (const item of ov.items) {
-        const amt = Number(item.amount) || 0
-        const cost = Number(item.cost_price) || 0
-        const fx = Number(item.fx_rate) || (ov.fx_rates?.[item.currency || 'CNY'] || 1.0)
-
-        let price = Number(item.current_price) || cost
-        if (item.symbol) {
-          const snap = quotesMap.get(item.symbol) || quotesMap.get(item.symbol.split('.')[0])
-          if (snap && snap.price > 0) {
-            price = snap.price
-            item.current_price = snap.price
-            if (snap.name && (!item.name || item.name.includes('('))) {
-              item.name = snap.name
-            }
-            item.change_pct = snap.pct_change
-            item.prev_close = snap.pre_close
-          }
-        }
-
-        const marketRaw = Number((amt * price).toFixed(2))
-        const costRaw = Number((amt * cost).toFixed(2))
-        const pnlRaw = Number((marketRaw - costRaw).toFixed(2))
-        const pnlPct = costRaw > 0 ? Number(((pnlRaw / costRaw) * 100).toFixed(2)) : 0.0
-
-        const marketCny = Number((marketRaw * fx).toFixed(2))
-        const costCny = Number((costRaw * fx).toFixed(2))
-        const pnlCny = Number((marketCny - costCny).toFixed(2))
-
-        item.market_val_raw = marketRaw
-        item.cost_val_raw = costRaw
-        item.pnl_raw = pnlRaw
-        item.market_value = marketCny
-        item.cost_value = costCny
-        item.unrealized_pnl = pnlCny
-        item.unrealized_pnl_pct = pnlPct
-
-        if (item.category === 'LIABILITY') {
-          totalLiabilities += marketCny
-        } else {
-          totalAssets += marketCny
-          totalCost += costCny
-        }
-
-        const catMeta = ov.category_breakdown[item.category]
-        if (catMeta) {
-          catMeta.market_value = Number((catMeta.market_value + marketCny).toFixed(2))
-          catMeta.cost = Number((catMeta.cost + costCny).toFixed(2))
-          catMeta.pnl = Number((catMeta.pnl + pnlCny).toFixed(2))
-          catMeta.item_count += 1
-        }
-      }
-
-      const netWorth = Number((totalAssets - totalLiabilities).toFixed(2))
-      const totalPnl = Number((totalAssets - totalCost).toFixed(2))
-      const returnPct = totalCost > 0 ? Number(((totalPnl / totalCost) * 100).toFixed(2)) : 0.0
-
-      ov.total_assets = Number(totalAssets.toFixed(2))
-      ov.total_cost = Number(totalCost.toFixed(2))
-      ov.total_liabilities = Number(totalLiabilities.toFixed(2))
-      ov.net_worth = Number(netWorth.toFixed(2))
-      ov.unrealized_pnl = Number(totalPnl.toFixed(2))
-      ov.unrealized_pnl_pct = Number(returnPct.toFixed(2))
-
-      for (const catKey of catKeys) {
-        const catMeta = ov.category_breakdown[catKey]
-        catMeta.weight = totalAssets > 0 ? Number((catMeta.market_value / totalAssets).toFixed(4)) : 0
-      }
-
-      overview.value = { ...ov, items: [...ov.items] }
-    } catch (err) {
-      console.warn('[AssetStore] enrichAssetOverviewWithLiveQuotes error:', err)
     }
   }
 

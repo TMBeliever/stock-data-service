@@ -4,15 +4,18 @@ import { useRouter } from 'vue-router'
 import {
   useAssetStore,
   ASSET_CATEGORIES,
+  DEPOSIT_TYPES,
+  SETTLEMENT_CYCLES,
   type AssetCategory,
   type AssetItem,
   type CreateAssetPayload,
   type UpdateAssetPayload,
+  type DepositType,
+  type SettlementCycle,
 } from '@/stores/asset'
 import { useAuthStore } from '@/stores/auth'
 import { useMarketStore, type SymbolItem } from '@/stores/market'
 import { useModalLayer } from '@/stores/modalManager'
-import { fetchLiveFundQuote } from '@/services/liveQuote'
 import EChartWrapper from '@/components/EChartWrapper.vue'
 
 const router = useRouter()
@@ -60,7 +63,7 @@ const { zIndex: modalZIndex, focusModal } = useModalLayer(
   }
 )
 
-// 表单字段
+// 基础表单字段
 const formCategory = ref<AssetCategory>('EQUITY')
 const formName = ref('')
 const formSymbol = ref('')
@@ -69,6 +72,67 @@ const formCostPrice = ref<number | string>(10.0)
 const formManualPrice = ref<number | string>('')
 const formCurrency = ref('CNY')
 const formNote = ref('')
+
+// 存款/理财计息专属字段
+const formDepositType = ref<DepositType>('NONE')
+const formInterestRate = ref<number | string>('')       // 约定年化利率 (%)
+const formStartDate = ref<string>('')                  // 存入日 / 起息日 (YYYY-MM-DD)
+const formEndDate = ref<string>('')                    // 到期日 (YYYY-MM-DD)
+const formSettlementCycle = ref<SettlementCycle>('MATURITY') // 结息周期
+const formAutoRollover = ref<boolean>(false)           // 到期自动续存
+
+// 存款实时利息试算预览
+const depositInterestPreview = computed(() => {
+  const principal = Number(formAmount.value) || 0
+  const rate = Number(formInterestRate.value) || 0
+  if (principal <= 0 || rate <= 0) {
+    return { accruedInterest: 0, daysHeld: 0, totalTermDays: 0, daysRemaining: null, totalMaturityInterest: 0, totalAtMaturity: principal }
+  }
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  let sDate = formStartDate.value ? new Date(formStartDate.value) : new Date()
+  sDate.setHours(0, 0, 0, 0)
+
+  let daysHeld = Math.max(0, Math.floor((today.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24)))
+  let totalTermDays = 0
+  let daysRemaining: number | null = null
+
+  if (formEndDate.value) {
+    const eDate = new Date(formEndDate.value)
+    eDate.setHours(0, 0, 0, 0)
+    totalTermDays = Math.max(0, Math.floor((eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24)))
+    daysRemaining = Math.max(0, Math.floor((eDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)))
+  }
+
+  // 实际已产生利息 (实际天数法: 本金 * 年利率% * 已持天数 / 365)
+  const effectiveDays = formEndDate.value && today >= new Date(formEndDate.value) ? totalTermDays : daysHeld
+  const accruedInterest = Number(((principal * (rate / 100) * effectiveDays) / 365).toFixed(2))
+
+  // 到期预计总利息
+  const totalMaturityInterest = totalTermDays > 0 ? Number(((principal * (rate / 100) * totalTermDays) / 365).toFixed(2)) : accruedInterest
+
+  return {
+    accruedInterest,
+    daysHeld,
+    totalTermDays,
+    daysRemaining,
+    totalMaturityInterest,
+    totalAtMaturity: Number((principal + totalMaturityInterest).toFixed(2)),
+  }
+})
+
+// 判断是否为银行存款、现金或理财类资产
+function isBankOrDeposit(item: AssetItem): boolean {
+  if (item.deposit_type && item.deposit_type !== 'NONE') return true
+  if (item.category === 'CASH' || item.category === 'FIXED_INCOME') return true
+  const n = (item.name || '').toLowerCase()
+  if (n.includes('银行') || n.includes('定期') || n.includes('存单') || n.includes('存款') || n.includes('理财') || n.includes('余额宝')) {
+    return true
+  }
+  return false
+}
 
 // 录入模式：'DEDUCE' (智能反推：当前金额+收益/本金) | 'PRECISE' (精细模式：份额+单价)
 const inputMode = ref<'DEDUCE' | 'PRECISE'>('DEDUCE')
@@ -186,11 +250,33 @@ function openCreateModal(presetCategory?: AssetCategory) {
   formCategory.value = presetCategory || 'EQUITY'
   formName.value = ''
   formSymbol.value = ''
-  formAmount.value = formCategory.value === 'EQUITY' ? '' : 1
-  formCostPrice.value = formCategory.value === 'CASH' ? 1 : ''
+  formAmount.value = formCategory.value === 'EQUITY' ? '' : 10000
+  formCostPrice.value = (formCategory.value === 'CASH' || formCategory.value === 'FIXED_INCOME') ? 1 : ''
   formManualPrice.value = ''
   formCurrency.value = 'CNY'
   formNote.value = ''
+
+  // 存款字段初始化
+  if (formCategory.value === 'CASH') {
+    formDepositType.value = 'DEMAND'
+    formInterestRate.value = 0.20
+    formSettlementCycle.value = 'QUARTERLY'
+  } else if (formCategory.value === 'FIXED_INCOME') {
+    formDepositType.value = 'FIXED'
+    formInterestRate.value = 2.15
+    formSettlementCycle.value = 'MATURITY'
+  } else {
+    formDepositType.value = 'NONE'
+    formInterestRate.value = ''
+    formSettlementCycle.value = 'MATURITY'
+  }
+  const todayStr = new Date().toISOString().split('T')[0]
+  formStartDate.value = todayStr
+  const nextYear = new Date()
+  nextYear.setFullYear(nextYear.getFullYear() + 1)
+  formEndDate.value = nextYear.toISOString().split('T')[0]
+  formAutoRollover.value = false
+
   inputMode.value = 'DEDUCE'
   deduceProfitType.value = 'RATE'
   deduceTotalValue.value = ''
@@ -217,6 +303,15 @@ function openEditModal(item: AssetItem) {
   formManualPrice.value = item.manual_price !== null && item.manual_price !== undefined ? item.manual_price : ''
   formCurrency.value = item.currency || 'CNY'
   formNote.value = item.note || ''
+
+  // 回显存款专属字段
+  formDepositType.value = item.deposit_type || 'NONE'
+  formInterestRate.value = item.interest_rate !== undefined && item.interest_rate !== null ? item.interest_rate : ''
+  formStartDate.value = item.start_date || ''
+  formEndDate.value = item.end_date || ''
+  formSettlementCycle.value = item.settlement_cycle || 'MATURITY'
+  formAutoRollover.value = Boolean(item.auto_rollover)
+
   inputMode.value = 'DEDUCE'
   deduceProfitType.value = 'RATE'
 
@@ -237,17 +332,6 @@ function openEditModal(item: AssetItem) {
   symbolSuggestions.value = []
   activeSuggestionName.value = item.name
   showModal.value = true
-
-  // 若存在标的代码，后台直连拉取最新参考现价与净值
-  if (item.symbol) {
-    fetchLiveFundQuote(item.symbol).then((live) => {
-      if (live && live.price > 0) {
-        activeSuggestionPrice.value = live.price
-        deduceUnitPrice.value = live.price
-        syncDeduceToForm()
-      }
-    })
-  }
 }
 
 // 搜索框输入防抖查询股票、ETF 与公募基金
@@ -268,43 +352,6 @@ function handleSymbolInput(e: Event) {
     isSearchingSymbol.value = true
     try {
       const results = await marketStore.searchSymbols(q, 'all', 8)
-      // 直连公募基金净值与实时快照补全
-      for (const item of results) {
-        if (item.latest_price === null || item.latest_price === undefined) {
-          const live = await fetchLiveFundQuote(item.symbol || item.ticker)
-          if (live && live.price > 0) {
-            item.latest_price = live.price
-            item.pct_change = live.pct_change
-            if (live.name && (!item.name || item.name.includes('('))) {
-              item.name = live.name
-            }
-          }
-        }
-      }
-
-      // 如果是 6 位数字代码，直接优先尝试新浪基金源直查并置顶
-      if (/^\d{6}$/.test(q)) {
-        const live = await fetchLiveFundQuote(q)
-        if (live && live.price > 0) {
-          const fundSymItem: SymbolItem = {
-            symbol: live.symbol,
-            ticker: live.ticker,
-            market: 'OF',
-            asset_type: 'FND',
-            name: live.name,
-            category: 'fund',
-            latest_price: live.price,
-            pct_change: live.pct_change,
-          }
-          const idx = results.findIndex((r) => r.ticker === q || r.symbol.startsWith(q))
-          if (idx >= 0) {
-            results[idx] = fundSymItem
-          } else {
-            results.unshift(fundSymItem)
-          }
-        }
-      }
-
       symbolSuggestions.value = results
       showSuggestions.value = results.length > 0
     } catch (err) {
@@ -340,20 +387,6 @@ function selectSuggestion(item: SymbolItem) {
     syncDeduceToForm()
   } else {
     activeSuggestionPrice.value = null
-    fetchLiveFundQuote(item.symbol || item.ticker).then((live) => {
-      if (live && live.price > 0) {
-        item.latest_price = live.price
-        activeSuggestionPrice.value = live.price
-        deduceUnitPrice.value = live.price
-        if (live.name && (!formName.value || formName.value.includes('('))) {
-          formName.value = live.name
-        }
-        if (!formCostPrice.value || Number(formCostPrice.value) === 0) {
-          formCostPrice.value = live.price
-        }
-        syncDeduceToForm()
-      }
-    })
   }
 
   // 大类智能推导
@@ -409,20 +442,7 @@ async function handleSymbolInputBlur() {
       formSymbol.value = `${raw}.OF.FND`
     }
 
-    // 通过数据中台拉取最新价格或净值
-    const live = await fetchLiveFundQuote(raw)
-    if (live && live.price > 0) {
-      if (!formName.value || formName.value.includes('(')) formName.value = live.name
-      activeSuggestionPrice.value = live.price
-      deduceUnitPrice.value = live.price
-      if (!formCostPrice.value || Number(formCostPrice.value) === 0) {
-        formCostPrice.value = live.price
-      }
-      syncDeduceToForm()
-      return
-    }
-
-    // 若当前资产名称为空，发起一次反查并回填名称与最新价格/净值
+    // 若当前资产名称为空，通过标准市场搜索反查回填
     if (!formName.value) {
       try {
         const results = await marketStore.searchSymbols(raw, 'all', 1)
@@ -475,6 +495,10 @@ async function handleSubmitAsset() {
 
   isSubmitting.value = true
   try {
+    const isDepositCategory = formCategory.value === 'CASH' || formCategory.value === 'FIXED_INCOME'
+    const depositType = isDepositCategory && formDepositType.value !== 'NONE' ? formDepositType.value : 'NONE'
+    const interestRate = isDepositCategory && formInterestRate.value !== '' ? Number(formInterestRate.value) : 0.0
+
     if (modalMode.value === 'create') {
       const payload: CreateAssetPayload = {
         category: formCategory.value,
@@ -485,6 +509,12 @@ async function handleSubmitAsset() {
         manual_price: manualPrice,
         currency: formCurrency.value,
         note: formNote.value.trim() || null,
+        deposit_type: depositType,
+        interest_rate: interestRate,
+        start_date: isDepositCategory ? formStartDate.value || null : null,
+        end_date: isDepositCategory ? formEndDate.value || null : null,
+        settlement_cycle: isDepositCategory ? formSettlementCycle.value : 'MATURITY',
+        auto_rollover: isDepositCategory ? formAutoRollover.value : false,
       }
       await assetStore.createAsset(payload)
       showToast(`✅ 成功录入资产「${name}」！`)
@@ -498,6 +528,12 @@ async function handleSubmitAsset() {
         manual_price: manualPrice,
         currency: formCurrency.value,
         note: formNote.value.trim() || null,
+        deposit_type: depositType,
+        interest_rate: interestRate,
+        start_date: isDepositCategory ? formStartDate.value || null : null,
+        end_date: isDepositCategory ? formEndDate.value || null : null,
+        settlement_cycle: isDepositCategory ? formSettlementCycle.value : 'MATURITY',
+        auto_rollover: isDepositCategory ? formAutoRollover.value : false,
       }
       await assetStore.updateAsset(editingAssetId.value, payload)
       showToast(`✅ 资产「${name}」已更新！`)
@@ -915,11 +951,11 @@ watch(
             <tr>
               <th class="p-3.5">资产标的</th>
               <th class="p-3.5">类别</th>
-              <th class="p-3.5 text-right">持有数量/份额</th>
-              <th class="p-3.5 text-right">成本单价</th>
-              <th class="p-3.5 text-right">当前单价/行情</th>
-              <th class="p-3.5 text-right">最新总估值</th>
-              <th class="p-3.5 text-right">浮动盈亏</th>
+              <th class="p-3.5 text-right">持有本金 / 数量</th>
+              <th class="p-3.5 text-right">计息周期 / 成本单价</th>
+              <th class="p-3.5 text-right">年化利率 / 最新单价</th>
+              <th class="p-3.5 text-right">当前总资产 / 市值</th>
+              <th class="p-3.5 text-right">浮动盈亏 / 累计利息</th>
               <th class="p-3.5 text-center">操作</th>
             </tr>
           </thead>
@@ -953,8 +989,23 @@ watch(
                         {{ item.currency }}
                       </span>
                     </div>
-                    <div class="text-[11px] text-zinc-500 truncate max-w-[240px] mt-0.5">
-                      {{ item.note || (item.symbol ? item.symbol : '无附加备注') }}
+                    <div class="text-[11px] text-zinc-500 truncate max-w-[280px] mt-0.5 flex items-center space-x-1.5">
+                      <!-- 存款专属标签与说明 -->
+                      <template v-if="isBankOrDeposit(item)">
+                        <span class="px-1.5 py-0.2 rounded text-[9px] font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0">
+                          {{ (item.deposit_type && DEPOSIT_TYPES[item.deposit_type]?.label.split(' / ')[0]) || (item.category === 'FIXED_INCOME' ? '定期理财' : '活期存款') }}
+                        </span>
+                        <span v-if="item.start_date" class="text-zinc-400 font-mono text-[10px] shrink-0">
+                          {{ item.start_date }}起
+                        </span>
+                        <span v-if="item.days_remaining !== null && item.days_remaining !== undefined" class="font-mono text-[10px] shrink-0" :class="item.is_matured ? 'text-amber-400' : 'text-emerald-400'">
+                          {{ item.is_matured ? '• 已到期' : `• 剩${item.days_remaining}天` }}
+                        </span>
+                        <span v-if="item.auto_rollover" class="px-1 py-0.2 rounded text-[9px] bg-blue-500/15 text-blue-300 border border-blue-500/25 shrink-0">
+                          自动续存
+                        </span>
+                      </template>
+                      <span v-else>{{ item.note || (item.symbol ? item.symbol : '无附加备注') }}</span>
                     </div>
                   </div>
                 </div>
@@ -971,28 +1022,71 @@ watch(
                 </span>
               </td>
 
-              <!-- 持有数量 -->
-              <td class="p-3.5 text-right text-zinc-300 font-mono">
-                {{ item.amount.toLocaleString('zh-CN', { maximumFractionDigits: 3 }) }}
-              </td>
-
-              <!-- 成本单价 -->
-              <td class="p-3.5 text-right text-zinc-400 font-mono">
-                {{ item.currency && item.currency !== 'CNY' ? item.currency : '¥' }} {{ item.cost_price.toFixed(item.cost_price > 10 ? 2 : 3) }}
-              </td>
-
-              <!-- 当前单价 / 行情 -->
+              <!-- 持有数量 / 本金 -->
               <td class="p-3.5 text-right font-mono">
                 <div class="flex flex-col items-end">
-                  <span class="font-bold text-white">
-                    {{ item.currency && item.currency !== 'CNY' ? item.currency : '¥' }} {{ item.current_price.toFixed(item.current_price > 10 ? 2 : 3) }}
-                  </span>
-                  <span v-if="item.symbol" class="text-[10px] text-emerald-400 flex items-center space-x-0.5">
-                    <span>⚡ 实时行情</span>
-                  </span>
-                  <span v-else class="text-[10px] text-zinc-500">
-                    {{ item.manual_price !== null ? '手工估值' : '按成本单价' }}
-                  </span>
+                  <template v-if="isBankOrDeposit(item)">
+                    <span class="font-bold text-zinc-100 text-xs">
+                      ¥{{ item.amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                    </span>
+                    <span class="text-[10px] text-zinc-400">
+                      {{ item.days_held ? `已存 ${item.days_held} 天` : '存款本金' }}
+                    </span>
+                  </template>
+                  <template v-else>
+                    <span class="text-zinc-300">{{ item.amount.toLocaleString('zh-CN', { maximumFractionDigits: 3 }) }}</span>
+                    <span v-if="item.category === 'LIABILITY'" class="text-[10px] text-rose-400/80">待还本金</span>
+                  </template>
+                </div>
+              </td>
+
+              <!-- 结息周期 / 成本单价 -->
+              <td class="p-3.5 text-right font-mono">
+                <div class="flex flex-col items-end">
+                  <template v-if="isBankOrDeposit(item)">
+                    <span class="text-zinc-200 text-xs">
+                      {{ SETTLEMENT_CYCLES[item.settlement_cycle || 'MATURITY']?.label.split(' ')[0] }}
+                    </span>
+                    <span v-if="item.end_date" class="text-[10px] text-zinc-400">
+                      至 {{ item.end_date }}
+                    </span>
+                    <span v-else class="text-[10px] text-zinc-500">
+                      随存随取
+                    </span>
+                  </template>
+                  <template v-else>
+                    <span class="text-zinc-400">
+                      {{ item.currency && item.currency !== 'CNY' ? item.currency : '¥' }} {{ item.cost_price.toFixed(item.cost_price > 10 ? 2 : 3) }}
+                    </span>
+                  </template>
+                </div>
+              </td>
+
+              <!-- 年化利率 / 当前单价 / 行情 -->
+              <td class="p-3.5 text-right font-mono">
+                <div class="flex flex-col items-end">
+                  <template v-if="isBankOrDeposit(item)">
+                    <span class="font-bold text-emerald-300 text-xs">
+                      {{ item.interest_rate ? `${item.interest_rate}% 年化` : '活期计息' }}
+                    </span>
+                    <span v-if="item.interest_rate" class="text-[10px] text-emerald-400/80">
+                      日利率 ≈ {{ ((item.interest_rate || 0) / 365).toFixed(4) }}%
+                    </span>
+                    <span v-else class="text-[10px] text-zinc-500">
+                      点击编辑设利率
+                    </span>
+                  </template>
+                  <template v-else>
+                    <span class="font-bold text-white">
+                      {{ item.currency && item.currency !== 'CNY' ? item.currency : '¥' }} {{ item.current_price.toFixed(item.current_price > 10 ? 2 : 3) }}
+                    </span>
+                    <span v-if="item.symbol" class="text-[10px] text-emerald-400 flex items-center space-x-0.5">
+                      <span>⚡ 实时行情</span>
+                    </span>
+                    <span v-else class="text-[10px] text-zinc-500">
+                      {{ item.manual_price !== null ? '手工估值' : '按成本单价' }}
+                    </span>
+                  </template>
                 </div>
               </td>
 
@@ -1003,19 +1097,30 @@ watch(
                     class="font-bold text-sm"
                     :class="item.category === 'LIABILITY' ? 'text-rose-400' : 'text-zinc-100'"
                   >
-                    ¥{{ item.market_value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                    ¥{{ (item.market_value > 0 ? item.market_value : item.amount).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
                   </span>
-                  <span v-if="item.currency && item.currency !== 'CNY'" class="text-[10px] text-zinc-500">
+                  <span v-if="isBankOrDeposit(item)" class="text-[10px] text-emerald-400/90">
+                    {{ item.accrued_interest && item.accrued_interest > 0 ? `含利息 ¥${item.accrued_interest.toFixed(2)}` : '本金保本' }}
+                  </span>
+                  <span v-else-if="item.currency && item.currency !== 'CNY'" class="text-[10px] text-zinc-500">
                     {{ item.currency }} {{ (item.market_val_raw !== undefined ? item.market_val_raw : item.amount * item.current_price).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) }}
                     (汇率 {{ item.fx_rate || '--' }})
                   </span>
                 </div>
               </td>
 
-
-              <!-- 浮动盈亏 -->
+              <!-- 浮动盈亏 / 存款孳息 -->
               <td class="p-3.5 text-right font-mono">
-                <template v-if="item.category !== 'CASH' && item.category !== 'LIABILITY'">
+                <!-- 存款资产展示已产生利息收益 -->
+                <template v-if="isBankOrDeposit(item)">
+                  <div class="font-bold text-red-400">
+                    +¥{{ (item.accrued_interest || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                  </div>
+                  <div class="text-[10px] text-red-400/80">
+                    +{{ (item.unrealized_pnl_pct || 0).toFixed(2) }}% (累积利息)
+                  </div>
+                </template>
+                <template v-else-if="item.category !== 'CASH' && item.category !== 'LIABILITY'">
                   <div
                     class="font-bold"
                     :class="item.unrealized_pnl >= 0 ? 'text-red-400' : 'text-emerald-400'"
@@ -1253,11 +1358,147 @@ watch(
             </div>
           </div>
 
-          <!-- 数量与成本单价 / 智能反推录入区 -->
-          <div v-if="formCategory === 'CASH' || formCategory === 'LIABILITY'">
+          <!-- 存款与固收专项计息配置面板 -->
+          <div v-if="formCategory === 'CASH' || formCategory === 'FIXED_INCOME'" class="p-3.5 rounded-xl bg-gradient-to-br from-emerald-950/20 via-blue-950/15 to-transparent border border-emerald-500/25 space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-emerald-400 flex items-center space-x-1.5">
+                <span>🏦</span>
+                <span>银行存款 / 固收计息规则</span>
+              </span>
+              <span class="text-[10px] text-zinc-400">自动每日计息与到期核算</span>
+            </div>
+
+            <!-- 存款子类型 -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <button
+                v-for="(meta, typeKey) in DEPOSIT_TYPES"
+                :key="typeKey"
+                type="button"
+                @click="formDepositType = typeKey"
+                :class="
+                  formDepositType === typeKey
+                    ? 'bg-emerald-500/25 border-emerald-500 text-emerald-200 font-bold'
+                    : 'bg-black/30 border-white/[0.06] text-zinc-400 hover:text-white'
+                "
+                class="p-2 rounded-lg border text-center transition-all cursor-pointer flex flex-col items-center justify-center space-y-0.5"
+              >
+                <span class="text-xs font-semibold">{{ meta.label.split(' / ')[0] }}</span>
+                <span class="text-[9px] opacity-70">{{ typeKey === 'DEMAND' ? '随存随取' : typeKey === 'FIXED' ? '封闭计息' : typeKey === 'LARGE_CD' ? '大额定存' : '普通资产' }}</span>
+              </button>
+            </div>
+
+            <!-- 存款本金 -->
+            <div>
+              <label class="block text-zinc-300 mb-1 font-medium">
+                存款本金 (¥) <span class="text-red-400">*</span>
+              </label>
+              <div class="relative">
+                <span class="absolute left-3 top-2 text-zinc-500 font-mono text-xs">¥</span>
+                <input
+                  v-model.number="formAmount"
+                  type="number"
+                  step="any"
+                  min="0"
+                  placeholder="0.00"
+                  class="w-full bg-black/50 border border-white/[0.1] rounded-xl pl-7 pr-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500/50 font-mono font-bold text-sm"
+                />
+              </div>
+            </div>
+
+            <!-- 计息参数 (年化利率、存入起息日、到期日) -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div>
+                <label class="block text-zinc-400 mb-1 font-medium">约定年化利率 (%)</label>
+                <div class="relative">
+                  <input
+                    v-model.number="formInterestRate"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="如: 2.15"
+                    class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-1.5 text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500/50 font-mono text-xs"
+                  />
+                  <span class="absolute right-3 top-1.5 text-zinc-400 font-mono text-xs">%</span>
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-zinc-400 mb-1 font-medium">存入 / 起息日</label>
+                <input
+                  v-model="formStartDate"
+                  type="date"
+                  class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-2.5 py-1.5 text-white focus:outline-none focus:border-emerald-500/50 font-mono text-xs"
+                />
+              </div>
+
+              <div>
+                <label class="block text-zinc-400 mb-1 font-medium">
+                  {{ formDepositType === 'DEMAND' ? '预计持有至 (选填)' : '存款到期日' }}
+                </label>
+                <input
+                  v-model="formEndDate"
+                  type="date"
+                  class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-2.5 py-1.5 text-white focus:outline-none focus:border-emerald-500/50 font-mono text-xs"
+                />
+              </div>
+            </div>
+
+            <!-- 结息周期与自动转存选项 -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+              <div>
+                <label class="block text-zinc-400 mb-1 font-medium">付息 / 结息周期</label>
+                <select
+                  v-model="formSettlementCycle"
+                  class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-1.5 text-white focus:outline-none focus:border-emerald-500/50 cursor-pointer font-mono text-xs"
+                >
+                  <option v-for="(meta, cycleKey) in SETTLEMENT_CYCLES" :key="cycleKey" :value="cycleKey">
+                    {{ meta.label }}
+                  </option>
+                </select>
+              </div>
+
+              <div class="flex items-center justify-between sm:justify-start sm:space-x-3 pt-5 sm:pt-6">
+                <label class="inline-flex items-center space-x-2 cursor-pointer select-none">
+                  <input
+                    v-model="formAutoRollover"
+                    type="checkbox"
+                    class="rounded bg-black/50 border-white/[0.2] text-emerald-500 focus:ring-0 w-4 h-4 cursor-pointer"
+                  />
+                  <span class="text-xs text-zinc-300">到期自动转存 (本息续存)</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- 存款利息与收益实时测算看板 -->
+            <div
+              v-if="Number(formAmount) > 0 && Number(formInterestRate) > 0"
+              class="p-2.5 rounded-xl bg-black/40 border border-emerald-500/20 text-xs space-y-1.5 font-mono"
+            >
+              <div class="flex items-center justify-between text-emerald-300 font-bold">
+                <span class="flex items-center space-x-1">
+                  <span>📈</span>
+                  <span>利息测算预览 (365天实际天数法)</span>
+                </span>
+                <span>已产生收益: +¥{{ depositInterestPreview.accruedInterest.toLocaleString('zh-CN', { minimumFractionDigits: 2 }) }}</span>
+              </div>
+              <div class="grid grid-cols-3 gap-2 text-[11px] text-zinc-400 pt-1 border-t border-white/[0.05]">
+                <div>
+                  已持天数: <b class="text-zinc-200">{{ depositInterestPreview.daysHeld }}天</b>
+                </div>
+                <div>
+                  剩余到期: <b class="text-zinc-200">{{ depositInterestPreview.daysRemaining !== null ? `${depositInterestPreview.daysRemaining}天` : '活期无限制' }}</b>
+                </div>
+                <div class="text-right">
+                  到期本息: <b class="text-emerald-400">¥{{ depositInterestPreview.totalAtMaturity.toLocaleString('zh-CN', { minimumFractionDigits: 2 }) }}</b>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 负债录入区 -->
+          <div v-else-if="formCategory === 'LIABILITY'">
             <label class="block text-zinc-400 mb-1 font-medium">
-              {{ formCategory === 'CASH' ? '活期 / 现金账户总余额' : '当前待还负债总本金' }}
-              <span class="text-red-400">*</span>
+              当前待还负债总本金 <span class="text-red-400">*</span>
             </label>
             <div class="relative">
               <span class="absolute left-3 top-2 text-zinc-500 font-mono text-xs">¥</span>
@@ -1267,7 +1508,7 @@ watch(
                 step="any"
                 min="0"
                 placeholder="0.00"
-                class="w-full bg-black/50 border border-white/[0.1] rounded-xl pl-7 pr-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono font-bold"
+                class="w-full bg-black/50 border border-white/[0.1] rounded-xl pl-7 pr-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-rose-500/50 font-mono font-bold"
               />
             </div>
           </div>

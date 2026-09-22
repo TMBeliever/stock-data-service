@@ -5,7 +5,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from asset_server.database import get_db
-from asset_server.models import AssetItem, AssetCategory
+from asset_server.models import AssetItem, AssetCategory, DepositType, SettlementCycle
 from asset_server.engine.valuation import calculate_assets_valuation
 
 router = APIRouter()
@@ -34,6 +34,14 @@ class AssetCreateRequest(BaseModel):
     currency: str = Field(default="CNY", max_length=8, description="计价币种")
     note: Optional[str] = Field(None, max_length=512, description="备注信息")
 
+    # 存款类属性
+    deposit_type: Optional[DepositType] = Field(default=DepositType.NONE, description="存款类型")
+    interest_rate: Optional[float] = Field(default=0.0, ge=0, description="约定年化利率 (%)")
+    start_date: Optional[str] = Field(None, description="存入日 / 起息日 (YYYY-MM-DD)")
+    end_date: Optional[str] = Field(None, description="到期日 (YYYY-MM-DD)")
+    settlement_cycle: Optional[SettlementCycle] = Field(default=SettlementCycle.MATURITY, description="结息周期")
+    auto_rollover: Optional[bool] = Field(default=False, description="是否到期自动转存")
+
 
 class AssetUpdateRequest(BaseModel):
     category: Optional[AssetCategory] = None
@@ -44,6 +52,13 @@ class AssetUpdateRequest(BaseModel):
     manual_price: Optional[float] = Field(None, ge=0)
     currency: Optional[str] = Field(None, max_length=8)
     note: Optional[str] = Field(None, max_length=512)
+
+    deposit_type: Optional[DepositType] = None
+    interest_rate: Optional[float] = Field(None, ge=0)
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    settlement_cycle: Optional[SettlementCycle] = None
+    auto_rollover: Optional[bool] = None
 
 
 # =========================================================================
@@ -121,6 +136,12 @@ async def create_asset_item(
         manual_price=req.manual_price,
         currency=req.currency.strip().upper(),
         note=req.note.strip() if req.note else None,
+        deposit_type=req.deposit_type.value if req.deposit_type else DepositType.NONE.value,
+        interest_rate=req.interest_rate or 0.0,
+        start_date=req.start_date.strip() if req.start_date else None,
+        end_date=req.end_date.strip() if req.end_date else None,
+        settlement_cycle=req.settlement_cycle.value if req.settlement_cycle else SettlementCycle.MATURITY.value,
+        auto_rollover=bool(req.auto_rollover),
     )
     db.add(item)
     await db.commit()
@@ -166,6 +187,18 @@ async def update_asset_item(
         item.currency = req.currency.strip().upper()
     if req.note is not None:
         item.note = req.note.strip() if req.note.strip() else None
+    if req.deposit_type is not None:
+        item.deposit_type = req.deposit_type.value
+    if req.interest_rate is not None:
+        item.interest_rate = req.interest_rate
+    if req.start_date is not None:
+        item.start_date = req.start_date.strip() if req.start_date.strip() else None
+    if req.end_date is not None:
+        item.end_date = req.end_date.strip() if req.end_date.strip() else None
+    if req.settlement_cycle is not None:
+        item.settlement_cycle = req.settlement_cycle.value
+    if req.auto_rollover is not None:
+        item.auto_rollover = req.auto_rollover
 
     await db.commit()
     await db.refresh(item)

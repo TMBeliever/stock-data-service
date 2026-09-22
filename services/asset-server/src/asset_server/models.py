@@ -23,6 +23,10 @@ class AssetCategory(str, Enum):
     OTHER = "OTHER"                # 其他另类资产
 
 
+def get_utc_now():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
 class AssetItem(Base):
     """全景资产核心实体表"""
     __tablename__ = "asset_items"
@@ -38,5 +42,6 @@ class AssetItem(Base):
     currency = Column(String(8), nullable=False, default="CNY", doc="计价币种")
     note = Column(Text, nullable=True, doc="备注信息")
 
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=get_utc_now)
+    updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+

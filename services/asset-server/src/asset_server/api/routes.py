@@ -73,7 +73,9 @@ async def get_asset_overview(
         "status": "success",
         "summary": valuation["summary"],
         "categories": valuation["categories"],
+        "items": valuation["items"],
     }
+
 
 
 @router.get("/api/v1/asset/items", tags=["Asset Management"])

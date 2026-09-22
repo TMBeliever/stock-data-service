@@ -252,32 +252,52 @@ def _query_live_market_suggestions(keyword: str) -> List[Dict[str, Any]]:
                             continue
                         seen_tickers.add(ticker)
 
-                        # 仅保留场内可交易标的 (A股股票 60/68/00/30，场内 ETF/LOF 51/15/58/16)
+                        # 识别 A股股票、场内 ETF/LOF 以及公募开放式基金
                         is_etf = ticker.startswith(("51", "15", "58", "16"))
                         is_stk = ticker.startswith(("60", "68", "000", "001", "002", "003", "300", "301"))
-                        if not (is_etf or is_stk):
+                        is_fund = parts[1] in ("21", "22", "23", "24", "25", "26") or raw_code.startswith("of")
+
+                        if not (is_etf or is_stk or is_fund):
                             continue
 
-                        market = "SH" if ticker.startswith(("6", "5")) or raw_code.startswith("sh") else ("SZ" if ticker.startswith(("0", "3", "1")) or raw_code.startswith("sz") else "SH")
-                        asset_type = "ETF" if is_etf else "STK"
-                        symbol = f"{ticker}.{market}.{asset_type}"
-                        category = "etf" if is_etf else "stk"
+                        clean_name = parts[4].strip() if len(parts) > 4 and parts[4].strip() else name.strip()
+
+                        if is_fund and not is_etf:
+                            market = "OF"
+                            asset_type = "FND"
+                            symbol = f"{ticker}.OF.FND"
+                            category = "fund"
+                            tags = ["公募基金", "场外开放式"]
+                        elif is_etf:
+                            market = "SH" if ticker.startswith(("51", "58")) or raw_code.startswith("sh") else "SZ"
+                            asset_type = "ETF"
+                            symbol = f"{ticker}.{market}.ETF"
+                            category = "etf"
+                            tags = [market, "ETF", "场内基金"]
+                        else:
+                            market = "SH" if ticker.startswith(("6", "5")) or raw_code.startswith("sh") else ("SZ" if ticker.startswith(("0", "3", "1")) or raw_code.startswith("sz") else "SH")
+                            asset_type = "STK"
+                            symbol = f"{ticker}.{market}.STK"
+                            category = "stk"
+                            tags = [market, "A股股票"]
+
                         results.append({
                             "symbol": symbol,
                             "ticker": ticker,
                             "market": market,
                             "asset_type": asset_type,
-                            "name": name,
+                            "name": clean_name,
                             "pinyin": ticker,
                             "category": category,
-                            "tags": [market, asset_type, "全市场检索"],
+                            "tags": tags,
                         })
         except Exception:
             pass
 
-    # 将场内 ETF 优先排在前面
-    results.sort(key=lambda x: 0 if x.get("asset_type") == "ETF" else 1)
+    # 将场内 ETF 与场外公募基金合理排序
+    results.sort(key=lambda x: 0 if x.get("asset_type") == "ETF" else (1 if x.get("asset_type") == "FND" else 2))
     return results
+
 
 def normalize_symbol_key(sym: str) -> str:
     """将输入的标的代码归一化为标准的 6位.市场.类型 代码 (如 512800 -> 512800.SH.ETF)"""
@@ -369,7 +389,54 @@ def _fetch_live_snapshots(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     except Exception as e:
         print(f"[_fetch_live_snapshots] Warning: snapshot batch error: {e}")
 
+    # 1.5 针对未被股票中台返回的标的 (如公募开放式基金 005827、110011 等)，尝试通过新浪基金净值源补全
+    missing_fund_tickers = [
+        s.split(".")[0] for s in query_symbols
+        if s.split(".")[0].isdigit() and len(s.split(".")[0]) == 6 and (s.split(".")[0] not in results and s not in results)
+    ]
+    if missing_fund_tickers:
+        try:
+            fu_list = [f"fu_{t}" for t in missing_fund_tickers[:20]]
+            with httpx.Client(timeout=3.0, trust_env=False) as client:
+                f_resp = client.get(
+                    f"https://hq.sinajs.cn/list={','.join(fu_list)}",
+                    headers={"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
+                )
+                if f_resp.status_code == 200:
+                    for line in f_resp.text.splitlines():
+                        if not line or "=" not in line or '"' not in line:
+                            continue
+                        var_name, val_part = line.split("=", 1)
+                        tk = var_name.replace("var hq_str_fu_", "").strip()
+                        raw_val = val_part.strip('"; \r\n')
+                        if not raw_val:
+                            continue
+                        f_parts = raw_val.split(",")
+                        if len(f_parts) >= 4:
+                            f_name = f_parts[0].strip()
+                            try:
+                                nav = float(f_parts[2]) if f_parts[2] not in ("", "0", "None") else float(f_parts[3])
+                                prev_nav = float(f_parts[3]) if f_parts[3] not in ("", "0", "None") else nav
+                                pct = round(((nav - prev_nav) / prev_nav) * 100, 2) if prev_nav > 0 else 0.0
+                                fund_item = {
+                                    "symbol": f"{tk}.OF.FND",
+                                    "ticker": tk,
+                                    "name": f_name,
+                                    "latest_price": nav,
+                                    "pre_close": prev_nav,
+                                    "pct_change": pct,
+                                    "change": round(nav - prev_nav, 4),
+                                    "asset_type": "FND",
+                                }
+                                results[tk] = fund_item
+                                results[f"{tk}.OF.FND"] = fund_item
+                            except Exception:
+                                pass
+        except Exception as e:
+            print(f"[_fetch_live_snapshots] Warning: fund nav fetch error: {e}")
+
     # 2. 补齐别名映射 (根据 symbol 与 ticker 映射到 results)
+
     for orig_sym in symbols:
         norm_sym = norm_map.get(orig_sym, orig_sym)
         ticker = orig_sym.split(".")[0]
@@ -449,37 +516,56 @@ def search_symbols(
 
         matched.sort(key=lambda x: x.get("_priority", 99))
 
-        # 2. 智能容错识别：若用户直接输入了一个全市场 6 位代码，且不在内置列表中，动态生成候选项
-        if keyword.isdigit() and len(keyword) == 6:
-            # 自动推断市场
-            if keyword.startswith(("60", "68")):
-                auto_sym = f"{keyword}.SH.STK"
-                auto_cat = "stk"
-                auto_mkt = "SH"
-                auto_type = "STK"
-            elif keyword.startswith(("00", "30")):
-                auto_sym = f"{keyword}.SZ.STK"
-                auto_cat = "stk"
-                auto_mkt = "SZ"
-                auto_type = "STK"
-            elif keyword.startswith("51") or keyword.startswith("58"):
-                auto_sym = f"{keyword}.SH.ETF"
-                auto_cat = "etf"
-                auto_mkt = "SH"
-                auto_type = "ETF"
-            elif keyword.startswith("15") or keyword.startswith("16"):
-                auto_sym = f"{keyword}.SZ.ETF"
-                auto_cat = "etf"
-                auto_mkt = "SZ"
-                auto_type = "ETF"
-            else:
-                auto_sym = f"{keyword}.SH"
-                auto_cat = "stk"
-                auto_mkt = "SH"
-                auto_type = "STK"
+        # 2. 实时全市场联想直通 (当输入中文名、拼音缩写、代码在本地字典未足额匹配时，直连全市场标的联想引擎)
+        if len(matched) < limit:
+            try:
+                live_suggs = _query_live_market_suggestions(q or keyword)
+                existing_syms = {m["symbol"] for m in matched}
+                existing_tickers = {m.get("ticker") for m in matched if m.get("ticker")}
+                for item in live_suggs:
+                    if item["symbol"] not in existing_syms and item.get("ticker") not in existing_tickers:
+                        if category and category != "all" and item.get("category") != category:
+                            continue
+                        matched.append(item)
+                        existing_syms.add(item["symbol"])
+                        if item.get("ticker"):
+                            existing_tickers.add(item["ticker"])
+                        if len(matched) >= limit * 2:
+                            break
+            except Exception:
+                pass
 
-            if not any(m["symbol"] == auto_sym or m["ticker"] == keyword for m in matched):
-                matched.insert(0, {
+        # 3. 智能容错识别兜底：若用户直接输入了一个全市场 6 位代码，且前面仍未匹配到，动态生成候选项
+        if keyword.isdigit() and len(keyword) == 6:
+            existing_tickers = {m.get("ticker") for m in matched if m.get("ticker")}
+            if keyword not in existing_tickers:
+                if keyword.startswith(("60", "68")):
+                    auto_sym = f"{keyword}.SH.STK"
+                    auto_cat = "stk"
+                    auto_mkt = "SH"
+                    auto_type = "STK"
+                elif keyword.startswith(("00", "30")):
+                    auto_sym = f"{keyword}.SZ.STK"
+                    auto_cat = "stk"
+                    auto_mkt = "SZ"
+                    auto_type = "STK"
+                elif keyword.startswith("51") or keyword.startswith("58"):
+                    auto_sym = f"{keyword}.SH.ETF"
+                    auto_cat = "etf"
+                    auto_mkt = "SH"
+                    auto_type = "ETF"
+                elif keyword.startswith("15") or keyword.startswith("16"):
+                    auto_sym = f"{keyword}.SZ.ETF"
+                    auto_cat = "etf"
+                    auto_mkt = "SZ"
+                    auto_type = "ETF"
+                else:
+                    auto_sym = f"{keyword}.SH"
+                    auto_cat = "stk"
+                    auto_mkt = "SH"
+                    auto_type = "STK"
+
+                matched.append({
                     "symbol": auto_sym,
                     "ticker": keyword,
                     "market": auto_mkt,
@@ -490,21 +576,6 @@ def search_symbols(
                     "tags": [auto_mkt, auto_type, "全市场直连"],
                 })
 
-        # 3. 实时全市场联想直通 (当输入中文名、拼音缩写等在本地字典未足额匹配时，直连全市场标的联想引擎)
-        if len(matched) < limit:
-            try:
-                live_suggs = _query_live_market_suggestions(q or keyword)
-                existing_syms = {m["symbol"] for m in matched}
-                for item in live_suggs:
-                    if item["symbol"] not in existing_syms:
-                        if category and category != "all" and item.get("category") != category:
-                            continue
-                        matched.append(item)
-                        existing_syms.add(item["symbol"])
-                        if len(matched) >= limit * 2:
-                            break
-            except Exception:
-                pass
 
     # 截断 limit
     candidates = matched[:limit]

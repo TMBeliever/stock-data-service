@@ -82,7 +82,7 @@ export const ASSET_CATEGORIES: Record<AssetCategory, CategoryMeta> = {
 }
 
 export interface AssetItem {
-  id: string
+  id: number | string
   user_id: number
   category: AssetCategory
   name: string
@@ -92,9 +92,14 @@ export interface AssetItem {
   manual_price: number | null
   current_price: number
   market_value: number
+  cost_value?: number
   unrealized_pnl: number
   unrealized_pnl_pct: number
   currency: string
+  fx_rate?: number
+  market_val_raw?: number
+  cost_val_raw?: number
+  pnl_raw?: number
   note: string | null
   created_at: string
   updated_at: string
@@ -117,6 +122,8 @@ export interface AssetOverview {
   unrealized_pnl_pct: number
   category_breakdown: Record<AssetCategory, CategorySummary>
   currency: string
+  base_currency?: string
+  fx_rates?: Record<string, number>
   item_count: number
   items: AssetItem[]
 }
@@ -176,9 +183,52 @@ export const useAssetStore = defineStore('asset', () => {
       if (!res.ok) {
         throw new Error(`资产接口响应异常 (${res.status})`)
       }
-      const data: AssetOverview = await res.json()
-      overview.value = data
-      return data
+      const raw = await res.json()
+      const summary = raw.summary || {}
+      const rawCategories = raw.categories || []
+
+      // 将后端 categories 数组转换为以 AssetCategory 为键的字典对象
+      const categoryBreakdown: Record<AssetCategory, CategorySummary> = {
+        CASH: { market_value: 0, cost: 0, pnl: 0, weight: 0, item_count: 0 },
+        EQUITY: { market_value: 0, cost: 0, pnl: 0, weight: 0, item_count: 0 },
+        FIXED_INCOME: { market_value: 0, cost: 0, pnl: 0, weight: 0, item_count: 0 },
+        COMMODITY: { market_value: 0, cost: 0, pnl: 0, weight: 0, item_count: 0 },
+        CRYPTO: { market_value: 0, cost: 0, pnl: 0, weight: 0, item_count: 0 },
+        REAL_ESTATE: { market_value: 0, cost: 0, pnl: 0, weight: 0, item_count: 0 },
+        LIABILITY: { market_value: 0, cost: 0, pnl: 0, weight: 0, item_count: 0 },
+      }
+
+      for (const cat of rawCategories) {
+        const k = cat.category as AssetCategory
+        if (categoryBreakdown[k]) {
+          categoryBreakdown[k] = {
+            market_value: cat.total_value || 0,
+            cost: cat.total_cost || 0,
+            pnl: cat.unrealized_pnl || 0,
+            weight: (cat.percentage || 0) / 100,
+            item_count: cat.count || 0,
+          }
+        }
+      }
+
+      const normalized: AssetOverview = {
+        total_assets: summary.total_assets || 0,
+        total_liabilities: summary.total_liabilities || 0,
+        net_worth: summary.net_worth || 0,
+        total_cost: summary.total_cost || 0,
+        unrealized_pnl: summary.unrealized_pnl || 0,
+        unrealized_pnl_pct: summary.return_pct ?? summary.unrealized_pnl_pct ?? 0,
+        category_breakdown: categoryBreakdown,
+        currency: 'CNY',
+        base_currency: summary.base_currency || 'CNY',
+        fx_rates: summary.fx_rates || {},
+        item_count: summary.item_count || (raw.items ? raw.items.length : 0),
+        items: raw.items || [],
+      }
+
+
+      overview.value = normalized
+      return normalized
     } catch (err: any) {
       console.error('[AssetStore] fetchOverview failed:', err)
       error.value = err.message || '获取资产概览失败'
@@ -202,7 +252,8 @@ export const useAssetStore = defineStore('asset', () => {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.detail || `录入资产失败 (${res.status})`)
       }
-      const created: AssetItem = await res.json()
+      const resData = await res.json().catch(() => ({}))
+      const created: AssetItem = resData.data || resData
       await fetchOverview(true)
       return created
     } catch (err: any) {
@@ -214,7 +265,7 @@ export const useAssetStore = defineStore('asset', () => {
   }
 
   // 3. 更新资产项
-  async function updateAsset(id: string, payload: UpdateAssetPayload): Promise<AssetItem | null> {
+  async function updateAsset(id: string | number, payload: UpdateAssetPayload): Promise<AssetItem | null> {
     loading.value = true
     try {
       const res = await fetch(`/api/v1/asset/items/${id}`, {
@@ -226,7 +277,8 @@ export const useAssetStore = defineStore('asset', () => {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.detail || `更新资产失败 (${res.status})`)
       }
-      const updated: AssetItem = await res.json()
+      const resData = await res.json().catch(() => ({}))
+      const updated: AssetItem = resData.data || resData
       await fetchOverview(true)
       return updated
     } catch (err: any) {
@@ -238,7 +290,7 @@ export const useAssetStore = defineStore('asset', () => {
   }
 
   // 4. 删除资产项
-  async function deleteAsset(id: string): Promise<boolean> {
+  async function deleteAsset(id: string | number): Promise<boolean> {
     loading.value = true
     try {
       const res = await fetch(`/api/v1/asset/items/${id}`, {
@@ -257,6 +309,7 @@ export const useAssetStore = defineStore('asset', () => {
       loading.value = false
     }
   }
+
 
   // 计算属性
   const totalAssets = computed(() => overview.value?.total_assets || 0)

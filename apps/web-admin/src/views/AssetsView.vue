@@ -10,11 +10,24 @@ import {
   type UpdateAssetPayload,
 } from '@/stores/asset'
 import { useAuthStore } from '@/stores/auth'
+import { useMarketStore, type SymbolItem } from '@/stores/market'
 import EChartWrapper from '@/components/EChartWrapper.vue'
 
 const router = useRouter()
 const assetStore = useAssetStore()
 const authStore = useAuthStore()
+const marketStore = useMarketStore()
+
+// 支持的常用资产计价币种
+const SUPPORTED_CURRENCIES = [
+  { code: 'CNY', label: '人民币 (¥)', symbol: '¥' },
+  { code: 'USD', label: '美元 ($)', symbol: '$' },
+  { code: 'HKD', label: '港币 (HK$)', symbol: 'HK$' },
+  { code: 'USDT', label: '泰达币 (USDT)', symbol: '₮' },
+  { code: 'EUR', label: '欧元 (€)', symbol: '€' },
+  { code: 'JPY', label: '日元 (JP¥)', symbol: 'JP¥' },
+  { code: 'GBP', label: '英镑 (£)', symbol: '£' },
+]
 
 // 提示 Toast
 const toastMsg = ref('')
@@ -33,7 +46,7 @@ const sortMode = ref<'market_value_desc' | 'pnl_desc' | 'pnl_asc' | 'name'>('mar
 // 弹窗状态 (新增 / 编辑)
 const showModal = ref(false)
 const modalMode = ref<'create' | 'edit'>('create')
-const editingAssetId = ref<string | null>(null)
+const editingAssetId = ref<string | number | null>(null)
 const isSubmitting = ref(false)
 
 // 表单字段
@@ -45,6 +58,14 @@ const formCostPrice = ref<number | string>(10.0)
 const formManualPrice = ref<number | string>('')
 const formCurrency = ref('CNY')
 const formNote = ref('')
+
+// 标的实时智能反查与下拉联想状态
+const symbolSuggestions = ref<SymbolItem[]>([])
+const showSuggestions = ref(false)
+const isSearchingSymbol = ref(false)
+const activeSuggestionPrice = ref<number | null>(null)
+const activeSuggestionName = ref<string | null>(null)
+let symbolSearchTimer: any = null
 
 // 打开新增资产弹窗
 function openCreateModal(presetCategory?: AssetCategory) {
@@ -58,6 +79,10 @@ function openCreateModal(presetCategory?: AssetCategory) {
   formManualPrice.value = ''
   formCurrency.value = 'CNY'
   formNote.value = ''
+  showSuggestions.value = false
+  symbolSuggestions.value = []
+  activeSuggestionPrice.value = null
+  activeSuggestionName.value = null
   showModal.value = true
 }
 
@@ -73,11 +98,85 @@ function openEditModal(item: AssetItem) {
   formManualPrice.value = item.manual_price !== null && item.manual_price !== undefined ? item.manual_price : ''
   formCurrency.value = item.currency || 'CNY'
   formNote.value = item.note || ''
+  showSuggestions.value = false
+  symbolSuggestions.value = []
+  activeSuggestionPrice.value = item.current_price || null
+  activeSuggestionName.value = item.name
   showModal.value = true
 }
 
-// 快速根据输入的股票代码补齐全称或智能格式化
+// 搜索框输入防抖查询股票、ETF 与公募基金
+function handleSymbolInput(e: Event) {
+  const input = (e.target as HTMLInputElement).value
+  formSymbol.value = input
+  clearTimeout(symbolSearchTimer)
+  const q = input.trim()
+  if (!q) {
+    symbolSuggestions.value = []
+    showSuggestions.value = false
+    activeSuggestionPrice.value = null
+    activeSuggestionName.value = null
+    return
+  }
+
+  symbolSearchTimer = setTimeout(async () => {
+    isSearchingSymbol.value = true
+    try {
+      const results = await marketStore.searchSymbols(q, 'all', 8)
+      symbolSuggestions.value = results
+      showSuggestions.value = results.length > 0
+    } catch (err) {
+      console.error('标的反查异常:', err)
+    } finally {
+      isSearchingSymbol.value = false
+    }
+  }, 160)
+}
+
+// 选中联想结果自动回填代码、名称、币种与现价/净值
+function selectSuggestion(item: SymbolItem) {
+  formSymbol.value = item.symbol
+  formName.value = item.name
+  activeSuggestionName.value = item.name
+
+  // 币种推断
+  if (item.market === 'US') {
+    formCurrency.value = 'USD'
+  } else if (item.market === 'HK') {
+    formCurrency.value = 'HKD'
+  } else if (formCurrency.value !== 'USD' && formCurrency.value !== 'HKD') {
+    formCurrency.value = 'CNY'
+  }
+
+  // 参考现价/净值
+  if (item.latest_price !== null && item.latest_price !== undefined) {
+    activeSuggestionPrice.value = item.latest_price
+  } else {
+    activeSuggestionPrice.value = null
+  }
+
+  // 大类智能推导
+  if (item.asset_type === 'ETF' || item.asset_type === 'STK' || item.asset_type === 'FND') {
+    formCategory.value = 'EQUITY'
+  }
+
+  showSuggestions.value = false
+}
+
+// 一键将最新价格/净值填入买入成本
+function applySuggestionPrice() {
+  if (activeSuggestionPrice.value !== null && activeSuggestionPrice.value !== undefined) {
+    formCostPrice.value = activeSuggestionPrice.value
+    showToast(`✅ 已填入最新参考单价 ¥${activeSuggestionPrice.value}`)
+  }
+}
+
+// 失去焦点时的代码标准化保底
 function handleSymbolInputBlur() {
+  setTimeout(() => {
+    showSuggestions.value = false
+  }, 250)
+
   const sym = formSymbol.value.trim().toUpperCase()
   if (!sym) return
   if (/^\d{6}$/.test(sym)) {
@@ -88,6 +187,7 @@ function handleSymbolInputBlur() {
     }
   }
 }
+
 
 // 提交资产表单
 async function handleSubmitAsset() {
@@ -568,7 +668,7 @@ watch(
                   </div>
                   <div class="flex flex-col min-w-0">
                     <div class="flex items-center space-x-2">
-                      <span class="font-bold text-white text-xs truncate max-w-[200px]">
+                      <span class="font-bold text-white text-xs truncate max-w-[180px]">
                         {{ item.name }}
                       </span>
                       <span
@@ -576,6 +676,12 @@ watch(
                         class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-blue-500/15 text-blue-300 border border-blue-500/20 shrink-0"
                       >
                         {{ item.symbol.split('.')[0] }}
+                      </span>
+                      <span
+                        v-if="item.currency && item.currency !== 'CNY'"
+                        class="px-1 py-0.2 rounded text-[9px] font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0"
+                      >
+                        {{ item.currency }}
                       </span>
                     </div>
                     <div class="text-[11px] text-zinc-500 truncate max-w-[240px] mt-0.5">
@@ -603,14 +709,14 @@ watch(
 
               <!-- 成本单价 -->
               <td class="p-3.5 text-right text-zinc-400 font-mono">
-                ¥{{ item.cost_price.toFixed(item.cost_price > 10 ? 2 : 3) }}
+                {{ item.currency && item.currency !== 'CNY' ? item.currency : '¥' }} {{ item.cost_price.toFixed(item.cost_price > 10 ? 2 : 3) }}
               </td>
 
               <!-- 当前单价 / 行情 -->
               <td class="p-3.5 text-right font-mono">
                 <div class="flex flex-col items-end">
                   <span class="font-bold text-white">
-                    ¥{{ item.current_price.toFixed(item.current_price > 10 ? 2 : 3) }}
+                    {{ item.currency && item.currency !== 'CNY' ? item.currency : '¥' }} {{ item.current_price.toFixed(item.current_price > 10 ? 2 : 3) }}
                   </span>
                   <span v-if="item.symbol" class="text-[10px] text-emerald-400 flex items-center space-x-0.5">
                     <span>⚡ 实时行情</span>
@@ -621,15 +727,22 @@ watch(
                 </div>
               </td>
 
-              <!-- 最新总估值 -->
+              <!-- 最新总估值 (统一以本位币 CNY 汇总，并标注原币金额) -->
               <td class="p-3.5 text-right font-mono">
-                <span
-                  class="font-bold text-sm"
-                  :class="item.category === 'LIABILITY' ? 'text-rose-400' : 'text-zinc-100'"
-                >
-                  ¥{{ item.market_value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
-                </span>
+                <div class="flex flex-col items-end">
+                  <span
+                    class="font-bold text-sm"
+                    :class="item.category === 'LIABILITY' ? 'text-rose-400' : 'text-zinc-100'"
+                  >
+                    ¥{{ item.market_value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                  </span>
+                  <span v-if="item.currency && item.currency !== 'CNY'" class="text-[10px] text-zinc-500">
+                    {{ item.currency }} {{ (item.market_val_raw !== undefined ? item.market_val_raw : item.amount * item.current_price).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) }}
+                    (汇率 {{ item.fx_rate || '--' }})
+                  </span>
+                </div>
               </td>
+
 
               <!-- 浮动盈亏 -->
               <td class="p-3.5 text-right font-mono">
@@ -767,25 +880,99 @@ watch(
           </div>
 
           <!-- 标的代码 (仅在股票/ETF 或大宗时着重显示) -->
-          <div v-if="formCategory === 'EQUITY' || formCategory === 'COMMODITY' || formCategory === 'CRYPTO'">
+          <!-- 标的代码 / 智能反查 (支持股票/ETF/场外公募基金代码与名称) -->
+          <div v-if="formCategory === 'EQUITY' || formCategory === 'COMMODITY' || formCategory === 'CRYPTO'" class="relative">
             <div class="flex items-center justify-between mb-1">
-              <label class="text-zinc-400 font-medium">标的代码 (Symbol)</label>
-              <span class="text-[10px] text-blue-400">输入代码自动拉取实时估值与涨跌</span>
+              <label class="text-zinc-400 font-medium">标的代码 / 拼音 / 名称智能反查 (Symbol)</label>
+              <span class="text-[10px] text-blue-400 flex items-center space-x-1">
+                <span v-if="isSearchingSymbol" class="animate-spin">🔄</span>
+                <span>支持股票 / ETF / 场外公募基金</span>
+              </span>
             </div>
-            <input
-              v-model="formSymbol"
-              @blur="handleSymbolInputBlur"
-              type="text"
-              placeholder="如 600519、510300 或 600519.SH.STK"
-              class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono uppercase"
-            />
+            <div class="relative">
+              <input
+                :value="formSymbol"
+                @input="handleSymbolInput"
+                @blur="handleSymbolInputBlur"
+                @focus="formSymbol && symbolSuggestions.length && (showSuggestions = true)"
+                type="text"
+                placeholder="输入代码、拼音或名称，如 510300、005827、茅台、易方达"
+                class="w-full bg-black/50 border border-white/[0.1] focus:border-blue-500 rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none font-mono uppercase"
+              />
+              <span
+                v-if="formSymbol"
+                @click="formSymbol = ''; showSuggestions = false; activeSuggestionPrice = null; activeSuggestionName = null"
+                class="absolute right-3 top-2.5 text-zinc-500 hover:text-white cursor-pointer"
+              >
+                ✕
+              </span>
+            </div>
+
+            <!-- 智能联想下拉建议浮层 -->
+            <div
+              v-if="showSuggestions && symbolSuggestions.length > 0"
+              class="absolute left-0 right-0 top-full mt-1.5 z-50 bg-[#161720] border border-white/[0.15] rounded-xl shadow-2xl max-h-56 overflow-y-auto divide-y divide-white/[0.05]"
+            >
+              <div
+                v-for="sug in symbolSuggestions"
+                :key="sug.symbol"
+                @mousedown.prevent="selectSuggestion(sug)"
+                class="p-2.5 hover:bg-blue-600/20 transition-colors cursor-pointer flex items-center justify-between group"
+              >
+                <div class="flex items-center space-x-2.5 min-w-0">
+                  <span
+                    class="px-1.5 py-0.5 rounded text-[10px] font-mono shrink-0"
+                    :class="
+                      sug.asset_type === 'ETF'
+                        ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                        : sug.asset_type === 'FND'
+                          ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                    "
+                  >
+                    {{ sug.asset_type === 'FND' ? '公募基金' : sug.asset_type === 'ETF' ? '场内ETF' : 'A股' }}
+                  </span>
+                  <div class="flex flex-col min-w-0">
+                    <span class="font-bold text-white text-xs truncate group-hover:text-blue-300">{{ sug.name }}</span>
+                    <span class="text-[10px] font-mono text-zinc-400">{{ sug.symbol }}</span>
+                  </div>
+                </div>
+                <div v-if="sug.latest_price !== null && sug.latest_price !== undefined" class="text-right font-mono shrink-0 ml-2">
+                  <div class="text-xs font-bold text-white">¥{{ Number(sug.latest_price).toFixed(sug.latest_price > 10 ? 2 : 4) }}</div>
+                  <div v-if="sug.pct_change !== null && sug.pct_change !== undefined" class="text-[10px]" :class="sug.pct_change >= 0 ? 'text-red-400' : 'text-emerald-400'">
+                    {{ sug.pct_change >= 0 ? '+' : '' }}{{ Number(sug.pct_change).toFixed(2) }}%
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 最新参考行情/净值一键填入条 -->
+            <div
+              v-if="activeSuggestionPrice !== null"
+              class="mt-2 p-2 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-between text-[11px]"
+            >
+              <div class="flex items-center space-x-1.5 text-zinc-300">
+                <span>⚡</span>
+                <span>
+                  {{ formSymbol.includes('.OF.FND') ? '公募最新参考净值:' : '最新实时现价:' }}
+                  <b class="text-white font-mono font-bold">¥{{ Number(activeSuggestionPrice).toFixed(activeSuggestionPrice > 10 ? 2 : 4) }}</b>
+                </span>
+              </div>
+              <button
+                type="button"
+                @click="applySuggestionPrice"
+                class="px-2 py-0.5 rounded bg-blue-500/25 hover:bg-blue-500/40 text-blue-300 font-semibold cursor-pointer transition-colors text-[11px]"
+              >
+                一键填为买入成本
+              </button>
+            </div>
           </div>
 
           <!-- 数量与成本单价 (并排) -->
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-zinc-400 mb-1 font-medium">
-                {{ formCategory === 'CASH' || formCategory === 'LIABILITY' ? '持有金额 / 负债本金 (元)' : '持有数量 / 份额' }}
+                {{ formCategory === 'CASH' || formCategory === 'LIABILITY' ? '持有金额 / 负债本金' : '持有数量 / 份额' }}
                 <span class="text-red-400">*</span>
               </label>
               <input
@@ -810,20 +997,45 @@ watch(
             </div>
           </div>
 
-          <!-- 手动单价估值 (非股票或无代码资产) -->
-          <div v-if="!formSymbol">
-            <div class="flex items-center justify-between mb-1">
-              <label class="text-zinc-400 font-medium">手动评估单价 (元)</label>
-              <span class="text-[10px] text-zinc-500">留空则默认按成本单价估值</span>
+          <!-- 计价币种与手动估值 -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-zinc-400 mb-1 font-medium">计价币种 (Currency)</label>
+              <select
+                v-model="formCurrency"
+                class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500/50 cursor-pointer font-mono"
+              >
+                <option v-for="c in SUPPORTED_CURRENCIES" :key="c.code" :value="c.code">
+                  {{ c.label }}
+                </option>
+              </select>
             </div>
-            <input
-              v-model.number="formManualPrice"
-              type="number"
-              step="any"
-              min="0"
-              placeholder="如房产最新市场评估单价/总价"
-              class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono"
-            />
+
+            <div v-if="!formSymbol">
+              <label class="block text-zinc-400 mb-1 font-medium">手动评估单价</label>
+              <input
+                v-model.number="formManualPrice"
+                type="number"
+                step="any"
+                min="0"
+                placeholder="留空按成本单价"
+                class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono"
+              />
+            </div>
+          </div>
+
+          <!-- 外币折算汇率提示条 -->
+          <div
+            v-if="formCurrency !== 'CNY'"
+            class="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-200 text-[11px] flex items-center justify-between"
+          >
+            <span class="flex items-center space-x-1">
+              <span>💱</span>
+              <span>
+                实时外汇参考: 1 {{ formCurrency }} ≈ {{ (assetStore.overview?.fx_rates?.[formCurrency] || 7.20).toFixed(4) }} CNY
+              </span>
+            </span>
+            <span class="text-[10px] text-amber-400 font-mono">资产总览将自动折合人民币核算</span>
           </div>
 
           <!-- 备注信息 -->
@@ -836,6 +1048,7 @@ watch(
               class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50"
             />
           </div>
+
         </div>
 
         <!-- 预估价值反馈条 -->

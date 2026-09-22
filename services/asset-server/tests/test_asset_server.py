@@ -211,3 +211,55 @@ async def test_market_provider_abstraction():
     # 未知标的安全兜底
     assert "UNKNOWN_SYM" in quotes
     assert quotes["UNKNOWN_SYM"].price == 10.0
+
+
+@pytest.mark.asyncio
+async def test_multi_currency_fx_valuation():
+    """验证多币种外币 (USD, HKD) 资产自动折合基准本位币 (CNY) 核算"""
+    transport = ASGITransport(app=app)
+    headers = {"x-user-id": "2002"}
+
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # 录入 10,000 美元现金 (USD)
+        resp1 = await client.post(
+            "/api/v1/asset/items",
+            headers=headers,
+            json={
+                "category": "CASH",
+                "name": "富途美元证券现金",
+                "amount": 10000.0,
+                "cost_price": 1.0,
+                "currency": "USD",
+                "note": "美股备用金",
+            },
+        )
+        assert resp1.status_code == 200
+        usd_item = resp1.json()["data"]
+        assert usd_item["currency"] == "USD"
+        assert usd_item["fx_rate"] > 6.0  # 汇率大于 6
+        assert usd_item["market_val_raw"] == 10000.0
+        assert usd_item["market_value"] == round(10000.0 * usd_item["fx_rate"], 2)
+
+        # 录入 100,000 人民币现金 (CNY)
+        resp2 = await client.post(
+            "/api/v1/asset/items",
+            headers=headers,
+            json={
+                "category": "CASH",
+                "name": "招商银行人民币活期",
+                "amount": 100000.0,
+                "cost_price": 1.0,
+                "currency": "CNY",
+            },
+        )
+        assert resp2.status_code == 200
+
+        # 查询总览：总资产应为 CNY + USD折算CNY (大于 160,000 元，而不是简单相加的 110,000)
+        overview_resp = await client.get("/api/v1/asset/overview", headers=headers)
+        assert overview_resp.status_code == 200
+        summary = overview_resp.json()["summary"]
+        expected_total = round(100000.0 + round(10000.0 * usd_item["fx_rate"], 2), 2)
+        assert summary["total_assets"] == expected_total
+        assert summary["base_currency"] == "CNY"
+        assert "USD" in summary["fx_rates"]
+

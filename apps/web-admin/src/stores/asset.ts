@@ -230,10 +230,11 @@ export const useAssetStore = defineStore('asset', () => {
 
       overview.value = normalized
 
-      // 异步通过数据中台实时行情快照进行净值与估值补全（非阻塞）
-      enrichAssetOverviewWithLiveQuotes(normalized)
+      // 经由数据中台实时行情快照进行净值与估值补全
+      await enrichAssetOverviewWithLiveQuotes(normalized)
+      overview.value = { ...normalized, items: [...normalized.items] }
 
-      return normalized
+      return overview.value
     } catch (err: any) {
       console.error('[AssetStore] fetchOverview failed:', err)
       error.value = err.message || '获取资产概览失败'
@@ -338,6 +339,8 @@ export const useAssetStore = defineStore('asset', () => {
         const catMeta = ov.category_breakdown[catKey]
         catMeta.weight = totalAssets > 0 ? Number((catMeta.market_value / totalAssets).toFixed(4)) : 0
       }
+
+      overview.value = { ...ov, items: [...ov.items] }
     } catch (err) {
       console.warn('[AssetStore] enrichAssetOverviewWithLiveQuotes error:', err)
     }

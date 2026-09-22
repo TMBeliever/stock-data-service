@@ -13,7 +13,7 @@ class InternalStockDataProvider(BaseMarketDataProvider):
     通过 HTTP POST /api/v1/snapshot/batch 批量拉取跨市场实时快照，并附带短缓存防击穿。
     """
 
-    def __init__(self, base_url: str, timeout: float = 5.0, cache_ttl: int = 3):
+    def __init__(self, base_url: str, timeout: float = 15.0, cache_ttl: int = 3):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.cache_ttl = cache_ttl

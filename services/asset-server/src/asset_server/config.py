@@ -25,7 +25,7 @@ class AssetSettings(BaseSettings):
 
     # 行情短缓存时间 (秒)，避免盘中同一秒内多次调用打满下游
     QUOTE_CACHE_TTL: int = 3
-    REQUEST_TIMEOUT: float = 5.0
+    REQUEST_TIMEOUT: float = 15.0
 
     # CORS
     CORS_ORIGINS: List[str] = ["*"]

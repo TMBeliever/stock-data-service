@@ -21,6 +21,9 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [vue(), tailwindcss()],
+    build: {
+      assetsDir: 'static',
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),

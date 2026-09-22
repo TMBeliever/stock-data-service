@@ -49,13 +49,24 @@ async def calculate_assets_valuation(items: List[AssetItem]) -> Dict[str, Any]:
         change_pct = 0.0
         prev_close = cost
 
-        if item.symbol and item.symbol in quotes_map:
-            snap = quotes_map[item.symbol]
+        snap = None
+        if item.symbol:
+            sym_clean = item.symbol.strip()
+            snap = quotes_map.get(sym_clean)
+            if not snap:
+                for k, v in quotes_map.items():
+                    if k.upper() == sym_clean.upper() or k.startswith(f"{sym_clean.upper()}.") or sym_clean.upper().startswith(f"{k.upper()}."):
+                        snap = v
+                        break
+
+        if snap and snap.price and snap.price > 0:
             current_price = snap.price
             change_pct = snap.change_pct
-            prev_close = snap.prev_close
-        elif item.manual_price is not None:
+            prev_close = snap.prev_close if snap.prev_close and snap.prev_close > 0 else current_price
+        elif item.manual_price is not None and float(item.manual_price) > 0:
             current_price = float(item.manual_price)
+        elif cost > 0:
+            current_price = cost
 
         # 原始币种估值
         market_val_raw = round(amt * current_price, 2)

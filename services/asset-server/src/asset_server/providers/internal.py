@@ -64,9 +64,20 @@ class InternalStockDataProvider(BaseMarketDataProvider):
                 items = payload.get("data", [])
                 for item in items:
                     sym = item.get("symbol")
-                    price = float(item.get("price") or 0.0)
-                    prev_close = float(item.get("prev_close") or price)
-                    change_pct = float(item.get("change_percent") or 0.0)
+                    ticker = item.get("ticker")
+                    raw_price = item.get("latest_price") if item.get("latest_price") is not None else item.get("price")
+                    raw_prev_close = item.get("pre_close") if item.get("pre_close") is not None else item.get("prev_close")
+                    raw_change_pct = item.get("pct_change") if item.get("pct_change") is not None else item.get("change_percent")
+
+                    prev_close = float(raw_prev_close) if raw_prev_close is not None else 0.0
+                    if raw_price is not None and float(raw_price) > 0:
+                        price = float(raw_price)
+                    elif prev_close > 0:
+                        price = prev_close
+                    else:
+                        price = 0.0
+
+                    change_pct = float(raw_change_pct) if raw_change_pct is not None else 0.0
 
                     snap = QuoteSnapshot(
                         symbol=sym,
@@ -75,11 +86,29 @@ class InternalStockDataProvider(BaseMarketDataProvider):
                         change_pct=change_pct,
                         source="stock-data",
                     )
-                    result[sym] = snap
-                    self._cache[sym] = (snap, now)
+                    if sym:
+                        result[sym] = snap
+                        self._cache[sym] = (snap, now)
+                        if "." in sym:
+                            prefix = sym.rsplit(".", 1)[0]
+                            self._cache[prefix] = (snap, now)
+                    if ticker:
+                        self._cache[ticker] = (snap, now)
             else:
                 logger.warning(f"调用内部行情服务失败 (HTTP {resp.status_code}): {resp.text}")
         except Exception as e:
             logger.warning(f"请求内部行情服务异常: {url} -> {e}")
+
+        # 补全别名匹配
+        for s in clean_symbols:
+            if s not in result:
+                cached = self._cache.get(s)
+                if cached:
+                    result[s] = cached[0]
+                else:
+                    for k, (cached_snap, _) in self._cache.items():
+                        if k.upper() == s.upper() or k.startswith(f"{s.upper()}.") or s.upper().startswith(f"{k.upper()}."):
+                            result[s] = cached_snap
+                            break
 
         return result

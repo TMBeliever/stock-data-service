@@ -311,18 +311,23 @@ def normalize_symbol_key(sym: str) -> str:
     # 2. 若已有包含市场的后缀直接返回
     if "." in s:
         return s
-    # 3. 6位纯数字根据号段智能推断
-    if s.isdigit() and len(s) == 6:
-        if s.startswith(("60", "68")):
-            return f"{s}.SH.STK"
-        elif s.startswith(("00", "30")):
-            return f"{s}.SZ.STK"
-        elif s.startswith(("51", "58")):
-            return f"{s}.SH.ETF"
-        elif s.startswith(("15", "16")):
-            return f"{s}.SZ.ETF"
-        else:
-            return f"{s}.SH.STK"
+    # 3. 纯数字根据号段智能推断
+    if s.isdigit():
+        if len(s) == 6:
+            if s.startswith(("60", "68")):
+                return f"{s}.SH.STK"
+            elif s.startswith(("00", "30")):
+                return f"{s}.SZ.STK"
+            elif s.startswith(("51", "58")):
+                return f"{s}.SH.ETF"
+            elif s.startswith(("15", "16")):
+                return f"{s}.SZ.ETF"
+            else:
+                return f"{s}.SH.STK"
+        elif len(s) == 5:
+            return f"{s}.HK.STK"
+        elif len(s) <= 4:
+            return f"{s.zfill(5)}.HK.STK"
     return s
 
 def _fetch_live_snapshots(symbols: List[str]) -> Dict[str, Dict[str, Any]]:

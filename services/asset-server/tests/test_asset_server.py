@@ -263,3 +263,75 @@ async def test_multi_currency_fx_valuation():
         assert summary["base_currency"] == "CNY"
         assert "USD" in summary["fx_rates"]
 
+
+@pytest.mark.asyncio
+async def test_internal_stock_data_provider_hk_quote():
+    """验证 InternalStockDataProvider 解析 stock-data 返回的 latest_price / pre_close 字段并支持别名"""
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from asset_server.providers.internal import InternalStockDataProvider
+    from asset_server.engine.valuation import calculate_assets_valuation
+    from asset_server.models import AssetItem
+
+    provider = InternalStockDataProvider(base_url="http://mock-stock-data")
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "count": 1,
+        "data": [
+            {
+                "symbol": "00700.HK.STK",
+                "ticker": "00700",
+                "name": "腾讯控股",
+                "latest_price": 459.8,
+                "pre_close": 430.0,
+                "open": 442.0,
+                "pct_change": 6.93,
+            }
+        ],
+        "missing": [],
+    }
+
+    with patch.object(provider, "_get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+        mock_get_client.return_value = mock_client
+
+        # 测试批量拉取 (包含标准代码和短代码)
+        quotes = await provider.get_batch_quotes(["00700.HK.STK", "00700.HK"])
+        assert "00700.HK.STK" in quotes
+        snap = quotes["00700.HK.STK"]
+        assert snap.price == 459.8
+        assert snap.prev_close == 430.0
+        assert snap.change_pct == 6.93
+
+        # 别名短代码也应当能查到
+        assert "00700.HK" in quotes
+        assert quotes["00700.HK"].price == 459.8
+
+    # 测试 valuation 结合汇率
+    from asset_server.providers.factory import set_market_data_provider
+    set_market_data_provider(provider)
+
+    test_item = AssetItem(
+        id=99,
+        user_id=1,
+        category="EQUITY",
+        name="腾讯控股",
+        symbol="00700.HK.STK",
+        amount=100.0,
+        cost_price=435.0,
+        currency="HKD",
+    )
+
+    val = await calculate_assets_valuation([test_item])
+    item_val = val["items"][0]
+    assert item_val["current_price"] == 459.8
+    assert item_val["market_val_raw"] == 45980.0
+    assert item_val["cost_val_raw"] == 43500.0
+    assert item_val["pnl_raw"] == 2480.0
+    assert item_val["unrealized_pnl_pct"] > 0
+    assert item_val["market_value"] > 0
+    assert val["summary"]["total_assets"] > 0
+
+

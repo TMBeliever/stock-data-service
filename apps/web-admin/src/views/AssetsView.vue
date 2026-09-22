@@ -11,6 +11,8 @@ import {
 } from '@/stores/asset'
 import { useAuthStore } from '@/stores/auth'
 import { useMarketStore, type SymbolItem } from '@/stores/market'
+import { useModalLayer } from '@/stores/modalManager'
+import { fetchLiveFundQuote } from '@/services/liveQuote'
 import EChartWrapper from '@/components/EChartWrapper.vue'
 
 const router = useRouter()
@@ -48,6 +50,15 @@ const showModal = ref(false)
 const modalMode = ref<'create' | 'edit'>('create')
 const editingAssetId = ref<string | number | null>(null)
 const isSubmitting = ref(false)
+
+// 接入统一弹窗层级治理 (Unified Modal & Z-Index Layer Manager)
+const { zIndex: modalZIndex, focusModal } = useModalLayer(
+  'asset-entry-modal',
+  () => showModal.value,
+  () => {
+    showModal.value = false
+  }
+)
 
 // 表单字段
 const formCategory = ref<AssetCategory>('EQUITY')
@@ -175,8 +186,8 @@ function openCreateModal(presetCategory?: AssetCategory) {
   formCategory.value = presetCategory || 'EQUITY'
   formName.value = ''
   formSymbol.value = ''
-  formAmount.value = formCategory.value === 'EQUITY' ? 1000 : 1
-  formCostPrice.value = formCategory.value === 'CASH' ? 1 : 10.0
+  formAmount.value = formCategory.value === 'EQUITY' ? '' : 1
+  formCostPrice.value = formCategory.value === 'CASH' ? 1 : ''
   formManualPrice.value = ''
   formCurrency.value = 'CNY'
   formNote.value = ''
@@ -226,6 +237,17 @@ function openEditModal(item: AssetItem) {
   symbolSuggestions.value = []
   activeSuggestionName.value = item.name
   showModal.value = true
+
+  // 若存在标的代码，后台直连拉取最新参考现价与净值
+  if (item.symbol) {
+    fetchLiveFundQuote(item.symbol).then((live) => {
+      if (live && live.price > 0) {
+        activeSuggestionPrice.value = live.price
+        deduceUnitPrice.value = live.price
+        syncDeduceToForm()
+      }
+    })
+  }
 }
 
 // 搜索框输入防抖查询股票、ETF 与公募基金
@@ -246,6 +268,43 @@ function handleSymbolInput(e: Event) {
     isSearchingSymbol.value = true
     try {
       const results = await marketStore.searchSymbols(q, 'all', 8)
+      // 直连公募基金净值与实时快照补全
+      for (const item of results) {
+        if (item.latest_price === null || item.latest_price === undefined) {
+          const live = await fetchLiveFundQuote(item.symbol || item.ticker)
+          if (live && live.price > 0) {
+            item.latest_price = live.price
+            item.pct_change = live.pct_change
+            if (live.name && (!item.name || item.name.includes('('))) {
+              item.name = live.name
+            }
+          }
+        }
+      }
+
+      // 如果是 6 位数字代码，直接优先尝试新浪基金源直查并置顶
+      if (/^\d{6}$/.test(q)) {
+        const live = await fetchLiveFundQuote(q)
+        if (live && live.price > 0) {
+          const fundSymItem: SymbolItem = {
+            symbol: live.symbol,
+            ticker: live.ticker,
+            market: 'OF',
+            asset_type: 'FND',
+            name: live.name,
+            category: 'fund',
+            latest_price: live.price,
+            pct_change: live.pct_change,
+          }
+          const idx = results.findIndex((r) => r.ticker === q || r.symbol.startsWith(q))
+          if (idx >= 0) {
+            results[idx] = fundSymItem
+          } else {
+            results.unshift(fundSymItem)
+          }
+        }
+      }
+
       symbolSuggestions.value = results
       showSuggestions.value = results.length > 0
     } catch (err) {
@@ -272,7 +331,7 @@ function selectSuggestion(item: SymbolItem) {
   }
 
   // 参考现价/净值
-  if (item.latest_price !== null && item.latest_price !== undefined) {
+  if (item.latest_price !== null && item.latest_price !== undefined && item.latest_price > 0) {
     activeSuggestionPrice.value = item.latest_price
     deduceUnitPrice.value = item.latest_price
     if (!formCostPrice.value || Number(formCostPrice.value) === 0) {
@@ -281,6 +340,20 @@ function selectSuggestion(item: SymbolItem) {
     syncDeduceToForm()
   } else {
     activeSuggestionPrice.value = null
+    fetchLiveFundQuote(item.symbol || item.ticker).then((live) => {
+      if (live && live.price > 0) {
+        item.latest_price = live.price
+        activeSuggestionPrice.value = live.price
+        deduceUnitPrice.value = live.price
+        if (live.name && (!formName.value || formName.value.includes('('))) {
+          formName.value = live.name
+        }
+        if (!formCostPrice.value || Number(formCostPrice.value) === 0) {
+          formCostPrice.value = live.price
+        }
+        syncDeduceToForm()
+      }
+    })
   }
 
   // 大类智能推导
@@ -336,6 +409,19 @@ async function handleSymbolInputBlur() {
       formSymbol.value = `${raw}.OF.FND`
     }
 
+    // 通过数据中台拉取最新价格或净值
+    const live = await fetchLiveFundQuote(raw)
+    if (live && live.price > 0) {
+      if (!formName.value || formName.value.includes('(')) formName.value = live.name
+      activeSuggestionPrice.value = live.price
+      deduceUnitPrice.value = live.price
+      if (!formCostPrice.value || Number(formCostPrice.value) === 0) {
+        formCostPrice.value = live.price
+      }
+      syncDeduceToForm()
+      return
+    }
+
     // 若当前资产名称为空，发起一次反查并回填名称与最新价格/净值
     if (!formName.value) {
       try {
@@ -347,7 +433,7 @@ async function handleSymbolInputBlur() {
           }
         }
       } catch (err) {
-        // ignore
+        console.error('标的标准化反查异常:', err)
       }
     }
   } else if (/^\d{4,5}$/.test(raw)) {
@@ -382,7 +468,10 @@ async function handleSubmitAsset() {
   }
 
   const costPrice = Number(formCostPrice.value) || 0
-  const manualPrice = formManualPrice.value !== '' && formManualPrice.value !== null ? Number(formManualPrice.value) : null
+  let manualPrice = formManualPrice.value !== '' && formManualPrice.value !== null ? Number(formManualPrice.value) : null
+  if (!manualPrice && deduceUnitPrice.value && Number(deduceUnitPrice.value) > 0) {
+    manualPrice = Number(deduceUnitPrice.value)
+  }
 
   isSubmitting.value = true
   try {
@@ -545,20 +634,22 @@ watch(
 
 <template>
   <div class="space-y-6 pb-16">
-    <!-- Toast 通知条 -->
-    <div
-      v-if="toastMsg"
-      class="fixed top-18 right-6 z-50 px-4 py-2.5 rounded-xl shadow-2xl backdrop-blur-md border text-xs font-semibold flex items-center space-x-2 transition-all animate-bounce-in"
-      :class="
-        toastType === 'success'
-          ? 'bg-emerald-950/80 border-emerald-500/40 text-emerald-200'
-          : toastType === 'warn'
-            ? 'bg-amber-950/80 border-amber-500/40 text-amber-200'
-            : 'bg-rose-950/80 border-rose-500/40 text-rose-200'
-      "
-    >
-      <span>{{ toastMsg }}</span>
-    </div>
+    <!-- Toast 通知条 (全局置顶 Teleport) -->
+    <teleport to="body">
+      <div
+        v-if="toastMsg"
+        class="fixed top-18 right-6 z-[20000] px-4 py-2.5 rounded-xl shadow-2xl backdrop-blur-md border text-xs font-semibold flex items-center space-x-2 transition-all animate-bounce-in pointer-events-none select-none"
+        :class="
+          toastType === 'success'
+            ? 'bg-emerald-950/90 border-emerald-500/50 text-emerald-200'
+            : toastType === 'warn'
+              ? 'bg-amber-950/90 border-amber-500/50 text-amber-200'
+              : 'bg-rose-950/90 border-rose-500/50 text-rose-200'
+        "
+      >
+        <span>{{ toastMsg }}</span>
+      </div>
+    </teleport>
 
     <!-- 1. 顶部 Header 栏 -->
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl bg-white/[0.02] border border-white/[0.08] backdrop-blur-sm">
@@ -996,21 +1087,37 @@ watch(
     </div>
 
     <!-- ============================================================== -->
-    <!-- 资产录入 / 编辑 Glassmorphic Modal -->
+    <!-- 资产录入 / 编辑 Glassmorphic Modal (统一全局层级治理 & 视口自适应) -->
     <!-- ============================================================== -->
-    <div
-      v-if="showModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fadeIn"
-    >
-      <div class="w-full max-w-lg bg-[#14151b] border border-white/[0.12] rounded-2xl shadow-2xl p-6 space-y-5">
-        <!-- 弹窗头部 -->
-        <div class="flex items-center justify-between pb-3 border-b border-white/[0.08]">
-          <h3 class="text-base font-bold text-white flex items-center space-x-2">
-            <span>{{ modalMode === 'create' ? '➕' : '✏️' }}</span>
-            <span>{{ modalMode === 'create' ? '录入新资产或负债' : '编辑资产信息' }}</span>
-          </h3>
-          <button @click="showModal = false" class="text-zinc-400 hover:text-white cursor-pointer text-sm">✕</button>
-        </div>
+    <teleport to="body">
+      <div
+        v-if="showModal"
+        :style="{ zIndex: modalZIndex }"
+        @click.self="showModal = false"
+        @mousedown="focusModal"
+        class="fixed inset-0 flex items-center justify-center bg-black/80 backdrop-blur-md p-3 sm:p-4 select-none animate-fadeIn overflow-hidden"
+      >
+        <div
+          class="relative w-full max-w-lg max-h-[90vh] bg-[#14151b] border border-white/[0.12] rounded-2xl shadow-2xl flex flex-col overflow-hidden text-zinc-100 transform transition-all"
+        >
+          <!-- 弹窗头部 (固定在顶部，shrink-0) -->
+          <div class="flex items-center justify-between px-6 py-4 border-b border-white/[0.08] shrink-0 bg-white/[0.02]">
+            <h3 class="text-base font-bold text-white flex items-center space-x-2">
+              <span>{{ modalMode === 'create' ? '➕' : '✏️' }}</span>
+              <span>{{ modalMode === 'create' ? '录入新资产或负债' : '编辑资产信息' }}</span>
+            </h3>
+            <button
+              type="button"
+              @click="showModal = false"
+              class="w-8 h-8 rounded-lg hover:bg-white/[0.08] text-zinc-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer text-sm"
+              title="关闭 (Esc)"
+            >
+              ✕
+            </button>
+          </div>
+
+          <!-- 弹窗表单内容区 (自适应滚动，支持小屏/矮屏视口) -->
+          <div class="flex-1 overflow-y-auto px-6 py-4 space-y-4 text-xs custom-scrollbar">
 
         <!-- 类别选择卡片 -->
         <div>
@@ -1458,35 +1565,40 @@ watch(
             />
           </div>
 
+          </div>
         </div>
 
-        <!-- 预估价值反馈条 -->
-        <div class="p-3 rounded-xl bg-black/40 border border-white/[0.08] flex items-center justify-between text-xs font-mono">
-          <span class="text-zinc-400">总投入成本预估:</span>
-          <span class="text-white font-bold">
-            ¥{{ (Number(formAmount || 0) * Number(formCostPrice || 0)).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
-          </span>
-        </div>
+        <!-- 3. 弹窗底部操作区 (固定在底部，shrink-0，矮屏视口永不截断) -->
+        <div class="px-6 py-3.5 border-t border-white/[0.08] bg-[#101116] shrink-0 space-y-2.5">
+          <!-- 预估价值反馈条 -->
+          <div class="p-2.5 rounded-xl bg-black/40 border border-white/[0.08] flex items-center justify-between text-xs font-mono">
+            <span class="text-zinc-400">总投入成本预估:</span>
+            <span class="text-white font-bold">
+              ¥{{ (Number(formAmount || 0) * Number(formCostPrice || 0)).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+            </span>
+          </div>
 
-        <!-- 弹窗动作按钮 -->
-        <div class="flex items-center justify-end space-x-2.5 pt-2 border-t border-white/[0.08]">
-          <button
-            type="button"
-            @click="showModal = false"
-            class="px-4 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] text-zinc-300 text-xs font-semibold cursor-pointer"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            @click="handleSubmitAsset"
-            :disabled="isSubmitting"
-            class="px-5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-bold text-xs shadow-lg shadow-blue-500/20 cursor-pointer"
-          >
-            {{ isSubmitting ? '保存中...' : modalMode === 'create' ? '立即录入' : '确认修改' }}
-          </button>
+          <!-- 弹窗动作按钮 -->
+          <div class="flex items-center justify-end space-x-2.5">
+            <button
+              type="button"
+              @click="showModal = false"
+              class="px-4 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] text-zinc-300 text-xs font-semibold cursor-pointer transition-colors"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              @click="handleSubmitAsset"
+              :disabled="isSubmitting"
+              class="px-5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-bold text-xs shadow-lg shadow-blue-500/20 cursor-pointer transition-all"
+            >
+              {{ isSubmitting ? '保存中...' : modalMode === 'create' ? '立即录入' : '确认修改' }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
+  </teleport>
   </div>
 </template>

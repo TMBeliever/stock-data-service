@@ -7,6 +7,8 @@ from core.models import parse_symbol, format_symbol, Market, AssetType, Snapshot
 
 # 港股流通股数缓存 (24小时 TTL)，用于实时计算换手率 volume/floatShares
 _HK_FLOAT_SHARES_CACHE: Dict[str, Tuple[float, Optional[float]]] = {}
+# 场外开放式基金快照缓存 (5分钟 TTL)
+_FUND_SNAPSHOT_CACHE: Dict[str, Tuple[float, SnapshotItem]] = {}
 
 class SnapshotAdapter:
     """
@@ -105,6 +107,66 @@ class SnapshotAdapter:
         ttl = 86400 if float_shares else 1800
         _HK_FLOAT_SHARES_CACHE[cache_key] = (now + ttl, float_shares)
         return float_shares
+
+    async def _fetch_fund_via_akshare(self, ticker: str, std_sym: str) -> Optional[SnapshotItem]:
+        """通过中台 Universal Hub 穿透 AkShare 官方接口拉取公募基金最新净值与名称"""
+        now = datetime.datetime.now().timestamp()
+        if ticker in _FUND_SNAPSHOT_CACHE:
+            expire_time, cached_item = _FUND_SNAPSHOT_CACHE[ticker]
+            if now < expire_time:
+                return cached_item
+
+        loop = asyncio.get_running_loop()
+        def _fetch():
+            try:
+                from service.routes.hub import invoke_api, InvokeRequest
+                req = InvokeRequest(params={"symbol": ticker, "indicator": "单位净值走势"}, bypass_cache=True, limit=5000)
+                res = invoke_api("akshare", "fund_open_fund_info_em", req)
+                records = res.get("data", [])
+                if records:
+                    latest = records[-1]
+                    prev = records[-2] if len(records) > 1 else latest
+                    nav = float(latest.get("单位净值")) if latest.get("单位净值") is not None else None
+                    prev_nav = float(prev.get("单位净值")) if prev.get("单位净值") is not None else nav
+                    pct_change = float(latest.get("日增长率")) if latest.get("日增长率") is not None else 0.0
+                    change = round(nav - prev_nav, 4) if (nav is not None and prev_nav is not None) else None
+
+                    name = None
+                    try:
+                        info_req = InvokeRequest(params={"symbol": ticker}, bypass_cache=True, limit=10)
+                        info_res = invoke_api("akshare", "fund_individual_basic_info_xq", info_req)
+                        for row in info_res.get("data", []):
+                            if row.get("item") == "基金名称":
+                                name = str(row.get("value"))
+                                break
+                    except Exception:
+                        pass
+
+                    return SnapshotItem(
+                        symbol=std_sym,
+                        ticker=ticker,
+                        name=name or f"基金({ticker})",
+                        latest_price=nav,
+                        pre_close=prev_nav,
+                        open=prev_nav,
+                        high=nav,
+                        low=nav,
+                        change=change,
+                        pct_change=pct_change,
+                        nav=nav,
+                        timestamp=int(datetime.datetime.now().timestamp() * 1000)
+                    )
+            except Exception as e:
+                print(f"[SnapshotAdapter] Hub akshare fund fetch error for {ticker}: {e}")
+            return None
+
+        try:
+            item = await asyncio.wait_for(loop.run_in_executor(None, _fetch), timeout=5.0)
+            if item:
+                _FUND_SNAPSHOT_CACHE[ticker] = (now + 300, item)
+            return item
+        except Exception:
+            return None
 
     async def fetch_snapshots(self, symbols: List[str]) -> Tuple[List[SnapshotItem], List[str]]:
         """
@@ -217,6 +279,25 @@ class SnapshotAdapter:
                     found_symbols.add(ticker)
                     for req_sym in key_to_req_symbols.get(key, []):
                         found_symbols.add(req_sym)
+
+        # 1.1 对未被 Sina 基金源覆盖或解析为空的场外基金，调用 AkShare 官方源补全
+        unresolved_fund_keys = [k for k in fund_keys if not (k.replace("f_", "") in found_symbols or key_to_symbol.get(k) in found_symbols)]
+        if unresolved_fund_keys:
+            ak_fund_tasks = []
+            for fk in unresolved_fund_keys:
+                f_ticker = fk.replace("f_", "").strip()
+                f_std_sym = key_to_symbol.get(fk, f"{f_ticker}.OF.FND")
+                ak_fund_tasks.append((fk, f_ticker, f_std_sym, self._fetch_fund_via_akshare(f_ticker, f_std_sym)))
+
+            if ak_fund_tasks:
+                ak_results = await asyncio.gather(*[t[3] for t in ak_fund_tasks], return_exceptions=True)
+                for (fk, f_ticker, f_std_sym, _), item in zip(ak_fund_tasks, ak_results):
+                    if isinstance(item, SnapshotItem):
+                        snapshots.append(item)
+                        found_symbols.add(f_std_sym)
+                        found_symbols.add(f_ticker)
+                        for req_sym in key_to_req_symbols.get(fk, []):
+                            found_symbols.add(req_sym)
 
         for line in raw_text.split(";\n"):
             line = line.strip()

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAuthStore } from './auth'
+import { fetchBatchQuotes } from '@/services/liveQuote'
 
 export type AssetCategory =
   | 'CASH'
@@ -228,6 +229,10 @@ export const useAssetStore = defineStore('asset', () => {
 
 
       overview.value = normalized
+
+      // 异步通过数据中台实时行情快照进行净值与估值补全（非阻塞）
+      enrichAssetOverviewWithLiveQuotes(normalized)
+
       return normalized
     } catch (err: any) {
       console.error('[AssetStore] fetchOverview failed:', err)
@@ -236,6 +241,105 @@ export const useAssetStore = defineStore('asset', () => {
     } finally {
       loading.value = false
       refreshing.value = false
+    }
+  }
+
+  /**
+   * 经由数据中台批量快照接口 (/stock/api/v1/snapshot/batch) 实时补全最新净值与行情
+   */
+  async function enrichAssetOverviewWithLiveQuotes(ov: AssetOverview) {
+    if (!ov.items || ov.items.length === 0) return
+
+    const symbols = ov.items
+      .map((it) => it.symbol)
+      .filter((s): s is string => Boolean(s && s.trim()))
+
+    if (symbols.length === 0) return
+
+    try {
+      const quotesMap = await fetchBatchQuotes(symbols)
+      let totalAssets = 0
+      let totalCost = 0
+      let totalLiabilities = 0
+
+      // 重置大类汇总
+      const catKeys = Object.keys(ov.category_breakdown) as AssetCategory[]
+      for (const catKey of catKeys) {
+        ov.category_breakdown[catKey].market_value = 0
+        ov.category_breakdown[catKey].cost = 0
+        ov.category_breakdown[catKey].pnl = 0
+        ov.category_breakdown[catKey].item_count = 0
+      }
+
+      for (const item of ov.items) {
+        const amt = Number(item.amount) || 0
+        const cost = Number(item.cost_price) || 0
+        const fx = Number(item.fx_rate) || (ov.fx_rates?.[item.currency || 'CNY'] || 1.0)
+
+        let price = Number(item.current_price) || cost
+        if (item.symbol) {
+          const snap = quotesMap.get(item.symbol) || quotesMap.get(item.symbol.split('.')[0])
+          if (snap && snap.price > 0) {
+            price = snap.price
+            item.current_price = snap.price
+            if (snap.name && (!item.name || item.name.includes('('))) {
+              item.name = snap.name
+            }
+            item.change_pct = snap.pct_change
+            item.prev_close = snap.pre_close
+          }
+        }
+
+        const marketRaw = Number((amt * price).toFixed(2))
+        const costRaw = Number((amt * cost).toFixed(2))
+        const pnlRaw = Number((marketRaw - costRaw).toFixed(2))
+        const pnlPct = costRaw > 0 ? Number(((pnlRaw / costRaw) * 100).toFixed(2)) : 0.0
+
+        const marketCny = Number((marketRaw * fx).toFixed(2))
+        const costCny = Number((costRaw * fx).toFixed(2))
+        const pnlCny = Number((marketCny - costCny).toFixed(2))
+
+        item.market_val_raw = marketRaw
+        item.cost_val_raw = costRaw
+        item.pnl_raw = pnlRaw
+        item.market_value = marketCny
+        item.cost_value = costCny
+        item.unrealized_pnl = pnlCny
+        item.unrealized_pnl_pct = pnlPct
+
+        if (item.category === 'LIABILITY') {
+          totalLiabilities += marketCny
+        } else {
+          totalAssets += marketCny
+          totalCost += costCny
+        }
+
+        const catMeta = ov.category_breakdown[item.category]
+        if (catMeta) {
+          catMeta.market_value = Number((catMeta.market_value + marketCny).toFixed(2))
+          catMeta.cost = Number((catMeta.cost + costCny).toFixed(2))
+          catMeta.pnl = Number((catMeta.pnl + pnlCny).toFixed(2))
+          catMeta.item_count += 1
+        }
+      }
+
+      const netWorth = Number((totalAssets - totalLiabilities).toFixed(2))
+      const totalPnl = Number((totalAssets - totalCost).toFixed(2))
+      const returnPct = totalCost > 0 ? Number(((totalPnl / totalCost) * 100).toFixed(2)) : 0.0
+
+      ov.total_assets = Number(totalAssets.toFixed(2))
+      ov.total_cost = Number(totalCost.toFixed(2))
+      ov.total_liabilities = Number(totalLiabilities.toFixed(2))
+      ov.net_worth = Number(netWorth.toFixed(2))
+      ov.unrealized_pnl = Number(totalPnl.toFixed(2))
+      ov.unrealized_pnl_pct = Number(returnPct.toFixed(2))
+
+      for (const catKey of catKeys) {
+        const catMeta = ov.category_breakdown[catKey]
+        catMeta.weight = totalAssets > 0 ? Number((catMeta.market_value / totalAssets).toFixed(4)) : 0
+      }
+    } catch (err) {
+      console.warn('[AssetStore] enrichAssetOverviewWithLiveQuotes error:', err)
     }
   }
 

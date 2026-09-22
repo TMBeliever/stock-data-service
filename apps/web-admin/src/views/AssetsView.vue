@@ -59,6 +59,107 @@ const formManualPrice = ref<number | string>('')
 const formCurrency = ref('CNY')
 const formNote = ref('')
 
+// 录入模式：'DEDUCE' (智能反推：当前金额+收益/本金) | 'PRECISE' (精细模式：份额+单价)
+const inputMode = ref<'DEDUCE' | 'PRECISE'>('DEDUCE')
+const deduceProfitType = ref<'RATE' | 'AMOUNT' | 'COST'>('RATE')
+
+// 反推计算输入项
+const deduceTotalValue = ref<number | string>('')     // 当前持仓总金额 (市值)
+const deduceProfitRate = ref<number | string>('')      // 持有收益率 (%)
+const deduceProfitAmount = ref<number | string>('')    // 持有收益额 (¥)
+const deduceTotalCost = ref<number | string>('')       // 累计买入本金 (¥)
+const deduceUnitPrice = ref<number | string>('')       // 当前最新单价/净值 (支持覆盖调整)
+
+// 计算衍生属性 (供实时预览卡片与双向联动使用)
+const deduceResult = computed(() => {
+  const v = Number(deduceTotalValue.value) || 0
+  const p = Number(deduceUnitPrice.value) || activeSuggestionPrice.value || (formCategory.value === 'CASH' || formCategory.value === 'LIABILITY' ? 1.0 : (Number(formCostPrice.value) || 1.0))
+
+  let cost = 0
+  let pnl = 0
+  let rate = 0
+
+  if (deduceProfitType.value === 'RATE') {
+    const r = Number(deduceProfitRate.value) || 0
+    rate = r
+    cost = (1 + r / 100) !== 0 ? v / (1 + r / 100) : v
+    pnl = v - cost
+  } else if (deduceProfitType.value === 'AMOUNT') {
+    const a = Number(deduceProfitAmount.value) || 0
+    pnl = a
+    cost = v - a
+    rate = cost > 0 ? (pnl / cost) * 100 : 0
+  } else if (deduceProfitType.value === 'COST') {
+    const c = Number(deduceTotalCost.value) || 0
+    cost = c
+    pnl = v - c
+    rate = cost > 0 ? (pnl / cost) * 100 : 0
+  }
+
+  // 份额推算
+  const shares = p > 0 ? v / p : (cost > 0 ? cost : v)
+  // 成本均价推算
+  const costPrice = shares > 0 ? cost / shares : 1.0
+
+  return {
+    totalValue: v,
+    totalCost: cost,
+    unrealizedPnl: pnl,
+    profitRate: rate,
+    unitPrice: p,
+    shares: shares,
+    costPrice: costPrice,
+  }
+})
+
+// 切换录入模式
+function switchInputMode(mode: 'DEDUCE' | 'PRECISE') {
+  inputMode.value = mode
+  if (mode === 'PRECISE') {
+    syncDeduceToForm()
+  } else {
+    syncFormToDeduce()
+  }
+}
+
+// 切换收益录入类型
+function setDeduceProfitType(type: 'RATE' | 'AMOUNT' | 'COST') {
+  deduceProfitType.value = type
+  syncDeduceToForm()
+}
+
+// 反推输入联动更新底层表单
+function handleDeduceInput() {
+  syncDeduceToForm()
+}
+
+// 将反推结果同步至 formAmount 与 formCostPrice
+function syncDeduceToForm() {
+  if (inputMode.value !== 'DEDUCE') return
+  const res = deduceResult.value
+  if (res.totalValue > 0) {
+    formAmount.value = Number(res.shares.toFixed(res.shares >= 100 ? 2 : 4))
+    formCostPrice.value = Number(res.costPrice.toFixed(res.costPrice >= 10 ? 3 : 4))
+  }
+}
+
+// 精细输入变更时同步至反推字段
+function syncFormToDeduce() {
+  const q = Number(formAmount.value) || 0
+  const cPrice = Number(formCostPrice.value) || 0
+  const currPrice = Number(deduceUnitPrice.value) || activeSuggestionPrice.value || cPrice
+  const v = q * currPrice
+  const totalC = q * cPrice
+  const pnl = v - totalC
+  const rate = totalC > 0 ? (pnl / totalC) * 100 : 0
+
+  deduceTotalValue.value = v > 0 ? Number(v.toFixed(2)) : ''
+  deduceTotalCost.value = totalC > 0 ? Number(totalC.toFixed(2)) : ''
+  deduceProfitAmount.value = Number(pnl.toFixed(2))
+  deduceProfitRate.value = Number(rate.toFixed(2))
+  deduceUnitPrice.value = currPrice > 0 ? currPrice : ''
+}
+
 // 标的实时智能反查与下拉联想状态
 const symbolSuggestions = ref<SymbolItem[]>([])
 const showSuggestions = ref(false)
@@ -79,6 +180,13 @@ function openCreateModal(presetCategory?: AssetCategory) {
   formManualPrice.value = ''
   formCurrency.value = 'CNY'
   formNote.value = ''
+  inputMode.value = 'DEDUCE'
+  deduceProfitType.value = 'RATE'
+  deduceTotalValue.value = ''
+  deduceProfitRate.value = ''
+  deduceProfitAmount.value = ''
+  deduceTotalCost.value = ''
+  deduceUnitPrice.value = ''
   showSuggestions.value = false
   symbolSuggestions.value = []
   activeSuggestionPrice.value = null
@@ -98,9 +206,24 @@ function openEditModal(item: AssetItem) {
   formManualPrice.value = item.manual_price !== null && item.manual_price !== undefined ? item.manual_price : ''
   formCurrency.value = item.currency || 'CNY'
   formNote.value = item.note || ''
+  inputMode.value = 'DEDUCE'
+  deduceProfitType.value = 'RATE'
+
+  const p = item.current_price || item.cost_price
+  deduceUnitPrice.value = p
+  activeSuggestionPrice.value = item.current_price || null
+  const totalVal = Number((item.amount * p).toFixed(2))
+  const totalCost = Number((item.amount * item.cost_price).toFixed(2))
+  const pnl = Number((totalVal - totalCost).toFixed(2))
+  const pnlRate = totalCost > 0 ? Number(((pnl / totalCost) * 100).toFixed(2)) : 0
+
+  deduceTotalValue.value = totalVal
+  deduceTotalCost.value = totalCost
+  deduceProfitAmount.value = pnl
+  deduceProfitRate.value = pnlRate
+
   showSuggestions.value = false
   symbolSuggestions.value = []
-  activeSuggestionPrice.value = item.current_price || null
   activeSuggestionName.value = item.name
   showModal.value = true
 }
@@ -151,9 +274,11 @@ function selectSuggestion(item: SymbolItem) {
   // 参考现价/净值
   if (item.latest_price !== null && item.latest_price !== undefined) {
     activeSuggestionPrice.value = item.latest_price
+    deduceUnitPrice.value = item.latest_price
     if (!formCostPrice.value || Number(formCostPrice.value) === 0) {
       formCostPrice.value = item.latest_price
     }
+    syncDeduceToForm()
   } else {
     activeSuggestionPrice.value = null
   }
@@ -170,6 +295,8 @@ function selectSuggestion(item: SymbolItem) {
 function applySuggestionPrice() {
   if (activeSuggestionPrice.value !== null && activeSuggestionPrice.value !== undefined) {
     formCostPrice.value = activeSuggestionPrice.value
+    deduceUnitPrice.value = activeSuggestionPrice.value
+    syncDeduceToForm()
     showToast(`✅ 已填入最新参考单价 ¥${activeSuggestionPrice.value}`)
   }
 }
@@ -1019,32 +1146,263 @@ watch(
             </div>
           </div>
 
-          <!-- 数量与成本单价 (并排) -->
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-zinc-400 mb-1 font-medium">
-                {{ formCategory === 'CASH' || formCategory === 'LIABILITY' ? '持有金额 / 负债本金' : '持有数量 / 份额' }}
-                <span class="text-red-400">*</span>
-              </label>
+          <!-- 数量与成本单价 / 智能反推录入区 -->
+          <div v-if="formCategory === 'CASH' || formCategory === 'LIABILITY'">
+            <label class="block text-zinc-400 mb-1 font-medium">
+              {{ formCategory === 'CASH' ? '活期 / 现金账户总余额' : '当前待还负债总本金' }}
+              <span class="text-red-400">*</span>
+            </label>
+            <div class="relative">
+              <span class="absolute left-3 top-2 text-zinc-500 font-mono text-xs">¥</span>
               <input
                 v-model.number="formAmount"
                 type="number"
                 step="any"
                 min="0"
-                class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono"
+                placeholder="0.00"
+                class="w-full bg-black/50 border border-white/[0.1] rounded-xl pl-7 pr-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono font-bold"
               />
             </div>
+          </div>
 
-            <div>
-              <label class="block text-zinc-400 mb-1 font-medium">买入成本均价 (单价)</label>
-              <input
-                v-model.number="formCostPrice"
-                type="number"
-                step="any"
-                min="0"
-                placeholder="现金/负债填 1"
-                class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono"
-              />
+          <div v-else class="space-y-3">
+            <!-- 录入模式切换器 -->
+            <div class="flex items-center justify-between p-1 bg-white/[0.03] border border-white/[0.08] rounded-xl text-xs">
+              <button
+                type="button"
+                @click="switchInputMode('DEDUCE')"
+                :class="inputMode === 'DEDUCE' ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold shadow-md' : 'text-zinc-400 hover:text-white'"
+                class="flex-1 py-1.5 rounded-lg text-center transition-all cursor-pointer flex items-center justify-center space-x-1.5"
+              >
+                <span>⚡ 智能反推录入</span>
+                <span class="text-[10px] opacity-80">(填总市值+收益)</span>
+              </button>
+              <button
+                type="button"
+                @click="switchInputMode('PRECISE')"
+                :class="inputMode === 'PRECISE' ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold shadow-md' : 'text-zinc-400 hover:text-white'"
+                class="flex-1 py-1.5 rounded-lg text-center transition-all cursor-pointer flex items-center justify-center space-x-1.5"
+              >
+                <span>📝 精细单价录入</span>
+                <span class="text-[10px] opacity-80">(填份额+成本)</span>
+              </button>
+            </div>
+
+            <!-- 【模式1：智能反推录入】 -->
+            <div v-if="inputMode === 'DEDUCE'" class="space-y-3 p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+              <!-- 1. 当前持仓总金额 (当前市值) -->
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-zinc-300 font-medium">当前持仓总金额 / 市值 (¥) <span class="text-red-400">*</span></label>
+                  <span class="text-[10px] text-zinc-500">支付宝/天天基金显示的「当前持仓」</span>
+                </div>
+                <div class="relative">
+                  <span class="absolute left-3 top-2 text-zinc-500 font-mono text-xs">¥</span>
+                  <input
+                    v-model.number="deduceTotalValue"
+                    @input="handleDeduceInput"
+                    type="number"
+                    step="any"
+                    min="0"
+                    placeholder="例如: 12500.00"
+                    class="w-full bg-black/50 border border-white/[0.1] rounded-xl pl-7 pr-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono font-bold"
+                  />
+                </div>
+              </div>
+
+              <!-- 2. 收益与成本确定方式 -->
+              <div>
+                <div class="flex items-center justify-between mb-1.5">
+                  <label class="text-zinc-300 font-medium">收益/成本反推指标</label>
+                  <div class="flex space-x-1 text-[10px]">
+                    <button
+                      type="button"
+                      @click="setDeduceProfitType('RATE')"
+                      :class="deduceProfitType === 'RATE' ? 'bg-blue-500/30 text-blue-300 border-blue-500/40' : 'text-zinc-500 hover:text-zinc-300 border-transparent'"
+                      class="px-2 py-0.5 rounded border transition-colors cursor-pointer"
+                    >
+                      持有收益率 (%)
+                    </button>
+                    <button
+                      type="button"
+                      @click="setDeduceProfitType('AMOUNT')"
+                      :class="deduceProfitType === 'AMOUNT' ? 'bg-blue-500/30 text-blue-300 border-blue-500/40' : 'text-zinc-500 hover:text-zinc-300 border-transparent'"
+                      class="px-2 py-0.5 rounded border transition-colors cursor-pointer"
+                    >
+                      持有收益额 (¥)
+                    </button>
+                    <button
+                      type="button"
+                      @click="setDeduceProfitType('COST')"
+                      :class="deduceProfitType === 'COST' ? 'bg-blue-500/30 text-blue-300 border-blue-500/40' : 'text-zinc-500 hover:text-zinc-300 border-transparent'"
+                      class="px-2 py-0.5 rounded border transition-colors cursor-pointer"
+                    >
+                      投入本金 (¥)
+                    </button>
+                  </div>
+                </div>
+
+                <!-- 按收益率 -->
+                <div v-if="deduceProfitType === 'RATE'" class="space-y-1.5">
+                  <div class="relative">
+                    <input
+                      v-model.number="deduceProfitRate"
+                      @input="handleDeduceInput"
+                      type="number"
+                      step="any"
+                      placeholder="例如: 8.50 或 -3.20"
+                      class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono"
+                    />
+                    <span class="absolute right-3 top-2 text-zinc-400 font-mono text-xs">%</span>
+                  </div>
+                  <!-- 快捷预设百分比点选 -->
+                  <div class="flex items-center space-x-1.5 text-[10px] text-zinc-400">
+                    <span>快捷填入:</span>
+                    <button
+                      v-for="r in [-10, -5, 0, 5, 10, 20]"
+                      :key="r"
+                      type="button"
+                      @click="deduceProfitRate = r; handleDeduceInput()"
+                      class="px-1.5 py-0.5 rounded bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 cursor-pointer"
+                    >
+                      {{ r > 0 ? '+' : '' }}{{ r }}%
+                    </button>
+                  </div>
+                </div>
+
+                <!-- 按收益额 -->
+                <div v-else-if="deduceProfitType === 'AMOUNT'">
+                  <div class="relative">
+                    <span class="absolute left-3 top-2 text-zinc-500 font-mono text-xs">¥</span>
+                    <input
+                      v-model.number="deduceProfitAmount"
+                      @input="handleDeduceInput"
+                      type="number"
+                      step="any"
+                      placeholder="例如: +1200 或 -500"
+                      class="w-full bg-black/50 border border-white/[0.1] rounded-xl pl-7 pr-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <!-- 按累计投入本金 -->
+                <div v-else-if="deduceProfitType === 'COST'">
+                  <div class="relative">
+                    <span class="absolute left-3 top-2 text-zinc-500 font-mono text-xs">¥</span>
+                    <input
+                      v-model.number="deduceTotalCost"
+                      @input="handleDeduceInput"
+                      type="number"
+                      step="any"
+                      min="0"
+                      placeholder="例如: 10000.00"
+                      class="w-full bg-black/50 border border-white/[0.1] rounded-xl pl-7 pr-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <!-- 3. 参考单价 / 净值调整 -->
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-zinc-300 font-medium">
+                    {{ formSymbol.includes('.OF.FND') ? '公募基金参考净值' : '标的参考现价 / 单价' }}
+                  </label>
+                  <span v-if="activeSuggestionPrice !== null" class="text-[10px] text-blue-400 flex items-center space-x-1">
+                    <span>⚡ 最新行情:</span>
+                    <b class="font-mono">¥{{ Number(activeSuggestionPrice).toFixed(activeSuggestionPrice > 10 ? 2 : 4) }}</b>
+                  </span>
+                </div>
+                <input
+                  v-model.number="deduceUnitPrice"
+                  @input="handleDeduceInput"
+                  type="number"
+                  step="any"
+                  min="0.0001"
+                  placeholder="未填写将默认参考当前现价或成本均价"
+                  class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono text-xs"
+                />
+              </div>
+
+              <!-- 4. 实时反推结果看板 -->
+              <div class="p-2.5 rounded-xl bg-gradient-to-br from-blue-900/20 via-indigo-900/10 to-transparent border border-blue-500/20 space-y-2">
+                <div class="flex items-center justify-between text-[11px] text-blue-300 font-bold">
+                  <span class="flex items-center space-x-1">
+                    <span>💡</span>
+                    <span>智能核算反推结果</span>
+                  </span>
+                  <span class="text-[10px] text-zinc-400 font-normal">已自动同步至底层持仓数据</span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                  <div class="p-2 rounded-lg bg-black/30 border border-white/[0.05]">
+                    <div class="text-[10px] text-zinc-400">推算持有份额</div>
+                    <div class="text-white font-bold font-mono text-sm mt-0.5">
+                      {{ Number(deduceResult.shares).toFixed(deduceResult.shares >= 100 ? 2 : 4) }}
+                    </div>
+                  </div>
+                  <div class="p-2 rounded-lg bg-black/30 border border-white/[0.05]">
+                    <div class="text-[10px] text-zinc-400">推算买入成本单价</div>
+                    <div class="text-white font-bold font-mono text-sm mt-0.5">
+                      ¥{{ Number(deduceResult.costPrice).toFixed(deduceResult.costPrice >= 10 ? 2 : 4) }}
+                    </div>
+                  </div>
+                  <div class="p-2 rounded-lg bg-black/30 border border-white/[0.05]">
+                    <div class="text-[10px] text-zinc-400">推算投入本金</div>
+                    <div class="text-zinc-200 font-mono text-xs mt-0.5">
+                      ¥{{ Number(deduceResult.totalCost).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                    </div>
+                  </div>
+                  <div class="p-2 rounded-lg bg-black/30 border border-white/[0.05]">
+                    <div class="text-[10px] text-zinc-400">累计浮动盈亏</div>
+                    <div
+                      class="font-mono text-xs mt-0.5 font-bold"
+                      :class="deduceResult.unrealizedPnl >= 0 ? 'text-red-400' : 'text-emerald-400'"
+                    >
+                      {{ deduceResult.unrealizedPnl >= 0 ? '+' : '' }}¥{{ Number(deduceResult.unrealizedPnl).toFixed(2) }}
+                      <span class="text-[10px] font-normal">({{ deduceResult.profitRate >= 0 ? '+' : '' }}{{ Number(deduceResult.profitRate).toFixed(2) }}%)</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 【模式2：精细单价录入】 -->
+            <div v-else class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-zinc-400 mb-1 font-medium">
+                  持有数量 / 份额 <span class="text-red-400">*</span>
+                </label>
+                <input
+                  v-model.number="formAmount"
+                  @input="syncFormToDeduce"
+                  type="number"
+                  step="any"
+                  min="0"
+                  class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono"
+                />
+              </div>
+
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-zinc-400 font-medium">买入成本均价 (单价)</label>
+                  <button
+                    v-if="activeSuggestionPrice !== null"
+                    type="button"
+                    @click="applySuggestionPrice"
+                    class="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+                  >
+                    填现价 ¥{{ Number(activeSuggestionPrice).toFixed(activeSuggestionPrice > 10 ? 2 : 4) }}
+                  </button>
+                </div>
+                <input
+                  v-model.number="formCostPrice"
+                  @input="syncFormToDeduce"
+                  type="number"
+                  step="any"
+                  min="0"
+                  class="w-full bg-black/50 border border-white/[0.1] rounded-xl px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 font-mono"
+                />
+              </div>
             </div>
           </div>
 
